@@ -388,7 +388,58 @@ import { SessionManager } from '/js/session_manager.js';
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /**
+   * Create an element with attributes and text content. Attribute values and
+   * text go through the DOM rather than string concatenation, so untrusted
+   * input cannot break out of its position in the markup.
+   */
+  function elem(tag, attrs, text) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined) continue;
+      node.setAttribute(k, String(v));
+    }
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function trashIcon() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "icon icon-sm");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", "#i-trash");
+    svg.appendChild(use);
+    return svg;
+  }
+
+  /**
+   * Build the NIP-11 tooltip. Every field here comes from a JSON document
+   * served by the relay being probed, so a hostile relay controls all of it.
+   */
+  function buildNip11Tooltip(n) {
+    const tip = elem("div", { class: "tooltip" });
+    tip.appendChild(elem("strong", null, n.name || "unknown"));
+    tip.appendChild(document.createElement("br"));
+
+    if (n.description) {
+      tip.appendChild(document.createTextNode(String(n.description)));
+      tip.appendChild(document.createElement("br"));
+    }
+
+    const software = [n.software || "?", n.version || ""].join(" ").trim();
+    tip.appendChild(document.createTextNode("Software: " + software));
+    tip.appendChild(document.createElement("br"));
+
+    const nips = Array.isArray(n.nips) ? n.nips.map(String).join(", ") : "n/a";
+    tip.appendChild(document.createTextNode("NIPs: " + nips));
+    return tip;
   }
 
   function onClearServices() {
@@ -408,7 +459,11 @@ import { SessionManager } from '/js/session_manager.js';
     state.services.forEach((svc) => {
       const card = document.createElement("div");
       card.className = "service-card";
-      const href = state.tunnelURL + "/auth?token=" + (state.authToken || "") + "&redirect=" + svc.prefix;
+      // Percent-encode both values: they land inside an href attribute, and
+      // the prefix arrives over the wire from the host's DM.
+      const href = state.tunnelURL + "/auth?token=" +
+        encodeURIComponent(state.authToken || "") +
+        "&redirect=" + encodeURIComponent(svc.prefix || "/");
       card.innerHTML =
         (svc.icon
           ? '<span class="service-icon" aria-hidden="true">' + escapeHtml(svc.icon) + "</span>"
@@ -465,21 +520,38 @@ import { SessionManager } from '/js/session_manager.js';
       row.className = "relay-row";
       const badgeClass = getBadgeClass(result);
       const rttText = result ? (result.ok ? result.rttMs + 'ms' : 'OFFLINE') : '\u2014';
-      let nip11Tooltip = '';
+      // This row is built with DOM APIs rather than innerHTML on purpose: both
+      // the relay URL (user input) and the NIP-11 document (fetched from the
+      // relay itself) are untrusted, and a single missed escape here would run
+      // attacker JS on the origin that holds the user's key material.
+      row.appendChild(elem("span", { class: "relay-badge " + badgeClass }));
+
+      const urlCell = elem("span", {
+        class: "relay-url relay-nip11-tooltip",
+        title: relay.url,
+      }, relay.url);
       if (result && result.nip11) {
-        const n = result.nip11;
-        nip11Tooltip = '<div class="tooltip">' +
-          '<strong>' + (n.name || 'unknown') + '</strong><br>' +
-          (n.description || '') + '<br>' +
-          'Software: ' + (n.software || '?') + ' ' + (n.version || '') + '<br>' +
-          'NIPs: ' + (n.nips ? n.nips.join(', ') : 'n/a') + '</div>';
+        urlCell.appendChild(buildNip11Tooltip(result.nip11));
       }
-      row.innerHTML =
-        '<span class="relay-badge ' + badgeClass + '"></span>' +
-        '<span class="relay-url relay-nip11-tooltip" title="' + relay.url + '">' + relay.url + nip11Tooltip + '</span>' +
-        '<span class="relay-rtt ' + badgeClass + '">' + rttText + '</span>' +
-        '<button class="relay-toggle ' + (relay.enabled ? 'on' : '') + '" data-url="' + relay.url + '" aria-label="Toggle" data-tip="Alternar ativação"></button>' +
-        '<button class="relay-remove" data-url="' + relay.url + '" aria-label="Remover" data-tip="Remover relay"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"></use></svg></button>';
+      row.appendChild(urlCell);
+
+      row.appendChild(elem("span", { class: "relay-rtt " + badgeClass }, rttText));
+      row.appendChild(elem("button", {
+        class: "relay-toggle" + (relay.enabled ? " on" : ""),
+        "data-url": relay.url,
+        "aria-label": "Toggle",
+        "data-tip": "Alternar ativação",
+      }));
+
+      const removeBtn = elem("button", {
+        class: "relay-remove",
+        "data-url": relay.url,
+        "aria-label": "Remover",
+        "data-tip": "Remover relay",
+      });
+      removeBtn.appendChild(trashIcon());
+      row.appendChild(removeBtn);
+
       el.relayList.appendChild(row);
     });
     el.relayList.querySelectorAll(".relay-toggle").forEach((btn) => {
