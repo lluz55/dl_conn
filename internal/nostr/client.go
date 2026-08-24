@@ -10,6 +10,14 @@ import (
 	nostr "github.com/nbd-wtf/go-nostr"
 )
 
+const (
+	// maxEventAge bounds how old an incoming DM may be before it is treated as
+	// a replay rather than a live request.
+	maxEventAge = 5 * time.Minute
+	// maxEventClockSkew allows for a sender whose clock runs slightly ahead.
+	maxEventClockSkew = 1 * time.Minute
+)
+
 // Client manages connections to multiple Nostr relays.
 type Client struct {
 	sk          string // hex private key
@@ -159,6 +167,25 @@ func (c *Client) ParseEvent(evt *nostr.Event) (string, string, error) {
 	senderPub := evt.PubKey
 	if !c.IsAuthorized(senderPub) {
 		return "", "", fmt.Errorf("unauthorized sender: %s", senderPub)
+	}
+
+	// Relays are untrusted: the PubKey field is just a claim until the
+	// signature over it is checked. NIP-44 decryption would also fail for a
+	// forged event, but that is an accident of the crypto rather than an
+	// authentication step — verify explicitly so the guarantee is stated.
+	ok, err := evt.CheckSignature()
+	if err != nil {
+		return "", "", fmt.Errorf("checking signature: %w", err)
+	}
+	if !ok {
+		return "", "", fmt.Errorf("invalid signature for pubkey %s", senderPub)
+	}
+
+	// Reject stale events so a relay cannot replay an old authorized DM to
+	// force issuance of a fresh token.
+	age := time.Since(evt.CreatedAt.Time())
+	if age > maxEventAge || age < -maxEventClockSkew {
+		return "", "", fmt.Errorf("event timestamp out of range (age %s)", age)
 	}
 
 	plaintext, err := DecryptMessage(evt.Content, senderPub, c.sk)

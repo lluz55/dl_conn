@@ -2,6 +2,7 @@ package nostr
 
 import (
 	"testing"
+	"time"
 
 	nostr "github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip19"
@@ -244,3 +245,124 @@ func TestDeriveKeyPair(t *testing.T) {
 	}
 }
 
+
+// newTestClient builds a Client whose whitelist contains the given pubkey.
+func newTestClient(t *testing.T, hostSk string, authorizedPub string) *Client {
+	t.Helper()
+	npub, err := nip19.EncodePublicKey(authorizedPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewClient(hostSk, []string{"wss://relay.example"}, []string{npub}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// newSignedDM builds a NIP-44 encrypted DM from sender to host, signed.
+func newSignedDM(t *testing.T, senderSk, hostPub, plaintext string) *nostr.Event {
+	t.Helper()
+	ciphertext, err := EncryptMessage(plaintext, hostPub, senderSk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderPub, err := nostr.GetPublicKey(senderSk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evt := &nostr.Event{
+		PubKey:    senderPub,
+		Kind:      4,
+		Content:   ciphertext,
+		Tags:      nostr.Tags{{"p", hostPub}},
+		CreatedAt: nostr.Timestamp(time.Now().Unix()),
+	}
+	if err := evt.Sign(senderSk); err != nil {
+		t.Fatal(err)
+	}
+	return evt
+}
+
+func TestParseEvent_AcceptsSignedAuthorizedDM(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	hostPub, _ := nostr.GetPublicKey(hostSk)
+	senderSk := nostr.GeneratePrivateKey()
+	senderPub, _ := nostr.GetPublicKey(senderSk)
+
+	c := newTestClient(t, hostSk, senderPub)
+	evt := newSignedDM(t, senderSk, hostPub, `{"action":"discover_services"}`)
+
+	gotPub, plaintext, err := c.ParseEvent(evt)
+	if err != nil {
+		t.Fatalf("ParseEvent rejected a valid DM: %v", err)
+	}
+	if gotPub != senderPub {
+		t.Errorf("sender = %s, want %s", gotPub, senderPub)
+	}
+	if plaintext != `{"action":"discover_services"}` {
+		t.Errorf("plaintext = %q", plaintext)
+	}
+}
+
+// A relay is untrusted, so it can hand us an event whose PubKey names an
+// authorized sender while the signature does not back that claim.
+func TestParseEvent_RejectsForgedSignature(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	hostPub, _ := nostr.GetPublicKey(hostSk)
+	senderSk := nostr.GeneratePrivateKey()
+	senderPub, _ := nostr.GetPublicKey(senderSk)
+
+	c := newTestClient(t, hostSk, senderPub)
+	evt := newSignedDM(t, senderSk, hostPub, `{"action":"discover_services"}`)
+
+	// Keep the authorized PubKey, corrupt the signature.
+	evt.Sig = "00" + evt.Sig[2:]
+
+	if _, _, err := c.ParseEvent(evt); err == nil {
+		t.Fatal("ParseEvent accepted an event with an invalid signature")
+	}
+}
+
+func TestParseEvent_RejectsStaleEvent(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	hostPub, _ := nostr.GetPublicKey(hostSk)
+	senderSk := nostr.GeneratePrivateKey()
+	senderPub, _ := nostr.GetPublicKey(senderSk)
+
+	c := newTestClient(t, hostSk, senderPub)
+
+	ciphertext, err := EncryptMessage(`{"action":"discover_services"}`, hostPub, senderSk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evt := &nostr.Event{
+		PubKey:    senderPub,
+		Kind:      4,
+		Content:   ciphertext,
+		Tags:      nostr.Tags{{"p", hostPub}},
+		CreatedAt: nostr.Timestamp(time.Now().Add(-1 * time.Hour).Unix()),
+	}
+	if err := evt.Sign(senderSk); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := c.ParseEvent(evt); err == nil {
+		t.Fatal("ParseEvent accepted a replayed hour-old event")
+	}
+}
+
+func TestParseEvent_RejectsUnauthorizedSender(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	hostPub, _ := nostr.GetPublicKey(hostSk)
+	authorizedSk := nostr.GeneratePrivateKey()
+	authorizedPub, _ := nostr.GetPublicKey(authorizedSk)
+	strangerSk := nostr.GeneratePrivateKey()
+
+	c := newTestClient(t, hostSk, authorizedPub)
+	evt := newSignedDM(t, strangerSk, hostPub, `{"action":"discover_services"}`)
+
+	if _, _, err := c.ParseEvent(evt); err == nil {
+		t.Fatal("ParseEvent accepted a DM from an unauthorized sender")
+	}
+}
