@@ -25,6 +25,7 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 6 | Módulo NixOS, SOPS & Validação E2E | [06-nixos-e2e.md](06-nixos-e2e.md) | ✅ concluída | 5/5 |
 | 7 | Diagnóstico e Teste de Relays no Frontend | [07-relay-testing.md](07-relay-testing.md) | ✅ concluída | 6/6 |
 | 8 | Cofre Cifrado de Sessão (PIN / Biometria) | [08-session-vault-auth.md](08-session-vault-auth.md) | ✅ concluída | 6/6 |
+| 9 | QR do keygen para auto-preenchimento do nsec no frontend | [09-keygen-qr-login.md](09-keygen-qr-login.md) | ✅ concluída | 6/6 |
 
 ---
 

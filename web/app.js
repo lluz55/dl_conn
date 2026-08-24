@@ -3,6 +3,7 @@ import { NostrAuth } from '/js/nostr_auth.js';
 import { NostrClient } from '/js/nostr_client.js';
 import { RelayManager } from '/js/relay_manager.js';
 import { SessionManager } from '/js/session_manager.js';
+import { startScan } from '/js/qr_scanner.js';
 
 (function () {
   "use strict";
@@ -51,6 +52,11 @@ import { SessionManager } from '/js/session_manager.js';
     tunnelExpiry: $("tunnel-expiry"),
     btnClearServices: $("btn-clear-services"),
     btnClearAll: $("btn-clear-all"),
+    btnScanQr: $("btn-scan-qr"),
+    qrOverlay: $("qr-overlay"),
+    qrVideo: $("qr-video"),
+    qrStatus: $("qr-status"),
+    btnQrClose: $("btn-qr-close"),
   };
 
   let expiryTimer = null;
@@ -151,6 +157,8 @@ import { SessionManager } from '/js/session_manager.js';
     el.btnLockSession.addEventListener("click", () => state.session.lock());
     el.btnClearServices.addEventListener("click", onClearServices);
     el.btnClearAll.addEventListener("click", onClearAll);
+    el.btnScanQr.addEventListener("click", onScanQr);
+    el.btnQrClose.addEventListener("click", stopQrScan);
   }
 
   function setSessionStatus(text, tone) {
@@ -268,6 +276,37 @@ import { SessionManager } from '/js/session_manager.js';
       el.nsecInput.value = "";
     } catch (err) {
       el.vaultStatus.textContent = "Erro: " + err.message;
+    }
+  }
+
+  let _qrStop = null;
+
+  function stopQrScan() {
+    if (_qrStop) { _qrStop(); _qrStop = null; }
+    el.qrOverlay.classList.add("hidden");
+    el.qrStatus.textContent = "";
+  }
+
+  async function onScanQr() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      el.vaultStatus.textContent = "Câmera indisponível neste navegador.";
+      return;
+    }
+    el.qrOverlay.classList.remove("hidden");
+    el.qrStatus.textContent = "Aponte a câmera para o QR do nsec…";
+    try {
+      _qrStop = await startScan({
+        video: el.qrVideo,
+        onStatus: (msg) => { el.qrStatus.textContent = msg; },
+        onResult: (nsec) => {
+          stopQrScan();
+          el.nsecInput.value = nsec;
+          el.vaultStatus.textContent = "nsec lido do QR. Entrando…";
+          onLoginNsec();
+        },
+      });
+    } catch (err) {
+      el.qrStatus.textContent = "Não foi possível abrir a câmera: " + err.message;
     }
   }
 
