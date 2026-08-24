@@ -61,7 +61,16 @@ Veja `nixos/module.nix`.
 - Todos os DMs Nostr usam NIP-44 (criptografia).
 - Nenhum *payload* não criptografado é publicado.
 - A *nsec* e o binário destino devem ser injetados via SOPS/`nsecFile`, nunca hardcoded.
-- Relays não são confiáveis por definição; assinaturas são verificadas.
+- Relays não são confiáveis por definição: a assinatura de cada evento recebido é
+  verificada (`CheckSignature`) e eventos fora da janela de 5 min são descartados
+  para impedir replay.
+- O SPA não carrega código de terceiros em runtime — `nostr-tools` e `jsQR` são
+  *vendorizados* em `web/vendor/` e a página aplica CSP `script-src 'self'`.
+  Ao atualizar essas bibliotecas, baixe o *bundle* e atualize o arquivo local;
+  não reintroduza `import` de CDN, pois a CSP o bloqueia.
+- A chave privada do cliente nunca é gravada em `localStorage`/`sessionStorage`
+  em texto claro: vive em memória, e o único formato em repouso é o cofre
+  AES-256-GCM de `crypto_vault.js`.
 
 Consulte [docs/runbook.md](docs/runbook.md) para operação e rotação de chaves.
 
