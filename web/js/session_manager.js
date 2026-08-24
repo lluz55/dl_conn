@@ -29,6 +29,8 @@ export class SessionManager {
     /** @private */ this._timer = null;
     /** @private */ this._listeners = [];
     /** @private */ this._locked = true;
+    /** @private In-memory only — never persisted. See unlockWithBiometric(). */
+    this._bioPin = null;
 
     this._resetTimer();
     this._bindVisibility();
@@ -112,14 +114,17 @@ export class SessionManager {
     const result = await authenticateBiometric();
     if (!result.verified) throw new Error(result.error || "Biometric auth failed");
 
-    // Biometric success → try PIN "biometric" as the stored vault key
-    // The PRF extension isn't widely supported, so we use a biometric-gated
-    // stored PIN fallback. For full PRF support, add the extension later.
-    const storedPin = sessionStorage.getItem("dl_conn_bio_pin");
-    if (storedPin) {
-      return this.unlockWithPin(storedPin);
+    // Biometric success → replay the PIN captured during enableBiometric().
+    // The PRF extension isn't widely supported, so this bridges the gap. The
+    // PIN lives in memory only (see _bioPin): persisting it would hand any
+    // script on this origin the key that decrypts the vault, which defeats the
+    // point of encrypting the vault at all. The cost is that biometric unlock
+    // only works within a page session; after a reload the user enters the PIN
+    // once more, which re-arms the bridge.
+    if (this._bioPin) {
+      return this.unlockWithPin(this._bioPin);
     }
-    throw new Error("Biometric PIN bridge not configured");
+    throw new Error("Desbloqueio biométrico requer o PIN uma vez após recarregar a página");
   }
 
   /**
@@ -134,7 +139,7 @@ export class SessionManager {
     if (!identity) throw new Error("No identity to bind biometric to");
 
     await registerCredential(identity);
-    sessionStorage.setItem("dl_conn_bio_pin", pin);
+    this._bioPin = pin;
     this._emit("biometric-enabled");
   }
 
@@ -153,7 +158,7 @@ export class SessionManager {
     this.lock();
     removeVaultFromStorage();
     removeCredential();
-    sessionStorage.removeItem("dl_conn_bio_pin");
+    this._bioPin = null;
     this._resetBruteForce();
     this._emit("wiped");
   }

@@ -5,7 +5,11 @@ export class NostrAuth {
   constructor() {
     this.nostrTools = nostrTools;
     this.npub = null;
-    this.sk = null; // hex private key (only in sessionStorage)
+    // Hex private key, held in memory only. It is deliberately never written
+    // to sessionStorage/localStorage: the encrypted vault (crypto_vault.js) is
+    // the only at-rest form, and a plaintext copy in storage would let any
+    // script on this origin read the key straight out.
+    this.sk = null;
   }
 
   async loginNip07() {
@@ -37,7 +41,6 @@ export class NostrAuth {
     const pub = this.nostrTools.getPublicKey(skHex);
     this.npub = pub;
     sessionStorage.setItem("dl_conn_npub", pub);
-    sessionStorage.setItem("dl_conn_sk", skHex);
     return pub;
   }
 
@@ -45,19 +48,19 @@ export class NostrAuth {
     this.npub = null;
     this.sk = null;
     sessionStorage.removeItem("dl_conn_npub");
-    sessionStorage.removeItem("dl_conn_sk");
   }
 
+  /**
+   * The npub survives a reload (it is public); the private key does not, and
+   * must be recovered by unlocking the vault instead.
+   */
   getIdentity() {
     const npub = sessionStorage.getItem("dl_conn_npub");
-    const sk = sessionStorage.getItem("dl_conn_sk");
     this.npub = npub;
-    this.sk = sk;
-    return { npub, sk };
+    return { npub, sk: this.sk };
   }
 
   clearKey() {
     this.sk = null;
-    sessionStorage.removeItem("dl_conn_sk");
   }
 }
