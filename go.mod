@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/gorilla/websocket v1.5.0
+	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/nbd-wtf/go-nostr v0.52.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -46,5 +47,7 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
+	rsc.io/qr v0.2.0 // indirect
 )

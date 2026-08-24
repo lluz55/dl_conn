@@ -4,12 +4,18 @@
 *.dll
 *.so
 *.dylib
-dl_conn
+# Anchored to the repo root: an unanchored "dl_conn" also matches the
+# cmd/dl_conn/ source directory, which kept the daemon entrypoint untracked.
+/dl_conn
 *.app
 cmd/dl_conn/dl_conn
 
 # Go workspace
 vendor/
+# ...but the SPA's vendored JS libraries are source, not a build artifact:
+# they must be checked in or the GitHub Pages deploy ships a broken page.
+!web/vendor/
+!web/vendor/**
 go.work
 go.work.sum
 
