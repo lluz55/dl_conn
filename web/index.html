@@ -3,6 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- This origin holds the user's Nostr private key (in-memory and in the
+       encrypted vault), so script execution is restricted to same-origin files
+       only: no CDN, no inline script, no eval. Third-party libraries are
+       vendored under /vendor/ for this reason.
+
+       connect-src stays broad because the user may add arbitrary relays
+       (wss:) and the app probes them over https:; that is data fetching, not
+       code execution, and is not the vector CSP is defending here.
+
+       frame-ancestors is absent because browsers ignore it in <meta>; the
+       daemon sends it as a real header (see securityHeaders in main.go). -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self';
+    img-src 'self' data: blob:;
+    media-src 'self' blob:;
+    connect-src 'self' https: wss:;
+    form-action 'self';
+    base-uri 'none';
+    object-src 'none'" />
   <title>dl_conn</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -113,7 +134,7 @@
         </div>
 
         <!-- Host npub input (shown when no host configured) -->
-        <div id="host-npub-section" class="hidden" style="margin-top: var(--gap-sm);">
+        <div id="host-npub-section" class="hidden mt-sm">
           <label for="host-npub-input" class="status">Npub do host dl_conn:</label>
           <input type="text" id="host-npub-input" placeholder="npub1…" class="nsid-input" aria-label="Npub do host" />
           <button id="save-host-npub" class="btn btn-secondary btn-full" data-tip="Salvar npub do host e conectar">Salvar e conectar</button>

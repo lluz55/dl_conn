@@ -251,6 +251,8 @@ body {
 
 /* ── Hidden (utility, toggled by JS) ────────────────────────── */
 .hidden { display: none !important; }
+/* Replaces an inline style="" attribute, which the page CSP disallows. */
+.mt-sm { margin-top: var(--gap-sm); }
 
 /* ── Buttons ─────────────────────────────────────────────────── */
 .btn {

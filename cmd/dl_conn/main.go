@@ -129,7 +129,7 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// SPA static files
 	webDir := filepath.Join(".", "web")
-	fs := http.FileServer(http.Dir(webDir))
+	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
 	mux.Handle("/", fs)
 
 	// Auth endpoint
@@ -169,6 +169,37 @@ func run(cmd *cobra.Command, _ []string) error {
 	log.Println("Shutting down...")
 	_ = server.Shutdown(context.Background())
 	return nil
+}
+
+// spaCSP mirrors the <meta> policy in web/index.html. The meta tag is what
+// protects the GitHub Pages copy, which has no way to set headers; this header
+// covers the copy served by the daemon and additionally carries frame-ancestors,
+// which browsers ignore when it arrives via <meta>.
+//
+// It is applied only to the SPA. Proxied services (Home Assistant, Frigate)
+// ship their own markup and would break under this policy.
+const spaCSP = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self'; " +
+	"img-src 'self' data: blob:; " +
+	"media-src 'self' blob:; " +
+	"connect-src 'self' https: wss:; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'"
+
+// securityHeaders wraps the SPA file server with the response headers that
+// keep the origin holding the user's key material hard to attack.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", spaCSP)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // statusRecorder captures the response status code for logging.

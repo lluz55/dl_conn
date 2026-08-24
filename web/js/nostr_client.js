@@ -1,5 +1,5 @@
 /* nostr_client.js — Nostr signaling client using nostr-tools + NIP-44 */
-import * as nostrTools from 'https://esm.sh/nostr-tools@2.9.2';
+import * as nostrTools from '../vendor/nostr-tools-2.9.2.mjs';
 
 /**
  * Normalize a Nostr public/private key to a lowercase hex string (64 chars).

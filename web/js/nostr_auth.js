@@ -1,5 +1,5 @@
 /* nostr_auth.js — Identity detection: NIP-07 or manual nsec */
-import * as nostrTools from 'https://esm.sh/nostr-tools@2.9.2';
+import * as nostrTools from '../vendor/nostr-tools-2.9.2.mjs';
 
 export class NostrAuth {
   constructor() {
