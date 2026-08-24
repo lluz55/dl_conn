@@ -1,0 +1,60 @@
+# Compiled Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dl_conn
+*.app
+cmd/dl_conn/dl_conn
+
+# Go workspace
+vendor/
+go.work
+go.work.sum
+
+# Nix build artifacts
+result
+result-*
+nix-build
+.nix-whitelist
+
+# Nix flakes lock is tracked; but local build cache
+.closure-cache/
+
+# Secrets
+config.yaml
+config.*.yaml
+secrets/
+/run/secrets/
+*.nsec
+*.key
+id_nsec
+dl-conn-nsec
+
+# SOPS
+.sops.yaml
+*.sops.yaml
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.history/
+*.local
+
+# CI / coverage
+coverage*.out
+*.prof
+.junit/
+
+# Logs
+*.log
+*.pid
+
+# OS
+Thumbs.db
+Desktop.ini
