@@ -191,3 +191,52 @@ func TestAuthHandler_NoRedirectDefaultsToRoot(t *testing.T) {
 		t.Errorf("redirect = %q, want /", w.Header().Get("Location"))
 	}
 }
+
+func TestSafeRedirect(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty defaults to root", "", "/"},
+		{"plain path", "/frigate/", "/frigate/"},
+		{"path with query", "/hass/?view=map", "/hass/?view=map"},
+		{"double slash inside path is harmless", "/a//b", "/a//b"},
+
+		// Every case below resolves to a foreign origin in a browser.
+		{"protocol-relative", "//evil.com", "/"},
+		{"protocol-relative with path", "//evil.com/pwn", "/"},
+		{"absolute url", "https://evil.com", "/"},
+		{"scheme-only", "javascript:alert(1)", "/"},
+		{"backslash variant", `/\evil.com`, "/"},
+		{"backslash pair", `\\evil.com`, "/"},
+		{"relative path", "frigate/", "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := safeRedirect(tt.in); got != tt.want {
+				t.Errorf("safeRedirect(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuthHandler_RejectsOpenRedirect(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(time.Hour)
+	h := NewAuthHandler(tm, sm)
+
+	token, _, err := tm.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/auth?token="+token+"&redirect=//evil.com", nil)
+	w := httptest.NewRecorder()
+	h.HandleAuth(w, req)
+
+	if got := w.Header().Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want %q (off-origin redirect must not survive)", got, "/")
+	}
+}

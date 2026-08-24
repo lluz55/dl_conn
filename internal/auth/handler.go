@@ -51,20 +51,50 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) redirect(w http.ResponseWriter, r *http.Request) {
-	redirect := r.URL.Query().Get("redirect")
-	if redirect == "" {
-		redirect = "/"
-	}
-	if !strings.HasPrefix(redirect, "/") {
-		redirect = "/"
-	}
-	// prevent open redirect
-	if strings.Contains(redirect, "//") && !strings.HasPrefix(redirect, "//") {
-		redirect = "/"
-	}
-	_ = url.PathEscape(redirect)
-
+	redirect := safeRedirect(r.URL.Query().Get("redirect"))
 	http.Redirect(w, r, redirect, http.StatusFound)
+}
+
+// safeRedirect reduces a caller-supplied redirect target to a same-origin path,
+// falling back to "/" for anything else.
+//
+// The dangerous shapes are the ones a browser resolves against a *different*
+// origin even though they look path-like: "//evil.com" and "/\evil.com" are
+// both protocol-relative once normalized, and an absolute URL carries its own
+// host. Parsing the value and requiring an empty Scheme and Host rejects all
+// of them without having to enumerate the spellings by hand.
+func safeRedirect(redirect string) string {
+	const fallback = "/"
+
+	if redirect == "" {
+		return fallback
+	}
+	// Backslashes are normalized to "/" by browsers, so treat them as such
+	// before parsing rather than letting url.Parse keep them in the path.
+	if strings.ContainsAny(redirect, `\`) {
+		return fallback
+	}
+	u, err := url.Parse(redirect)
+	if err != nil {
+		return fallback
+	}
+	// Scheme or Host set means the target is not same-origin. Host is also
+	// non-empty for "//evil.com", which is what the previous check let through.
+	if u.Scheme != "" || u.Host != "" || u.Opaque != "" {
+		return fallback
+	}
+	if !strings.HasPrefix(u.Path, "/") {
+		return fallback
+	}
+
+	out := u.EscapedPath()
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		out += "#" + u.EscapedFragment()
+	}
+	return out
 }
 
 // tokenPrefix returns a short, non-sensitive prefix of a token for log correlation
