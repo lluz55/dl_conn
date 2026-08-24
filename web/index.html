@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dl_conn</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- Inline icon sprite (outline style, currentColor). Symbols are reused by both static
+       markup and JS-injected markup via <use href="#i-…">. -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false" width="0" height="0">
+    <symbol id="i-sun"    viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M5.64 5.64l1.41 1.41M16.95 16.95l1.41 1.41M2 12h2M20 12h2M5.64 18.36l1.41-1.41M16.95 7.05l1.41-1.41"/></symbol>
+    <symbol id="i-moon"   viewBox="0 0 24 24"><path d="M21 12.79A9.95 9.95 0 0 1 12.21 4 8 8 0 1 0 21 12.79z"/></symbol>
+    <symbol id="i-lock"   viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="9" rx="2"/><circle cx="12" cy="15" r="1.5"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></symbol>
+    <symbol id="i-key"    viewBox="0 0 24 24"><path d="M12 17V3m0 0L7 8m5-5 5 5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path d="M12 4A8 8 0 0 0 4 12c0 4.42 3.58 8 8 8s8-3.58 8-9-3.58-8-8-8z"/><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M2 12h2M20 12h2M5.64 5.64 6.34 6.34M17.66 17.66l.7.7M5.64 18.36 6.34 17.66M17.66 6.34l.7-.7"/></symbol>
+    <symbol id="i-relays" viewBox="0 0 24 24"><path d="M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M3 12a9 9 0 0 1 18 0"/><path d="M5 5a14 14 0 0 1 14 0"/><circle cx="12" cy="19" r="1.2"/></symbol>
+    <symbol id="i-plus"   viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-launch" viewBox="0 0 24 24"><path d="M7 7h10v10"/><path d="M7 17l10-10"/></symbol>
+    <symbol id="i-trash"  viewBox="0 0 24 24"><path d="M6 9h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/><path d="M9 5a3 3 0 0 1 6 0v2H9z"/><path d="M4 9h16"/></symbol>
+    <symbol id="i-save"   viewBox="0 0 24 24"><path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M7 6h10v4H7z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-9-9z"/><path d="M12 7v5l3 3"/></symbol>
+    <symbol id="i-check"  viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
+    <symbol id="i-package" viewBox="0 0 24 24"><path d="M3 6h18v2H3zM6 10h12v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-alert"  viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+    <symbol id="i-timer"  viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></symbol>
+  </svg>
+
+  <div id="loading" class="loading">
+    <span class="spinner" aria-label="Carregando"></span>
+    <span class="loading-text">Carregando dl_conn…</span>
+  </div>
+
+  <div id="app" class="app-container hidden">
+
+    <header class="header">
+      <div class="header-title">
+        <span class="logo" aria-hidden="true">◆</span>
+        <h1>dl_conn</h1>
+      </div>
+      <div class="header-actions">
+        <button id="btn-lock-session" class="btn-icon hidden" aria-label="Bloquear sessão" data-tip="Bloquear sessão">
+          <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
+        </button>
+        <button id="btn-test-relays" class="btn-icon" aria-label="Testar relays" data-tip="Testar relays">
+          <svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg>
+        </button>
+        <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip="Limpar lista de serviços">
+          <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+        </button>
+        <button id="theme-toggle" class="btn-icon" aria-label="Alternar tema" data-tip="Alternar tema">
+          <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+
+      <!-- Vault / Unlock -->
+      <section id="vault-section" class="card">
+        <div class="vault-head">
+          <h2>Identidade Nostr</h2>
+          <span id="vault-status" class="status" role="status" aria-live="polite"></span>
+        </div>
+
+        <!-- Vault locked: unlock UI -->
+        <div id="unlock-ui" class="hidden">
+          <div id="unlock-identity" class="identity-hint" aria-label="Identidade salva"></div>
+
+          <div class="pin-input-group">
+            <input type="password" id="pin-input" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN" />
+            <button id="btn-unlock-pin" class="btn btn-primary" data-tip="Desbloquear com PIN">Desbloquear</button>
+          </div>
+
+          <button id="btn-unlock-bio" class="btn btn-ghost hidden" data-tip="Desbloquear com biometria">
+            <svg class="icon" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
+            Desbloquear com biometria
+          </button>
+
+          <button id="btn-wipe" class="btn-link-danger" data-tip="Esqueci o PIN / usar outra conta">Esqueci o PIN / usar outra conta</button>
+        </div>
+
+        <!-- Vault empty: login / creation -->
+        <div id="login-ui" class="hidden">
+          <button id="login-nip07" class="btn btn-primary btn-full" data-tip="Login via NIP-07 (Alby, nos2x, Amber)">
+            <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
+            Login via NIP-07
+          </button>
+
+          <details id="nsec-fallback" class="nsec-fallback">
+            <summary>Inserir nsec manualmente</summary>
+            <input type="password" id="nsec-input" class="nsid-input" placeholder="nsec1…" autocomplete="off" aria-label="nsec" />
+            <button id="btn-login-nsec" class="btn btn-secondary btn-full" data-tip="Login inserindo o nsec manualmente">Login</button>
+          </details>
+
+          <!-- Vault save prompt (shown after nsec login) -->
+          <div id="vault-save-prompt" class="hidden">
+            <p class="status">Salvar esta identidade no dispositivo com segurança?</p>
+            <div class="pin-input-group pin-input-group--stack">
+              <input type="password" id="pin-create" class="nsid-input" placeholder="Defina o PIN (4-8 dígitos)" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Novo PIN" />
+              <input type="password" id="pin-confirm" class="nsid-input" placeholder="Confirme o PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Confirme o PIN" />
+            </div>
+            <button id="btn-save-vault" class="btn btn-primary btn-full" data-tip="Salvar identidade no cofre">
+              <svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
+              Salvar identidade
+            </button>
+            <label class="checkbox-row">
+              <input type="checkbox" id="enable-biometric" />
+              <span>Habilitar desbloqueio biométrico</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Host npub input (shown when no host configured) -->
+        <div id="host-npub-section" class="hidden" style="margin-top: var(--gap-sm);">
+          <label for="host-npub-input" class="status">Npub do host dl_conn:</label>
+          <input type="text" id="host-npub-input" placeholder="npub1…" class="nsid-input" aria-label="Npub do host" />
+          <button id="save-host-npub" class="btn btn-secondary btn-full" data-tip="Salvar npub do host e conectar">Salvar e conectar</button>
+        </div>
+
+        <button id="btn-clear-all" class="btn-link-danger" data-tip="Apagar todos os dados do frontend">
+          <svg class="icon" aria-hidden="true"><use href="#i-alert"></use></svg> Apagar todos os dados
+        </button>
+      </section>
+
+      <!-- Relay Manager -->
+      <section id="relay-panel" class="card hidden">
+        <div class="relay-panel-header">
+          <h2>Relays</h2>
+          <span id="relay-summary" class="status-sub" role="status"></span>
+        </div>
+        <button id="btn-test-all-relays" class="btn btn-secondary btn-full" data-tip="Testar todos os relays">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+          Testar todos
+        </button>
+        <div id="relay-list" class="relay-list"></div>
+        <div class="relay-add-row">
+          <input type="text" id="relay-add-input" class="nsid-input" placeholder="wss://novo-relay.example.com" aria-label="Adicionar relay" />
+          <button id="btn-add-relay" class="btn btn-secondary" data-tip="Adicionar relay">
+            <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            Adicionar
+          </button>
+        </div>
+        <button id="btn-reset-relays" class="btn-link-danger" data-tip="Restaurar relays padrão">Restaurar padrões</button>
+      </section>
+
+      <!-- Services -->
+      <section id="services-section" class="card hidden">
+        <h2>Serviços</h2>
+        <div id="services-list" class="services-grid"></div>
+      </section>
+
+      <!-- Status -->
+      <section id="status-section" class="card">
+        <div class="status-grid">
+          <div class="status-item">
+            <span class="status-label">Túnel</span>
+            <span id="tunnel-status" class="status-value" role="status">Aguardando túnel…</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Expira em</span>
+            <span id="tunnel-expiry" class="status-value">—</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Relays</span>
+            <span id="relay-status" class="status-value" role="status">—</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Sessão</span>
+            <span id="session-status" class="status-value">—</span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

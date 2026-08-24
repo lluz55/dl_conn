@@ -1,0 +1,13 @@
+{
+  "host_npub": "npub1ahz75696lukz2470xpa8c470zqsu4hx4h8qwryw7ywesspsm34uqugatf2",
+  "relays": [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://relay.primal.net",
+    "wss://nostr.mom",
+    "wss://relay.snort.social",
+    "wss://nostr.oxtr.dev",
+    "wss://nostr.land"
+  ]
+}
