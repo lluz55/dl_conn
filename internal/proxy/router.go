@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -39,6 +40,7 @@ func (rt *Router) buildProxy(i int) {
 	origDir := proxy.Director
 	prefix := svc.Prefix
 	stripPrefix := svc.StripPrefix
+	svcID := svc.ID
 	proxy.Director = func(req *http.Request) {
 		origDir(req)
 		req.Header.Set("X-Forwarded-For", req.RemoteAddr)
@@ -50,6 +52,13 @@ func (rt *Router) buildProxy(i int) {
 				req.URL.Path = "/"
 			}
 		}
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		log.Printf("proxy error: service=%s target=%s path=%q remote=%s reason=%v",
+			svcID, target, req.URL.Path, req.RemoteAddr, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`{"error":"upstream service unavailable"}`))
 	}
 	rt.proxies[svc.ID] = proxy
 }
@@ -76,6 +85,8 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Zero-Trust: every other request requires a valid session
 	if rt.sessions == nil || !rt.sessions.ValidateSession(rt.sessions.GetSessionID(r)) {
+		log.Printf("auth denied: path=%q remote=%s reason=missing or invalid session",
+			r.URL.Path, r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error":"forbidden: authenticate at /auth"}`))
@@ -85,12 +96,16 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Route to service based on prefix
 	svc := rt.matchService(r.URL.Path)
 	if svc == nil {
+		log.Printf("route not found: path=%q remote=%s reason=no configured service prefix matches",
+			r.URL.Path, r.RemoteAddr)
 		http.NotFound(w, r)
 		return
 	}
 
 	proxy := rt.proxies[svc.ID]
 	if proxy == nil {
+		log.Printf("proxy not initialized: service=%s path=%q remote=%s",
+			svc.ID, r.URL.Path, r.RemoteAddr)
 		http.Error(w, "proxy not initialized", http.StatusInternalServerError)
 		return
 	}

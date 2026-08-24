@@ -42,28 +42,47 @@ func (m *TokenManager) Issue() (string, time.Duration, error) {
 	return token, m.ttl, nil
 }
 
+// ConsumeResult explains why Consume rejected a token, distinguishing an
+// unknown token from one that expired or was already used once.
+type ConsumeResult int
+
+const (
+	ConsumeOK ConsumeResult = iota
+	ConsumeUnknown
+	ConsumeAlreadyUsed
+	ConsumeExpired
+)
+
 // Consume validates and marks a token as used. Returns false if the token
 // is invalid, expired, or already consumed.
 func (m *TokenManager) Consume(token string) bool {
+	ok, _ := m.ConsumeWithReason(token)
+	return ok
+}
+
+// ConsumeWithReason behaves like Consume but also reports the reason for
+// rejection, so callers can log/return a precise diagnosis instead of a
+// generic "invalid or expired" message.
+func (m *TokenManager) ConsumeWithReason(token string) (bool, ConsumeResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	entry, ok := m.tokens[token]
 	if !ok {
-		return false
+		return false, ConsumeUnknown
 	}
 	if entry.used {
-		return false
+		return false, ConsumeAlreadyUsed
 	}
 	if time.Since(entry.createdAt) > m.ttl {
 		delete(m.tokens, token)
-		return false
+		return false, ConsumeExpired
 	}
 	m.tokens[token] = tokenEntry{
 		createdAt: entry.createdAt,
 		used:      true,
 	}
-	return true
+	return true, ConsumeOK
 }
 
 // Cleanup removes expired tokens.
