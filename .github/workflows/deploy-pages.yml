@@ -12,10 +12,7 @@ permissions:
 
 concurrency:
   group: github-pages
-  workflow_run:
-    workflow: "Deploy SPA"
-    trigger:
-      - workflow_run
+  cancel-in-progress: false
 
 env:
   WEB_DIR: web
