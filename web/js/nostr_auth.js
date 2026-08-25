@@ -23,10 +23,28 @@ export class NostrAuth {
   }
 
   loginNsec(nsec) {
-    if (!nsec || !nsec.startsWith("nsec")) {
+    if (!nsec) {
       throw new Error("Formato nsec inválido");
     }
-    const decoded = this.nostrTools.nip19.decode(nsec);
+    // Nostr bech32 keys are canonically lowercase. A key copied from some
+    // sources (OCR, autocorrect, mixed-case display) can arrive with stray
+    // capital letters, which makes the bech32 decoder reject it with
+    // "String must be lowercase or uppercase". Normalize a mixed-case key to
+    // lowercase before decoding; an all-uppercase key is already valid bech32
+    // and must be left untouched (its checksum is case-sensitive).
+    let normalized = nsec.trim();
+    if (/[A-Z]/.test(normalized) && /[a-z]/.test(normalized)) {
+      normalized = normalized.toLowerCase();
+    }
+    if (!/^nsec/i.test(normalized)) {
+      throw new Error("Formato nsec inválido");
+    }
+    let decoded;
+    try {
+      decoded = this.nostrTools.nip19.decode(normalized);
+    } catch (e) {
+      throw new Error("nsec inválido: verifique se copiou corretamente");
+    }
     let skHex = decoded.data;
     // nostr-tools@2.9.2 returns `data` as a Uint8Array for nsec, not a hex string.
     if (skHex instanceof Uint8Array) {
