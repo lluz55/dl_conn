@@ -1,9 +1,9 @@
 /* app.js — main SPA controller */
-import { NostrAuth } from '/js/nostr_auth.js';
-import { NostrClient } from '/js/nostr_client.js';
-import { RelayManager } from '/js/relay_manager.js';
-import { SessionManager } from '/js/session_manager.js';
-import { startScan } from '/js/qr_scanner.js';
+import { NostrAuth } from './js/nostr_auth.js';
+import { NostrClient } from './js/nostr_client.js';
+import { RelayManager } from './js/relay_manager.js';
+import { SessionManager } from './js/session_manager.js';
+import { startScan } from './js/qr_scanner.js';
 
 (function () {
   "use strict";
@@ -75,7 +75,7 @@ import { startScan } from '/js/qr_scanner.js';
 
   async function loadConfig() {
     try {
-      const resp = await fetch("/config.json");
+      const resp = await fetch("./config.json");
       if (resp.ok) {
         const cfg = await resp.json();
         state.config.hostNpub = cfg.host_npub || state.config.hostNpub;
