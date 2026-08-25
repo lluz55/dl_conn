@@ -72,6 +72,9 @@ func runKeygen(opts keygenOptions, w io.Writer, ew io.Writer) error {
 	if opts.qr {
 		fmt.Fprintln(ew, "QR code for your nsec (do not photograph or share — it is your private key):")
 		qrterminal.GenerateHalfBlock(kp.Nsec, qrterminal.L, w)
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "nsec: "+kp.Nsec)
+		fmt.Fprintln(w, "npub: "+kp.Npub)
 		return nil
 	}
 

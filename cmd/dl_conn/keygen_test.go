@@ -239,6 +239,12 @@ func TestRunKeygen_QR(t *testing.T) {
 	if !strings.Contains(out, "private key") {
 		t.Errorf("expected safety warning in output, got: %s", out)
 	}
+	if !strings.Contains(out, "nsec1") {
+		t.Errorf("expected nsec text in output, got: %s", out)
+	}
+	if !strings.Contains(out, "npub1") {
+		t.Errorf("expected npub text in output, got: %s", out)
+	}
 	hasBlock := strings.Contains(out, "\u2584") ||
 		strings.Contains(out, "\u2580") ||
 		strings.Contains(out, "\u2588")
