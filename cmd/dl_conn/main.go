@@ -14,6 +14,7 @@ import (
 
 	"dl_conn/internal/auth"
 	"dl_conn/internal/config"
+	"dl_conn/internal/health"
 	"dl_conn/internal/nostr"
 	"dl_conn/internal/proxy"
 	"dl_conn/internal/tunnel"
@@ -90,6 +91,7 @@ func run(cmd *cobra.Command, _ []string) error {
 			Icon:      s.Icon,
 			Prefix:    s.Prefix,
 			Websocket: s.Websocket,
+			Status:    health.StatusUnknown,
 		}
 	}
 
@@ -119,7 +121,16 @@ func run(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating nostr client: %w", err)
 	}
 
+
+	// Health monitor: services are advertised as "unknown" until a probe
+	// confirms the local target answers, so the dashboard never shows green
+	// for something that was merely configured.
+	monitor := health.New(cfg.Services)
+	go monitor.Run(ctx)
+
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
+	handler.SetStatusFunc(monitor.Status)
+	handler.SetProbeAll(monitor.ProbeAll)
 	go handler.Serve(ctx)
 
 	// HTTP server: serve web + proxy + auth + tunnel target

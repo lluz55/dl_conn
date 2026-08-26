@@ -366,3 +366,30 @@ func TestParseEvent_RejectsUnauthorizedSender(t *testing.T) {
 		t.Fatal("ParseEvent accepted a DM from an unauthorized sender")
 	}
 }
+
+func TestHandler_ServicesWithStatus(t *testing.T) {
+	h := NewHandler(nil, nil, "https://x.trycloudflare.com", []ServiceInfo{
+		{ID: "hass", Name: "HA", Status: "unknown"},
+		{ID: "frigate", Name: "Frigate", Status: "unknown"},
+	})
+
+	// Without a status func the configured values are advertised untouched.
+	if got := h.servicesWithStatus()[0].Status; got != "unknown" {
+		t.Fatalf("status without lookup = %q, want %q", got, "unknown")
+	}
+
+	h.SetStatusFunc(func(id string) string {
+		if id == "hass" {
+			return "up"
+		}
+		return "down"
+	})
+	out := h.servicesWithStatus()
+	if out[0].Status != "up" || out[1].Status != "down" {
+		t.Fatalf("stamped statuses = %q/%q, want up/down", out[0].Status, out[1].Status)
+	}
+	// The handler's own slice must not be mutated by a response.
+	if h.services[0].Status != "unknown" {
+		t.Fatalf("handler slice mutated: %q", h.services[0].Status)
+	}
+}
