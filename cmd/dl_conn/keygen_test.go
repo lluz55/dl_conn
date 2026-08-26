@@ -239,57 +239,17 @@ func TestRunKeygen_QR(t *testing.T) {
 	if !strings.Contains(out, "private key") {
 		t.Errorf("expected safety warning in output, got: %s", out)
 	}
+	if !strings.Contains(out, "nsec1") {
+		t.Errorf("expected nsec text in output, got: %s", out)
+	}
+	if !strings.Contains(out, "npub1") {
+		t.Errorf("expected npub text in output, got: %s", out)
+	}
 	hasBlock := strings.Contains(out, "\u2584") ||
 		strings.Contains(out, "\u2580") ||
 		strings.Contains(out, "\u2588")
 	if !hasBlock {
 		t.Errorf("expected QR block glyphs in output, got: %q", out)
-	}
-	if !strings.Contains(out, "Private Key (nsec): nsec1") {
-		t.Errorf("expected written nsec1 in output, got: %s", out)
-	}
-	if !strings.Contains(out, "Public Key (npub):  npub1") {
-		t.Errorf("expected written npub1 in output, got: %s", out)
-	}
-}
-
-func TestRunKeygen_QR_Npub(t *testing.T) {
-	var buf bytes.Buffer
-	opts := keygenOptions{qr: true, npubOnly: true}
-
-	if err := runKeygen(opts, &buf, &buf); err != nil {
-		t.Fatalf("runKeygen --qr --npub returned error: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "QR code for your npub (public key):") {
-		t.Errorf("expected public key label in output, got: %s", out)
-	}
-	if !strings.Contains(out, "Private Key (nsec): nsec1") {
-		t.Errorf("expected written nsec1 in output, got: %s", out)
-	}
-	if !strings.Contains(out, "Public Key (npub):  npub1") {
-		t.Errorf("expected written npub1 in output, got: %s", out)
-	}
-}
-
-func TestRunKeygen_QR_Nsec(t *testing.T) {
-	var buf bytes.Buffer
-	opts := keygenOptions{qr: true, nsecOnly: true}
-
-	if err := runKeygen(opts, &buf, &buf); err != nil {
-		t.Fatalf("runKeygen --qr --nsec returned error: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "QR code for your nsec") {
-		t.Errorf("expected nsec QR label in output, got: %s", out)
-	}
-	if !strings.Contains(out, "Private Key (nsec): nsec1") {
-		t.Errorf("expected written nsec1 in output, got: %s", out)
-	}
-	if !strings.Contains(out, "Public Key (npub):  npub1") {
-		t.Errorf("expected written npub1 in output, got: %s", out)
 	}
 }
 
@@ -301,4 +261,3 @@ func TestRunKeygen_QRJSONConflict(t *testing.T) {
 		t.Error("expected error when combining --qr with --json, got nil")
 	}
 }
-

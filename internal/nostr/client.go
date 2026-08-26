@@ -16,14 +16,19 @@ const (
 	maxEventAge = 5 * time.Minute
 	// maxEventClockSkew allows for a sender whose clock runs slightly ahead.
 	maxEventClockSkew = 1 * time.Minute
+	// minResubscribeDelay / maxResubscribeDelay bound the backoff used when a
+	// relay subscription drops and has to be re-established.
+	minResubscribeDelay = 1 * time.Second
+	maxResubscribeDelay = 30 * time.Second
 )
 
 // Client manages connections to multiple Nostr relays.
 type Client struct {
-	sk          string // hex private key
-	pool        *nostr.SimplePool
-	relays      []string
-	authorized  map[string]bool
+	sk            string // hex private key
+	pool          *nostr.SimplePool
+	relays        []string
+	authorized    map[string]bool
+	authMu        sync.RWMutex // guards authorized reads/writes
 	fallbackNip04 bool
 }
 
@@ -58,7 +63,40 @@ func NewClient(sk string, relays []string, authorizedNpubs []string, fallbackNip
 
 // IsAuthorized checks if the given pubkey hex is in the whitelist.
 func (c *Client) IsAuthorized(pubHex string) bool {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
 	return c.authorized[pubHex]
+}
+
+// SetAuthorized replaces the authorized npub list with a new set decoded
+// from the given bech32 npubs.  It always re-inserts the host's own
+// public key so the daemon never locks itself out.
+func (c *Client) SetAuthorized(npubs []string) error {
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+
+	newAuth := make(map[string]bool)
+	for _, n := range npubs {
+		hexPub, err := DecodeNpub(n)
+		if err != nil {
+			return fmt.Errorf("decoding authorized npub %q: %w", n, err)
+		}
+		newAuth[hexPub] = true
+	}
+
+	// Always keep the host's own pubkey authorized.
+	pub, _ := nostr.GetPublicKey(c.sk)
+	newAuth[pub] = true
+
+	c.authorized = newAuth
+	return nil
+}
+
+// AuthorizedCount returns the number of currently authorized public keys.
+func (c *Client) AuthorizedCount() int {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return len(c.authorized)
 }
 
 // Subscribe listens for encrypted DMs (kind 4 and kind 1059) directed to
@@ -74,7 +112,12 @@ func (c *Client) Subscribe(ctx context.Context) <-chan *nostr.Event {
 	return ch
 }
 
-// subscribeRelays subscribes on each relay individually.
+// subscribeRelays keeps one subscription alive per relay. A relay connection
+// that drops (idle timeout, restart, flaky network) used to end that relay's
+// goroutine for good: once every relay had dropped, the daemon stayed up but
+// deaf, so a later discovery request — e.g. the dashboard's refresh button —
+// was published successfully and simply never answered. Each relay therefore
+// reconnects with backoff until ctx is cancelled.
 func (c *Client) subscribeRelays(ctx context.Context, out chan<- *nostr.Event) {
 	pub, _ := nostr.GetPublicKey(c.sk)
 	var wg sync.WaitGroup
@@ -83,39 +126,63 @@ func (c *Client) subscribeRelays(ctx context.Context, out chan<- *nostr.Event) {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			relay, err := c.pool.EnsureRelay(url)
-			if err != nil {
-				return
-			}
-			sub, err := relay.Subscribe(ctx, []nostr.Filter{
-				{
-					Kinds:   []int{4, 1059},
-					Tags:    nostr.TagMap{"p": []string{pub}},
-				},
-			})
-			if err != nil {
-				return
-			}
-			defer sub.Unsub()
-			for {
+			backoff := minResubscribeDelay
+			for ctx.Err() == nil {
+				if c.subscribeOnce(ctx, url, pub, out) {
+					// A subscription that actually ran resets the backoff:
+					// the next drop is a fresh incident, not an escalation.
+					backoff = minResubscribeDelay
+				}
 				select {
-				case evt := <-sub.Events:
-					if evt != nil {
-						select {
-						case out <- evt:
-						case <-ctx.Done():
-							return
-						}
-					}
-				case <-sub.Context.Done():
-					return
 				case <-ctx.Done():
 					return
+				case <-time.After(backoff):
+				}
+				if backoff < maxResubscribeDelay {
+					backoff *= 2
 				}
 			}
 		}(relayURL)
 	}
 	wg.Wait()
+}
+
+// subscribeOnce runs a single subscription to completion, returning true if it
+// was established at all (as opposed to failing to connect or subscribe).
+func (c *Client) subscribeOnce(ctx context.Context, url, pub string, out chan<- *nostr.Event) bool {
+	relay, err := c.pool.EnsureRelay(url)
+	if err != nil {
+		return false
+	}
+	sub, err := relay.Subscribe(ctx, []nostr.Filter{
+		{
+			Kinds: []int{4, 1059},
+			Tags:  nostr.TagMap{"p": []string{pub}},
+		},
+	})
+	if err != nil {
+		return false
+	}
+	defer sub.Unsub()
+	for {
+		select {
+		case evt, ok := <-sub.Events:
+			if !ok {
+				return true
+			}
+			if evt != nil {
+				select {
+				case out <- evt:
+				case <-ctx.Done():
+					return true
+				}
+			}
+		case <-sub.Context.Done():
+			return true
+		case <-ctx.Done():
+			return true
+		}
+	}
 }
 
 // PublishResponse encrypts and publishes the response payload to all relays.

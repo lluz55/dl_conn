@@ -54,7 +54,7 @@
     <span class="loading-text">Carregando dl_conn…</span>
   </div>
 
-  <div id="app" class="app-container hidden">
+  <div id="app" class="app-container hidden" data-phase="setup">
 
     <header class="header">
       <div class="header-title">
@@ -65,12 +65,6 @@
         <button id="btn-lock-session" class="btn-icon hidden" aria-label="Bloquear sessão" data-tip="Bloquear sessão">
           <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
         </button>
-        <button id="btn-test-relays" class="btn-icon" aria-label="Testar relays" data-tip="Testar relays">
-          <svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg>
-        </button>
-        <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip="Limpar lista de serviços">
-          <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
-        </button>
         <button id="theme-toggle" class="btn-icon" aria-label="Alternar tema" data-tip="Alternar tema">
           <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
         </button>
@@ -78,6 +72,9 @@
     </header>
 
     <main class="main">
+
+      <div class="app-columns">
+        <div class="col col-setup">
 
       <!-- Vault / Unlock -->
       <section id="vault-section" class="card">
@@ -136,21 +133,15 @@
               <input type="checkbox" id="enable-biometric" />
               <span>Habilitar desbloqueio biométrico</span>
             </label>
+            <button id="btn-skip-vault" class="btn-link" data-tip="Seguir sem salvar a identidade neste dispositivo">Agora não</button>
           </div>
-        </div>
-
-        <!-- Host npub input (shown when no host configured) -->
-        <div id="host-npub-section" class="hidden mt-sm">
-          <label for="host-npub-input" class="status">Npub do host dl_conn:</label>
-          <input type="text" id="host-npub-input" placeholder="npub1…" class="nsid-input" aria-label="Npub do host" />
-          <button id="save-host-npub" class="btn btn-secondary btn-full" data-tip="Salvar npub do host e conectar">Salvar e conectar</button>
         </div>
 
         <button id="btn-clear-all" class="btn-link-danger" data-tip="Apagar todos os dados do frontend">Apagar todos os dados</button>
       </section>
 
       <!-- Relay Manager -->
-      <section id="relay-panel" class="card hidden">
+      <section id="relay-panel" class="card">
         <div class="relay-panel-header">
           <h2>Relays</h2>
           <span id="relay-summary" class="status-sub" role="status"></span>
@@ -170,9 +161,50 @@
         <button id="btn-reset-relays" class="btn-link-danger" data-tip="Restaurar relays padrão">Restaurar padrões</button>
       </section>
 
+      <!-- Auto-lock timer settings -->
+      <section id="auto-lock-section" class="card">
+        <div class="card-head">
+          <h2>Bloqueio automático</h2>
+          <svg class="icon" aria-hidden="true"><use href="#i-timer"></use></svg>
+        </div>
+        <div class="auto-lock-row">
+          <label for="auto-lock-timeout" class="status">Bloquear após inatividade:</label>
+          <select id="auto-lock-timeout" class="nsid-select" aria-label="Tempo de bloqueio automático">
+            <option value="0">Desativado</option>
+            <option value="5">5 minutos</option>
+            <option value="10">10 minutos</option>
+            <option value="15" selected>15 minutos</option>
+            <option value="30">30 minutos</option>
+            <option value="60">1 hora</option>
+          </select>
+        </div>
+        <p class="status-sub" id="auto-lock-status">Bloqueio automático: 15 minutos</p>
+      </section>
+
+      <!-- Host npub input (shown when no host configured) -->
+      <section id="host-npub-section" class="card hidden">
+        <h2>Host dl_conn</h2>
+        <label for="host-npub-input" class="status">Npub do host dl_conn:</label>
+        <input type="text" id="host-npub-input" placeholder="npub1…" class="nsid-input" aria-label="Npub do host" />
+        <button id="save-host-npub" class="btn btn-secondary btn-full" data-tip="Salvar npub do host e conectar">Salvar e conectar</button>
+      </section>
+        </div>
+
+        <div class="col col-live">
+
       <!-- Services -->
       <section id="services-section" class="card hidden">
-        <h2>Serviços</h2>
+        <div class="card-head">
+          <h2>Serviços</h2>
+          <div class="card-head-actions">
+            <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip="Atualizar status dos serviços">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+            </button>
+            <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip="Limpar lista de serviços">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+            </button>
+          </div>
+        </div>
         <div id="services-list" class="services-grid"></div>
       </section>
 
@@ -197,6 +229,8 @@
           </div>
         </div>
       </section>
+        </div>
+      </div>
 
     </main>
   </div>

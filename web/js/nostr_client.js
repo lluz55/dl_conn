@@ -129,7 +129,15 @@ export class NostrClient {
         onevent: (incomingEvent) => {
           if (incomingEvent.kind !== 4 && incomingEvent.kind !== 1059) return;
           // A DM reply is authored by the responder (host), with `#p` = our pub.
-          if (incomingEvent.pubkey !== hostPubHex) return;
+          if (incomingEvent.pubkey !== hostPubHex) {
+            // Almost always a host_npub misconfiguration: the DM is addressed
+            // to us but authored by someone other than the host we expect.
+            console.warn(
+              "[nostr] DM ignorado: autor", incomingEvent.pubkey,
+              "!= host esperado", hostPubHex
+            );
+            return;
+          }
 
           // Decrypt with NIP-44
           this._decryptEvent(incomingEvent, receiverSk, receiverNpub)
@@ -139,12 +147,12 @@ export class NostrClient {
                 responseChannel.dispatchEvent(
                   new CustomEvent("response", { detail: data })
                 );
-              } catch {
-                /* ignore parse failures */
+              } catch (err) {
+                console.warn("[nostr] resposta do host não é JSON válido:", err);
               }
             })
-            .catch(() => {
-              /* ignore decryption failures */
+            .catch((err) => {
+              console.warn("[nostr] falha ao decriptar DM do host (NIP-44):", err);
             });
         },
       }

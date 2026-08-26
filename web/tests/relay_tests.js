@@ -1,7 +1,7 @@
 /* relay_tests.js — Unit tests for RelayTester and RelayManager */
 
 import { RelayTester } from '../js/relay_tester.js';
-import { RelayManager } from '../js/relay_manager.js';
+import { RelayManager, DEFAULT_RELAYS } from '../js/relay_manager.js';
 
 /* ── Test helpers ──────────────────────────────────────────── */
 
@@ -146,7 +146,7 @@ console.log("  [Reset]");
 mgr.add("wss://custom.example.com");
 mgr.reset();
 const afterReset = mgr.getAll();
-assert(afterReset.length === 4, "Reset restores 4 defaults");
+assert(afterReset.length === DEFAULT_RELAYS.length, "Reset restores every default relay");
 assert(!afterReset.some((r) => r.url === "wss://custom.example.com"), "Custom relay gone after reset");
 
 // Test 15: getRankedUrls returns array of strings
@@ -154,7 +154,7 @@ console.log("  [Ranked URLs]");
 const ranked = mgr.getRankedUrls();
 assert(Array.isArray(ranked), "getRankedUrls returns array");
 assert(ranked.every((u) => typeof u === "string"), "All ranked items are strings");
-assert(ranked.length === 4, "Ranked has 4 entries");
+assert(ranked.length === DEFAULT_RELAYS.length, "Ranked has one entry per default relay");
 
 // Test 16: Event listener
 console.log("  [Events]");

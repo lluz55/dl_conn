@@ -171,16 +171,35 @@ body {
 }
 
 .main {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--gap-md);
+  width: 100%;
 }
 
 /* Desktop: wider, breathing layout */
 @media (min-width: 1024px) {
   body { padding: var(--gap-lg); }
-  .main { gap: var(--gap-lg); }
   .app-container { max-width: 1200px; }
+}
+
+/* ── Columns (Setup × Live) ─────────────────────────────────── */
+.app-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--gap-md);
+  align-items: start;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  min-width: 0;
+}
+.col-live { display: none; }  /* revealed only in live phase */
+.app-container[data-phase="live"] .col-live { display: flex; }
+
+@media (min-width: 1024px) {
+  .app-columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap-lg); }
+  .app-container[data-phase="setup"] .app-columns { grid-template-columns: 1fr; }
+  .app-container[data-phase="setup"] .col-setup { max-width: 720px; margin: 0 auto; width: 100%; }
 }
 
 /* ── Header ──────────────────────────────────────────────────── */
@@ -189,14 +208,14 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--gap-sm);
-  padding: var(--gap-sm) 0;
+  padding: var(--gap-xs) 0;
 }
 
 .header-title {
   display: flex;
   align-items: center;
   gap: var(--gap-sm);
-  font-size: var(--fs-h1);
+  font-size: var(--fs-xl);
   font-weight: var(--fw-bold);
   letter-spacing: -0.02em;
 }
@@ -205,9 +224,9 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  font-size: 20px;
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
   color: var(--color-primary);
 }
 
@@ -244,6 +263,19 @@ body {
   font-weight: var(--fw-semibold);
   margin: 0;
   color: var(--color-on-surface);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+.card-head h2 { margin: 0; }
+.card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
 }
 
 .card > .status,
@@ -324,6 +356,23 @@ body {
 }
 .btn-link-danger:hover { text-decoration: underline; }
 
+.btn-link {
+  background: transparent;
+  border: none;
+  color: var(--color-on-surface-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  padding: var(--gap-xs) 0;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.btn-link:hover { color: var(--color-on-surface); text-decoration: underline; }
+.btn-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-btn);
+}
+
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -340,6 +389,7 @@ body {
 }
 .btn-icon:hover { opacity: 0.85; background: var(--color-surface-strong); color: var(--color-on-surface); }
 .btn-icon:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.btn-icon[aria-busy="true"] .icon { animation: spin var(--duration-spin) linear infinite; }
 
 /* Keyboard focus — visible, consistent across interactive elements */
 .btn:focus-visible,
@@ -442,6 +492,40 @@ body {
   cursor: pointer;
 }
 
+/* ── Auto-lock timer ────────────────────────────────────────── */
+.auto-lock-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+}
+.auto-lock-row .status {
+  flex: 1;
+  min-width: 120px;
+}
+.nsid-select {
+  padding: 10px 14px;
+  border: var(--border-width) solid var(--color-outline);
+  border-radius: var(--radius-input);
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  min-width: 140px;
+}
+.nsid-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+.nsid-select option {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
 /* ── Status / text helpers ───────────────────────────────────── */
 .status {
   font-size: var(--fs-sm);
@@ -463,10 +547,16 @@ body {
 }
 
 .status-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--gap-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm) var(--gap-lg);
   font-size: var(--fs-sm);
+}
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 /* ── Vault ──────────────────────────────────────────────────── */
@@ -731,6 +821,8 @@ body {
 .dot-good { background-color: var(--color-success); opacity: 1; }
 .dot-warn { background-color: var(--color-warning); opacity: 1; }
 .dot-bad  { background-color: var(--color-error); opacity: 1; }
+/* Service not yet confirmed by the host: dimmed grey, never green. */
+.dot-unknown { background-color: var(--color-on-surface-dim); opacity: 0.5; }
 
 .status-ok  { color: var(--color-success); }
 .status-warn { color: var(--color-warning); }

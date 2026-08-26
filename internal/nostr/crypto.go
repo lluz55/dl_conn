@@ -34,6 +34,11 @@ func DecodeNsec(nsec string) (string, error) {
 	return "", errInvalidKey
 }
 
+// NpubFromHex encodes a hex public key to bech32 npub.
+func NpubFromHex(hexPub string) (string, error) {
+	return nip19.EncodePublicKey(hexPub)
+}
+
 // DecodeNpub converts a bech32 npub or hex public key to hex.
 func DecodeNpub(npub string) (string, error) {
 	if strings.HasPrefix(npub, "npub") {

@@ -17,6 +17,9 @@ type ServiceInfo struct {
 	Icon        string `json:"icon"`
 	Prefix      string `json:"prefix"`
 	Websocket   bool   `json:"websocket"`
+	// Status is "up", "down" or "unknown". The frontend only paints a service
+	// green for "up" — an unprobed service is never a confirmed one.
+	Status      string `json:"status"`
 }
 
 // ResponsePayload is the JSON encrypted with NIP-44 and sent back.

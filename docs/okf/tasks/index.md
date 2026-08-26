@@ -2,7 +2,7 @@
 type: index
 title: "Índice de Tarefas de Implementação (OKF)"
 description: "Roteiro por fases para a implementação do dl_conn (Go Daemon + Nostr Signaling + Cloudflare Ephemeral Tunnel + GitHub Pages SPA)."
-timestamp: 2026-08-23T16:00:00Z
+timestamp: 2026-08-26T07:20:00Z
 ---
 
 # Índice de Tarefas de Implementação — `dl_conn`
@@ -26,6 +26,9 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 7 | Diagnóstico e Teste de Relays no Frontend | [07-relay-testing.md](07-relay-testing.md) | ✅ concluída | 6/6 |
 | 8 | Cofre Cifrado de Sessão (PIN / Biometria) | [08-session-vault-auth.md](08-session-vault-auth.md) | ✅ concluída | 6/6 |
 | 9 | QR do keygen para auto-preenchimento do nsec no frontend | [09-keygen-qr-login.md](09-keygen-qr-login.md) | ✅ concluída | 6/6 |
+| 10 | Sessão efêmera no login por nsec e feedback da descoberta | [10-nsec-session-start.md](10-nsec-session-start.md) | ✅ concluída | 6/6 |
+| 11 | Autorizar npubs com o daemon em execução | [11-runtime-npub-authorization.md](11-runtime-npub-authorization.md) | ✅ concluída | 7/7 |
+| 12 | Serviço verde só após confirmação de atividade | [12-service-health-status.md](12-service-health-status.md) | ✅ concluída | 6/6 |
 
 ---
 

@@ -7,6 +7,110 @@ type: log
 Histórico de mudanças relevantes no bundle OKF (`docs/okf/`). Cada entrada:
 data, o que mudou, por quê.
 
+## 2026-08-26
+
+- **Planejada a Fase 11 — autorizar npubs com o daemon em execução**
+  ([tasks/11-runtime-npub-authorization.md](tasks/11-runtime-npub-authorization.md)).
+  - Motivo de registrar: a allowlist é congelada na subida do processo
+    (`config.Load` → `nostr.NewClient`, `cmd/dl_conn/main.go`), então autorizar
+    um dispositivo novo obrigava a reiniciar o serviço — e reiniciar derruba o
+    túnel Cloudflare **efêmero**, invalidando a URL `trycloudflare.com` já
+    distribuída. O custo do restart é que justifica a fase; não é conveniência.
+  - Decisões tomadas com o usuário: interface é **subcomando CLI**
+    (`dl_conn npubs add`), não endpoint HTTP nem action Nostr — a operação é
+    administrativa e não deve ampliar a superfície exposta pelo túnel; a
+    persistência é o **próprio `config.yaml`** (fonte única de verdade, sem
+    segundo arquivo de estado para divergir); escopo só `add`.
+  - Armadilha assumida e documentada: sob NixOS o `--config` vem do
+    `/nix/store` (read-only), então escrever no `config.yaml` só funciona se
+    `services.dl-conn.configFile` apontar para `/var/lib/dl-conn` — o comando
+    falha em voz alta com essa instrução em vez de gravar noutro lugar.
+  - Efeito colateral que a fase precisa cobrir: `Client.authorized` hoje é
+    escrito só na construção e lido pela goroutine do `Serve` sem lock; tornar
+    a lista recarregável (SIGHUP) transforma isso em data race, então
+    `sync.RWMutex` + `SetAuthorized` fazem parte do escopo, não são extra.
+  - Atualizado `concepts/security.md` com a seção da allowlist do daemon: até
+    aqui o conceito só falava das chaves do app Flutter e nada dizia sobre quem
+    pode alterar `authorizedNpubs` nem por qual caminho.
+## 2026-08-25
+
+- **Login por nsec abre a sessão na hora; o cofre virou passo opcional**
+  ([tasks/10-nsec-session-start.md](tasks/10-nsec-session-start.md)).
+  - Sintoma: nsec aceito ("Conectado: npub1…") e nenhum serviço aparecia.
+    Causa: a descoberta pende do evento `"unlocked"` do `SessionManager`, que
+    só era emitido por `createVault()`/`unlockWithPin()` — `onLoginNsec`
+    apenas guardava a identidade em `state.pendingIdentity`, então
+    `session.sk` ficava `null`, `startNostr()` abortava e a coluna Live nunca
+    era revelada.
+  - Novo `SessionManager.startSession(identity)`: sessão desbloqueada só em
+    memória, sem persistir nada. `createVault()` foi dividido (`saveVault()`
+    cifra/persiste) e só chama `startSession()` se ainda estiver bloqueado —
+    salvar o cofre de uma sessão viva não pode re-emitir `unlocked` e derrubar
+    a conexão Nostr.
+  - `startNostr()` passou a tratar `timeout`/`failed` de `sendDiscoverRequest()`
+    (o retorno era descartado) e ganhou timeout de 30 s apontando
+    `authorizedNpubs` — o host descarta em silêncio remetentes fora da
+    whitelist (`internal/nostr/client.go` → `ParseEvent`), o que era
+    indistinguível de "ainda carregando".
+  - Motivo pra registrar: a decisão de que **a chave em memória basta para
+    usar o app** e o cofre é conveniência (não porta de entrada) é o oposto do
+    que o fluxo anterior codificava, e contradizê-la reintroduz o bug.
+
+- **Reformulação de layout do SPA (`web/`): colunas Setup × Live.**
+  - `index.html`: envolve o conteúdo em `.app-columns` com `.col-setup`
+    (Identidade + Relays) e `.col-live` (Status + Serviços); `data-phase`
+    (`setup`/`live`) no `.app-container`; painel de relays **promovido** de
+    toggle no header para card visível (sem `hidden`); `btn-clear-services`
+    relocalizado para `.card-head` dentro de `#services-section`; header
+    enxuto (só brand + theme + lock).
+  - `style.css`: `.app-columns` (grid 1fr; `≥1024px` → `1fr 1fr`), `.col`,
+    `.col-live` (oculto em setup, flex em live), `.status-grid` vira rail
+    flex inline, `.card-head`, header slim (brand/tipo menores); sem
+    gradiente, sem inline, light/dark mantidos.
+  - `app.js`: `data-phase="live"` em `handleNostrResponse` (revela a coluna
+    Live na resposta do túnel Nostr); `data-phase="setup"` em
+    `onSessionEvent` (`locked`/`wiped`); `renderRelayList()` no `init` para
+    popular o painel promovido; removidos `btn-test-relays`/`toggleRelayPanel`.
+  - Motivo: o layout anterior era uma lista plana de 4 cards que não
+    refletia o state machine do app (`locked → connect → live`), escondia o
+    painel de relays atrás de um ícone e desperdiçava o espaço horizontal do
+    desktop. A divisão faseada elimina ruído precoce, melhora a descoberta de
+    relays e respeita a CSP (`style-src 'self'`, zero inline/CDN). Decisão
+    registrada em `concepts/web-frontend-layout.md`.
+  - Verificação: `node --check app.js` verde; `grep 'style='` em `index.html`
+    sem ocorrências (CSP ok); IDs exigidos presentes; `data-phase` cabeado.
+
+- **Correção de bug: login NIP-07 não revelava os serviços.** Causa raiz:
+  `onLoginNip07()` obtém só o `npub` (a extensão NIP-07 nunca expõe a chave
+  privada) e chamava `startNostr()`, que aborta em `if (!state.session.sk)
+  return;` — assim `handleNostrResponse` nunca disparava, `data-phase` ficava
+  `"setup"` e a coluna Live (com Serviços) permanecia oculta. Como a
+  descriptografia NIP-44 da resposta do host exige a chave privada, NIP-07
+  sozinho nunca conseguiria mostrar serviços. Corrigido: `onLoginNip07` não
+  chama mais `startNostr()` silenciosamente; se não houver `state.session.sk`,
+  semente `pendingIdentity` e revela o fallback de nsec para o usuário
+  completar o fluxo seguro de cofre (que possui a chave). Verificado em
+  navegador headless (Chromium + Playwright-core): NIP-07 → fallback de nsec
+  → salvar cofre → `data-phase="live"`, coluna Live visível, serviço
+  renderizado.
+
+- **Correção: Serviços não apareciam após login (coluna Live oculta / prompt de
+  host-npub escondido).** Dois pontos: (1) `showHostNpubPrompt()` revelava
+  `#host-npub-section`, mas esse elemento vivia DENTRO de `#vault-section`, que
+  `onSessionEvent("unlocked")` esconde — logo o prompt ficava invisível e o
+  fluxo travava silenciosamente quando `host_npub` não estava configurado
+  (ex.: `config.json` sem `host_npub` ou não carregado), nunca chegando aos
+  serviços. Corrigido: `#host-npub-section` foi movido para `<section>
+  standalone` em `.col-setup` (fora do vault), revelável de forma independente.
+  (2) A coluna Live só revelava após a resposta do host, deixando a tela em
+  branco durante a conexão (sem feedback de "conectando"). Corrigido:
+  `onSessionEvent("unlocked")` agora define `data-phase="live"` ao autenticar,
+  revelando a coluna Live (status rail) imediatamente; os serviços populam
+  quando o host responde. Verificado em Chromium headless: (A) com `host_npub`
+  configurado → `data-phase="live"`, coluna Live visível, serviço renderizado;
+  (B) sem `host_npub` → coluna Live revelada e prompt de host-npub **visível**
+  (antes escondido), permitindo que o usuário informe o npub e prossiga.
+
 ## 2026-08-23
 
 - **Redesign visual do frontend SPA (`web/`):**
@@ -296,3 +400,28 @@ data, o que mudou, por quê.
   (`ButtonStyleButton`/`CardThemeData`/`ChipThemeData` não animam mudança de
   forma), então um widget próprio foi o único jeito de entregar o visual
   escolhido.
+
+## Fase 12 — status de serviço confirmado por probe
+
+O ponto verde do card de serviço passou a significar **observação**, não
+configuração: antes ele vinha de `services[].websocket` (um flag do YAML), o
+que fazia serviço desligado aparecer "Live" desde o primeiro segundo. Agora o
+daemon roda `internal/health.Monitor` (dial TCP no `target`, a cada 30 s),
+carimba `status` (`up`/`down`/`unknown`) em cada `ServiceInfo` no momento da
+resposta Nostr, e a SPA só pinta `.dot-good` para `up`. Motivo de registrar: a
+escolha de sondar **no host** (e não pela SPA, através do túnel) é o que evita
+precisar de CORS no proxy, e o preço assumido é que o dashboard mostra o último
+probe conhecido, não um stream ao vivo. Ver [tasks/12-service-health-status.md](tasks/12-service-health-status.md).
+
+## Correção — resumo de relays contava latência como desconexão
+
+`updateRelaySummary` (`web/app.js`) filtrava por `r.ok && r.rttMs < 600` e
+chamava o resultado de "relays conectados". Relay lento porém online saía da
+contagem enquanto sua linha na lista mostrava badge colorido e RTT — o resumo
+e a lista discordavam sobre o mesmo relay, e o usuário lia isso como "vários
+offline". Passou a contar só `r.ok`, com os lentos reportados como sufixo
+separado, e o limiar virou `SLOW_RELAY_MS`, único para resumo e badge. Motivo
+de registrar: a regra geral é que **um rótulo de contagem tem que descrever
+exatamente o predicado que ele conta** — misturar disponibilidade com
+qualidade num só número foi a origem do bug. Ver
+[tasks/07-relay-testing.md](tasks/07-relay-testing.md#correções-posteriores).

@@ -42,7 +42,7 @@ Can also derive the public key from an existing private key using --from-key.`,
 	cmd.Flags().BoolVar(&opts.npubOnly, "npub", false, "output only npub (bech32 public key)")
 	cmd.Flags().BoolVar(&opts.pubHexOnly, "pub-hex", false, "output only public key in hex")
 	cmd.Flags().BoolVar(&opts.secHexOnly, "sec-hex", false, "output only private key in hex")
-	cmd.Flags().BoolVar(&opts.qr, "qr", false, "print a scannable QR code in the terminal (nsec by default, or npub with --npub)")
+	cmd.Flags().BoolVar(&opts.qr, "qr", false, "print the nsec as a scannable QR code in the terminal")
 
 	return cmd
 }
@@ -70,42 +70,12 @@ func runKeygen(opts keygenOptions, w io.Writer, ew io.Writer) error {
 	}
 
 	if opts.qr {
-		var qrTarget string
-		if opts.npubOnly || opts.pubHexOnly {
-			if opts.pubHexOnly {
-				qrTarget = kp.PublicKeyHex
-				fmt.Fprintln(ew, "QR code for your public key (hex):")
-			} else {
-				qrTarget = kp.Npub
-				fmt.Fprintln(ew, "QR code for your npub (public key):")
-			}
-		} else {
-			if opts.secHexOnly {
-				qrTarget = kp.PrivateKeyHex
-				fmt.Fprintln(ew, "QR code for your private key in hex (do not photograph or share — it is your private key):")
-			} else {
-				qrTarget = kp.Nsec
-				fmt.Fprintln(ew, "QR code for your nsec (do not photograph or share — it is your private key):")
-			}
-		}
-		qrterminal.GenerateHalfBlock(qrTarget, qrterminal.L, w)
-		fmt.Fprintln(w)
-
-		msg := fmt.Sprintf(`Nostr Keypair:
-
-  Private Key (nsec): %s
-  Private Key (hex):  %s
-  Public Key (npub):  %s
-  Public Key (hex):   %s
-
-Example config.yaml usage:
-  nostr:
-    nsec: "%s"
-    authorizedNpubs:
-      - "%s"
-`, kp.Nsec, kp.PrivateKeyHex, kp.Npub, kp.PublicKeyHex, kp.Nsec, kp.Npub)
-		_, err = fmt.Fprint(w, msg)
-		return err
+		fmt.Fprintln(ew, "QR code for your nsec (do not photograph or share — it is your private key):")
+		qrterminal.GenerateHalfBlock(kp.Nsec, qrterminal.L, w)
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "nsec: "+kp.Nsec)
+		fmt.Fprintln(w, "npub: "+kp.Npub)
+		return nil
 	}
 
 	if opts.nsecOnly {

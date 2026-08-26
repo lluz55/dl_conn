@@ -25,13 +25,16 @@ export function parseQrResult(text) {
     throw new Error("QR vazio ou inválido");
   }
   const trimmed = text.trim();
-  if (!trimmed.startsWith("nsec1")) {
+  // QR nsecs are lowercase bech32, but normalize case so an uppercase scan
+  // is still accepted (bech32 accepts all-lowercase or all-uppercase).
+  const normalized = /[A-Z]/.test(trimmed) ? trimmed.toLowerCase() : trimmed;
+  if (!normalized.startsWith("nsec1")) {
     throw new Error("QR não contém um nsec (esperado prefixo nsec1)");
   }
-  if (!NSEC_BECH32_RE.test(trimmed)) {
+  if (!NSEC_BECH32_RE.test(normalized)) {
     throw new Error("nsec do QR com formato inválido");
   }
-  return trimmed;
+  return normalized;
 }
 
 async function getDecoder() {

@@ -13,6 +13,8 @@ type Handler struct {
 	tokenIssuer  TokenIssuer
 	tunnelURL    string
 	services     []ServiceInfo
+	statusFn     func(id string) string
+	probeAllFn   func(context.Context)
 }
 
 // TokenIssuer generates one-time auth tokens.
@@ -28,6 +30,34 @@ func NewHandler(client *Client, issuer TokenIssuer, tunnelURL string, services [
 		tunnelURL:   tunnelURL,
 		services:    services,
 	}
+}
+
+// SetStatusFunc installs a health lookup consulted at response time, so every
+// discovery reply carries the freshest observed status instead of whatever was
+// known when the handler was built.
+func (h *Handler) SetStatusFunc(fn func(id string) string) {
+	h.statusFn = fn
+}
+
+// SetProbeAll installs a function that triggers a fresh health probe of every
+// service. When set, each discovery response runs one probe first so the
+// caller gets current availability rather than the last cached 30s snapshot.
+func (h *Handler) SetProbeAll(fn func(context.Context)) {
+	h.probeAllFn = fn
+}
+
+// servicesWithStatus copies the advertised services with their current health
+// stamped in.
+func (h *Handler) servicesWithStatus() []ServiceInfo {
+	if h.statusFn == nil {
+		return h.services
+	}
+	out := make([]ServiceInfo, len(h.services))
+	copy(out, h.services)
+	for i := range out {
+		out[i].Status = h.statusFn(out[i].ID)
+	}
+	return out
 }
 
 // Serve subscribes to DM events and processes them.
@@ -64,12 +94,23 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 		return
 	}
 
+	// Trigger a fresh probe so the response carries the current status,
+	// not the last cached snapshot from the periodic monitor tick. The probe
+	// runs synchronously here because (a) it has its own bounded timeout via
+	// the monitor’s DialContext, and (b) keeping it sequential avoids racing
+	// the Status reads in servicesWithStatus() below.
+	if h.probeAllFn != nil {
+		probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer probeCancel()
+		h.probeAllFn(probeCtx)
+	}
+
 	token, ttl, err := h.tokenIssuer.Issue()
 	if err != nil {
 		return
 	}
 
-	resp := NewResponse(h.tunnelURL, token, ttl, h.services)
+	resp := NewResponse(h.tunnelURL, token, ttl, h.servicesWithStatus())
 	respJSON, err := MarshalResponse(resp)
 	if err != nil {
 		return

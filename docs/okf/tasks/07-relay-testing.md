@@ -96,3 +96,15 @@ sequenceDiagram
 4. ✅ O usuário pode adicionar um novo relay `wss://`, testá-lo instantaneamente e persistir sua inclusão entre recarregamentos de página.
 5. ✅ O `NostrClient` utiliza automaticamente os relays ativos e mais rápidos para enviar a mensagem cifrada de descoberta ao daemon NixOS.
 6. ✅ A interface funciona perfeitamente em telas compactas (smartphones) e desktop, respeitando temas claro e escuro.
+
+## Correções posteriores
+
+- **Contagem do resumo divergia da lista (`updateRelaySummary`, `web/app.js`).**
+  O resumo contava `r.ok && r.rttMs < 600` mas rotulava o número como
+  "relays conectados": um relay que respondia em 800 ms aparecia com badge
+  `moderate` e o RTT na sua linha (claramente online) e, ao mesmo tempo, ficava
+  de fora da contagem — dando a impressão de mais relays offline do que os que
+  realmente estavam. Agora a contagem é `r.ok` puro (handshake WebSocket
+  concluído) e a lentidão é reportada ao lado, nunca embutida no número. O
+  limiar virou a constante `SLOW_RELAY_MS`, compartilhada com `getBadgeClass`
+  para que resumo e badge não possam mais discordar.

@@ -16,7 +16,8 @@ import {
   removeCredential,
 } from './webauthn_manager.js';
 
-const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 min
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 min
+const STORAGE_KEY_TIMEOUT = "dl_conn_auto_lock_timeout";
 const MAX_ATTEMPTS = 10;
 const LOCKOUT_THRESHOLD = 3; // exponential delay starts after 3 failures
 const BRUTE_FORCE_KEY = "dl_conn_brute_force";
@@ -31,9 +32,43 @@ export class SessionManager {
     /** @private */ this._locked = true;
     /** @private In-memory only — never persisted. See unlockWithBiometric(). */
     this._bioPin = null;
+    /** @private Session is "pending" until first successful backend contact. */
+    this._pendingBackend = false;
+    /** @private */ this._inactivityTimeoutMs = this._loadTimeout();
 
     this._resetTimer();
     this._bindVisibility();
+  }
+
+  /* ── Timeout configuration ─────────────────────────────────── */
+
+  /** Load timeout from localStorage (in minutes), return ms */
+  _loadTimeout() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_TIMEOUT);
+      if (saved !== null) {
+        const minutes = parseInt(saved, 10);
+        if (minutes === 0) return 0; // disabled
+        if (minutes > 0) return minutes * 60 * 1000;
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_INACTIVITY_TIMEOUT_MS;
+  }
+
+  /** Get current timeout in minutes (0 = disabled) */
+  get inactivityTimeoutMinutes() {
+    return this._inactivityTimeoutMs / (60 * 1000);
+  }
+
+  /** Set timeout in minutes (0 = disabled) */
+  setInactivityTimeout(minutes) {
+    if (minutes === 0) {
+      this._inactivityTimeoutMs = 0;
+    } else if (minutes > 0) {
+      this._inactivityTimeoutMs = minutes * 60 * 1000;
+    }
+    localStorage.setItem(STORAGE_KEY_TIMEOUT, String(minutes));
+    this._resetTimer();
   }
 
   /* ── State ─────────────────────────────────────────────────── */
@@ -43,6 +78,9 @@ export class SessionManager {
   get npub() { return this._npub; }
   get sk() { return this._sk; }
   get relays() { return this._relays; }
+  /** True when the session is unlocked but has not yet completed its first
+   *  successful round-trip to the backend (Nostr discovery response). */
+  get isPending() { return this._pendingBackend; }
 
   /** Get public hint from vault (npub preview) without unlocking */
   getVaultHint() {
@@ -64,6 +102,21 @@ export class SessionManager {
    * @param {string} pin
    */
   async createVault(identity, pin) {
+    await this.saveVault(identity, pin);
+    // A session opened by startSession() is already unlocked with this very
+    // key; re-emitting "unlocked" would tear down and redo the live Nostr
+    // connection for nothing.
+    if (this._locked) this.startSession(identity);
+  }
+
+  /**
+   * Encrypt an identity under `pin` and persist it, without touching the
+   * in-memory session state. Splitting this out lets an already-open session
+   * be saved after the fact.
+   * @param {{npub: string, sk: string, relays?: string[]}} identity
+   * @param {string} pin
+   */
+  async saveVault(identity, pin) {
     const payload = {
       npub: identity.npub,
       sk: identity.sk,
@@ -72,12 +125,33 @@ export class SessionManager {
 
     const envelope = await encryptVault(payload, pin);
     saveVaultToStorage(envelope);
+  }
+
+  /* ── Ephemeral session (no vault) ──────────────────────────── */
+
+  /**
+   * Open an unlocked session for an identity without persisting anything.
+   * The key lives in memory only and is gone on reload — creating a vault
+   * (see createVault) is the separate, optional step that makes it survive.
+   *
+   * This exists so that entering an nsec is enough to reach the services:
+   * discovery is driven by the "unlocked" event, so a login that only stashed
+   * the identity aside left the app silently idle.
+   *
+   * @param {{npub: string, sk: string, relays?: string[]}} identity
+   */
+  startSession(identity) {
+    if (!identity || !identity.sk || !identity.npub) {
+      throw new Error("Identidade incompleta");
+    }
     this._sk = identity.sk;
     this._npub = identity.npub;
     this._relays = identity.relays || [];
     this._locked = false;
+    this._pendingBackend = true; // await first successful backend contact
     this._resetTimer();
     this._emit("unlocked");
+    this._emit("pending");
   }
 
   /* ── Unlock with PIN ───────────────────────────────────────── */
@@ -98,9 +172,11 @@ export class SessionManager {
       this._npub = payload.npub;
       this._relays = payload.relays || [];
       this._locked = false;
+      this._pendingBackend = true; // await first successful backend contact
       this._resetBruteForce();
       this._resetTimer();
       this._emit("unlocked");
+      this._emit("pending");
       return true;
     } catch (err) {
       this._recordFailedAttempt();
@@ -143,6 +219,18 @@ export class SessionManager {
     this._emit("biometric-enabled");
   }
 
+  /**
+   * Called by the app when the session has completed its first successful
+   * round-trip to the backend (e.g. a Nostr discovery response was received).
+   * Transitions the session from the "pending" state to "active".
+   */
+  setBackendActive() {
+    if (this._pendingBackend) {
+      this._pendingBackend = false;
+      this._emit("active");
+    }
+  }
+
   /* ── Lock / Wipe ───────────────────────────────────────────── */
 
   lock() {
@@ -150,6 +238,7 @@ export class SessionManager {
     this._npub = null;
     this._relays = null;
     this._locked = true;
+    this._pendingBackend = false;
     this._clearTimer();
     this._emit("locked");
   }
@@ -168,10 +257,12 @@ export class SessionManager {
   _resetTimer() {
     this._clearTimer();
     if (this._locked) return;
+    // If timeout is 0, auto-lock is disabled
+    if (this._inactivityTimeoutMs === 0) return;
     this._timer = setTimeout(() => {
       this.lock();
       this._emit("auto-locked");
-    }, INACTIVITY_TIMEOUT_MS);
+    }, this._inactivityTimeoutMs);
   }
 
   _clearTimer() {

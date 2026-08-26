@@ -123,6 +123,7 @@ in
         '';
         Restart = "always";
         RestartSec = "10s";
+        ExecReload = "kill -HUP $MAINPID";
         Environment = [
           "PATH=${lib.makeBinPath [ pkgs.cloudflared ]}"
         ];
