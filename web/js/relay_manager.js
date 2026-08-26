@@ -4,11 +4,15 @@ import { RelayTester } from './relay_tester.js';
 
 const STORAGE_KEY = "dl_conn_relays";
 
-const DEFAULT_RELAYS = [
+export const DEFAULT_RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
   "wss://relay.nostr.band",
+  "wss://relay.primal.net",
   "wss://nostr.mom",
+  "wss://relay.snort.social",
+  "wss://nostr.oxtr.dev",
+  "wss://nostr.land",
 ];
 
 /**

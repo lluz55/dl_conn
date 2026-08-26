@@ -775,15 +775,34 @@ import { startScan } from './js/qr_scanner.js';
     el.btnTestAllRelays.textContent = "Testar Todos";
   }
 
+  /**
+   * The count in the summary is "connected", so it must be exactly that:
+   * `result.ok` — the WebSocket handshake completed. Latency is reported
+   * beside it, never folded into the count: a relay that answers in 800ms is
+   * online, and counting it as missing made the summary disagree with the
+   * list below it (which shows the same relay green-ish with its RTT).
+   */
   function updateRelaySummary(results) {
-    const healthy = results.filter((r) => r.ok && r.rttMs < 600).length;
     const total = results.length;
     const okResults = results.filter((r) => r.ok);
-    const avg = okResults.length > 0 ? Math.round(okResults.reduce((s, r) => s + r.rttMs, 0) / okResults.length) : 0;
+    const connected = okResults.length;
+    const slow = okResults.filter((r) => r.rttMs >= SLOW_RELAY_MS).length;
+    const avg = connected > 0
+      ? Math.round(okResults.reduce((s, r) => s + r.rttMs, 0) / connected)
+      : 0;
+
     let level, text;
-    if (healthy === total) { level = "good"; text = healthy + "/" + total + " relays saudáveis • Média: " + avg + "ms"; }
-    else if (healthy > 0) { level = "warn"; text = healthy + "/" + total + " relays conectados • Média: " + avg + "ms"; }
-    else { level = "bad"; text = "Nenhum relay conectado"; }
+    if (connected === 0) {
+      level = "bad";
+      text = "Nenhum relay conectado";
+    } else {
+      level = connected === total ? (slow === 0 ? "good" : "warn") : "warn";
+      text = connected + "/" + total + " relays conectados • Média: " + avg + "ms";
+      if (slow > 0) {
+        text += " • " + slow + (slow === 1 ? " lento" : " lentos") +
+          " (>" + SLOW_RELAY_MS + "ms)";
+      }
+    }
     el.relaySummary.innerHTML = '<span class="dot dot-' + level + '" aria-hidden="true"></span> ' + text;
   }
 
@@ -848,7 +867,7 @@ import { startScan } from './js/qr_scanner.js';
     if (!result) return 'unknown';
     if (!result.ok) return 'offline';
     if (result.rttMs < 200) return 'excellent';
-    if (result.rttMs < 600) return 'good';
+    if (result.rttMs < SLOW_RELAY_MS) return 'good';
     if (result.rttMs < 2000) return 'moderate';
     return 'slow';
   }
