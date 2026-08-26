@@ -16,14 +16,19 @@ const (
 	maxEventAge = 5 * time.Minute
 	// maxEventClockSkew allows for a sender whose clock runs slightly ahead.
 	maxEventClockSkew = 1 * time.Minute
+	// minResubscribeDelay / maxResubscribeDelay bound the backoff used when a
+	// relay subscription drops and has to be re-established.
+	minResubscribeDelay = 1 * time.Second
+	maxResubscribeDelay = 30 * time.Second
 )
 
 // Client manages connections to multiple Nostr relays.
 type Client struct {
-	sk          string // hex private key
-	pool        *nostr.SimplePool
-	relays      []string
-	authorized  map[string]bool
+	sk            string // hex private key
+	pool          *nostr.SimplePool
+	relays        []string
+	authorized    map[string]bool
+	authMu        sync.RWMutex // guards authorized reads/writes
 	fallbackNip04 bool
 }
 
@@ -83,39 +88,63 @@ func (c *Client) subscribeRelays(ctx context.Context, out chan<- *nostr.Event) {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			relay, err := c.pool.EnsureRelay(url)
-			if err != nil {
-				return
-			}
-			sub, err := relay.Subscribe(ctx, []nostr.Filter{
-				{
-					Kinds:   []int{4, 1059},
-					Tags:    nostr.TagMap{"p": []string{pub}},
-				},
-			})
-			if err != nil {
-				return
-			}
-			defer sub.Unsub()
-			for {
+			backoff := minResubscribeDelay
+			for ctx.Err() == nil {
+				if c.subscribeOnce(ctx, url, pub, out) {
+					// A subscription that actually ran resets the backoff:
+					// the next drop is a fresh incident, not an escalation.
+					backoff = minResubscribeDelay
+				}
 				select {
-				case evt := <-sub.Events:
-					if evt != nil {
-						select {
-						case out <- evt:
-						case <-ctx.Done():
-							return
-						}
-					}
-				case <-sub.Context.Done():
-					return
 				case <-ctx.Done():
 					return
+				case <-time.After(backoff):
+				}
+				if backoff < maxResubscribeDelay {
+					backoff *= 2
 				}
 			}
 		}(relayURL)
 	}
 	wg.Wait()
+}
+
+// subscribeOnce runs a single subscription to completion, returning true if it
+// was established at all (as opposed to failing to connect or subscribe).
+func (c *Client) subscribeOnce(ctx context.Context, url, pub string, out chan<- *nostr.Event) bool {
+	relay, err := c.pool.EnsureRelay(url)
+	if err != nil {
+		return false
+	}
+	sub, err := relay.Subscribe(ctx, []nostr.Filter{
+		{
+			Kinds: []int{4, 1059},
+			Tags:  nostr.TagMap{"p": []string{pub}},
+		},
+	})
+	if err != nil {
+		return false
+	}
+	defer sub.Unsub()
+	for {
+		select {
+		case evt, ok := <-sub.Events:
+			if !ok {
+				return true
+			}
+			if evt != nil {
+				select {
+				case out <- evt:
+				case <-ctx.Done():
+					return true
+				}
+			}
+		case <-sub.Context.Done():
+			return true
+		case <-ctx.Done():
+			return true
+		}
+	}
 }
 
 // PublishResponse encrypts and publishes the response payload to all relays.
