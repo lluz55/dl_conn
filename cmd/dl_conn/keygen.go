@@ -44,6 +44,7 @@ Can also derive the public key from an existing private key using --from-key.`,
 	cmd.Flags().BoolVar(&opts.secHexOnly, "sec-hex", false, "output only private key in hex")
 	cmd.Flags().BoolVar(&opts.qr, "qr", false, "print the nsec as a scannable QR code in the terminal")
 
+	cmd.AddCommand(newKeygenFilesCmd())
 	return cmd
 }
 

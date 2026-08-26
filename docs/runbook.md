@@ -40,6 +40,17 @@ journalctl -u dl-conn -f --since "5 min ago"
    # ou em formato JSON:
    dl_conn keygen --json
    ```
+2. Para gravar cada chave em seu próprio arquivo (com timestamp e tipo):
+   ```bash
+   dl_conn keygen files --dir ./keys
+   # ou caminas explícitas:
+   dl_conn keygen files --npub-file ./pub.key --nsec-file ./priv.key
+   # formato JSON:
+   dl_conn keygen files --dir ./keys --format json
+   # derivar de uma nsec existente:
+   dl_conn keygen files --from-key nsec1... --dir ./keys
+   ```
+   O arquivo `nsec.*` é criado com permissão `0600`; o `npub.*` com `0644`.
 2. Atualize o segredo no SOPS:
    ```bash
    sops -d /path/to/secrets/nostr/dl-conn-key.yaml
