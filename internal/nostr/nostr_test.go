@@ -367,6 +367,134 @@ func TestParseEvent_RejectsUnauthorizedSender(t *testing.T) {
 	}
 }
 
+func TestSetAuthorized_ReplacesWhitelist(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+
+	oldSk := nostr.GeneratePrivateKey()
+	oldPub, _ := nostr.GetPublicKey(oldSk)
+
+	newSk := nostr.GeneratePrivateKey()
+	newPub, _ := nostr.GetPublicKey(newSk)
+	newNpub, _ := nip19.EncodePublicKey(newPub)
+
+	c := newTestClient(t, hostSk, oldPub)
+
+	// Old key should be authorized.
+	if !c.IsAuthorized(oldPub) {
+		t.Fatal("old key should be authorized before SetAuthorized")
+	}
+
+	// Swap to new key.
+	err := c.SetAuthorized([]string{newNpub})
+	if err != nil {
+		t.Fatalf("SetAuthorized failed: %v", err)
+	}
+
+	// New key authorized, old key removed.
+	if !c.IsAuthorized(newPub) {
+		t.Error("new key should be authorized after SetAuthorized")
+	}
+	if c.IsAuthorized(oldPub) {
+		t.Error("old key should no longer be authorized after SetAuthorized")
+	}
+}
+
+func TestSetAuthorized_KeepsHostKey(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	hostPub, _ := nostr.GetPublicKey(hostSk)
+
+	otherSk := nostr.GeneratePrivateKey()
+	otherPub, _ := nostr.GetPublicKey(otherSk)
+	otherNpub, _ := nip19.EncodePublicKey(otherPub)
+
+	c := newTestClient(t, hostSk, otherPub)
+
+	// SetAuthorized with only the other key — host key must survive.
+	err := c.SetAuthorized([]string{otherNpub})
+	if err != nil {
+		t.Fatalf("SetAuthorized failed: %v", err)
+	}
+
+	if !c.IsAuthorized(hostPub) {
+		t.Error("host key must remain authorized after SetAuthorized")
+	}
+}
+
+func TestSetAuthorized_InvalidNpub(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+	c := newTestClient(t, hostSk, nostr.GeneratePrivateKey())
+
+	err := c.SetAuthorized([]string{"npub1invalid"})
+	if err == nil {
+		t.Fatal("expected error for invalid npub in SetAuthorized")
+	}
+}
+
+func TestSetAuthorized_AuthorizedCount(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+
+	a1 := nostr.GeneratePrivateKey()
+	p1, _ := nostr.GetPublicKey(a1)
+	n1, _ := nip19.EncodePublicKey(p1)
+
+	a2 := nostr.GeneratePrivateKey()
+	p2, _ := nostr.GetPublicKey(a2)
+	n2, _ := nip19.EncodePublicKey(p2)
+
+	c := newTestClient(t, hostSk, p1)
+	if c.AuthorizedCount() != 2 {
+		t.Fatalf("initial count = %d, want 2", c.AuthorizedCount())
+	}
+
+	err := c.SetAuthorized([]string{n1, n2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// host + 2 npubs = 3
+	if c.AuthorizedCount() != 3 {
+		t.Fatalf("count after SetAuthorized = %d, want 3", c.AuthorizedCount())
+	}
+}
+
+func TestSetAuthorized_ConcurrentAccess(t *testing.T) {
+	hostSk := nostr.GeneratePrivateKey()
+
+	sk2 := nostr.GeneratePrivateKey()
+	pub2, _ := nostr.GetPublicKey(sk2)
+	npub2, _ := nip19.EncodePublicKey(pub2)
+
+	sk3 := nostr.GeneratePrivateKey()
+	pub3, _ := nostr.GetPublicKey(sk3)
+	npub3, _ := nip19.EncodePublicKey(pub3)
+
+	c := newTestClient(t, hostSk, pub2)
+	done := make(chan struct{})
+
+	// Concurrent reader.
+	go func() {
+		for i := 0; i < 1000; i++ {
+			c.IsAuthorized(pub2)
+		}
+		done <- struct{}{}
+	}()
+
+	// Concurrent writer.
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = c.SetAuthorized([]string{npub2, npub3})
+		}
+		done <- struct{}{}
+	}()
+
+	<-done
+	<-done
+
+	// Final state: host + npub2 + npub3 = 3.
+	if c.AuthorizedCount() != 3 {
+		t.Errorf("final count = %d, want 3", c.AuthorizedCount())
+	}
+}
+
 func TestHandler_ServicesWithStatus(t *testing.T) {
 	h := NewHandler(nil, nil, "https://x.trycloudflare.com", []ServiceInfo{
 		{ID: "hass", Name: "HA", Status: "unknown"},

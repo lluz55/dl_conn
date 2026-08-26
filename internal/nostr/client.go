@@ -63,7 +63,40 @@ func NewClient(sk string, relays []string, authorizedNpubs []string, fallbackNip
 
 // IsAuthorized checks if the given pubkey hex is in the whitelist.
 func (c *Client) IsAuthorized(pubHex string) bool {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
 	return c.authorized[pubHex]
+}
+
+// SetAuthorized replaces the authorized npub list with a new set decoded
+// from the given bech32 npubs.  It always re-inserts the host's own
+// public key so the daemon never locks itself out.
+func (c *Client) SetAuthorized(npubs []string) error {
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+
+	newAuth := make(map[string]bool)
+	for _, n := range npubs {
+		hexPub, err := DecodeNpub(n)
+		if err != nil {
+			return fmt.Errorf("decoding authorized npub %q: %w", n, err)
+		}
+		newAuth[hexPub] = true
+	}
+
+	// Always keep the host's own pubkey authorized.
+	pub, _ := nostr.GetPublicKey(c.sk)
+	newAuth[pub] = true
+
+	c.authorized = newAuth
+	return nil
+}
+
+// AuthorizedCount returns the number of currently authorized public keys.
+func (c *Client) AuthorizedCount() int {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return len(c.authorized)
 }
 
 // Subscribe listens for encrypted DMs (kind 4 and kind 1059) directed to
@@ -79,7 +112,12 @@ func (c *Client) Subscribe(ctx context.Context) <-chan *nostr.Event {
 	return ch
 }
 
-// subscribeRelays subscribes on each relay individually.
+// subscribeRelays keeps one subscription alive per relay. A relay connection
+// that drops (idle timeout, restart, flaky network) used to end that relay's
+// goroutine for good: once every relay had dropped, the daemon stayed up but
+// deaf, so a later discovery request — e.g. the dashboard's refresh button —
+// was published successfully and simply never answered. Each relay therefore
+// reconnects with backoff until ctx is cancelled.
 func (c *Client) subscribeRelays(ctx context.Context, out chan<- *nostr.Event) {
 	pub, _ := nostr.GetPublicKey(c.sk)
 	var wg sync.WaitGroup
