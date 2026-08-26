@@ -61,12 +61,15 @@ flowchart TD
   - **Auto-Lock:** Timer configurável (15 min padrão), escuta de eventos `visibilitychange`/`pointerdown`/`keydown`.
   - **Proteção contra Força-Bruta:** Contador de tentativas, delay exponencial, wipe após 10 falhas.
   - **Wipe de Emergência:** Remoção atômica do `localStorage` + recarga limpa.
-  - **12 testes passando** (`web/tests/session_tests.js`).
+  - **Máquina de Estados da Sessão:** Estados `locked → pending → active → locked`. Após desbloqueio ou criação de cofre, a sessão fica `pending` ("Em espera") até o primeiro contato bem-sucedado com o backend Nostr; em seguida (`setBackendActive()`) passa para `active` ("Ativa"). Eventos `pending` e `active` expostos aos listeners.
+  - **26 testes passando** (`web/tests/session_tests.js`).
 
 - [x] **Interface do Usuário (UI) & Telas de Sessão (`web/index.html`, `web/style.css`, `web/app.js`):**
   - **Fluxo 1 — Primeiro Login:** Modal de definição de PIN com confirmação, toggle de biometria opcional.
   - **Fluxo 2 — Desbloqueio:** Tela limpa com identidade pública, botão "Desbloquear com Biometria" (quando suportado), campo PIN, link de wipe.
   - **Fluxo 3 — Estado Conectado:** Botão "🔒 Bloquear Sessão" no header.
+  - **Status de Sessão:** Indicador "Em espera" (pendente de backend) → "Ativa" (após primeira resposta Nostr). Visível no header durante todo o ciclo de vida.
+  - **Botão "Apagar Todos os Dados":** Preserva o tema claro/escuro (`dl_conn_theme`) ao limpar o `localStorage`; apenas remove identidade, nsec, npub do host, relays e sessão.
   - Keyboard input `inputmode="numeric"` para PIN em mobile.
 
 - [x] **Integração com `NostrAuth` (`web/js/nostr_auth.js`):**
@@ -79,7 +82,7 @@ flowchart TD
   - Integridade (falha garantida com PIN incorreto ou payload corrompido).
   - Isolamento de memória (sk/nsec NUNCA em texto plano no localStorage).
   - Conformidade: inspeção do `localStorage` provando ausência de `nsec`/`sk` em plaintext.
-  - **31 testes passando** (19 crypto + 12 session).
+  - **40 testes passando** (19 crypto + 26 session).
 
 ## Onde isso vive no código
 - `web/js/crypto_vault.js` (Web Crypto API: PBKDF2 + AES-GCM)
@@ -99,3 +102,5 @@ flowchart TD
 5. ✅ **Auto-Lock por Inatividade:** Após 15 min sem atividade, chaves são destruídas e tela de bloqueio exibida.
 6. ✅ **Wipe de Emergência:** Limpeza completa do cofre e recarga em estado limpo.
 7. ✅ **Responsividade & Acessibilidade:** Telas de PIN e Biometria funcionam em mobile e desktop, temas claro e escuro.
+8. ✅ **Máquina de Estados da Sessão:** Após login/desbloqueio, o status mostra "Em espera" até o primeiro contato com o backend; após a primeira resposta Nostr bem-sucedida, mostra "Ativa".
+9. ✅ **Tema Preservado no Reset:** "Apagar Todos os Dados" não altera a preferência de tema claro/escuro.

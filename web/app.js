@@ -30,11 +30,11 @@ import { startScan } from './js/qr_scanner.js';
     pinCreate: $("pin-create"),
     pinConfirm: $("pin-confirm"),
     btnSaveVault: $("btn-save-vault"),
+    btnSkipVault: $("btn-skip-vault"),
     enableBiometric: $("enable-biometric"),
     hostNpubSection: $("host-npub-section"),
     hostNpubInput: $("host-npub-input"),
     saveHostNpub: $("save-host-npub"),
-    btnTestRelays: $("btn-test-relays"),
     relayPanel: $("relay-panel"),
     relaySummary: $("relay-summary"),
     btnTestAllRelays: $("btn-test-all-relays"),
@@ -50,6 +50,7 @@ import { startScan } from './js/qr_scanner.js';
     btnLockSession: $("btn-lock-session"),
     sessionStatus: $("session-status"),
     tunnelExpiry: $("tunnel-expiry"),
+    btnRefreshServices: $("btn-refresh-services"),
     btnClearServices: $("btn-clear-services"),
     btnClearAll: $("btn-clear-all"),
     btnScanQr: $("btn-scan-qr"),
@@ -57,9 +58,30 @@ import { startScan } from './js/qr_scanner.js';
     qrVideo: $("qr-video"),
     qrStatus: $("qr-status"),
     btnQrClose: $("btn-qr-close"),
+    autoLockSection: $("auto-lock-section"),
+    autoLockTimeout: $("auto-lock-timeout"),
+    autoLockStatus: $("auto-lock-status"),
   };
 
   let expiryTimer = null;
+  let discoveryTimer = null;
+  /** Set while a discovery request is in flight; cleared by the host reply. */
+  let awaitingDiscovery = false;
+
+  /** How long to wait for the host's discovery reply before saying so. */
+  const DISCOVERY_TIMEOUT_MS = 30000;
+
+  /**
+   * RTT above which a connected relay is called slow. Shared by the summary
+   * and by the per-row badge so the two never disagree about the same relay.
+   */
+  const SLOW_RELAY_MS = 600;
+
+  /** Stop everything the Live zone drives; called whenever it goes away. */
+  function clearLiveTimers() {
+    if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
+    if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
+  }
 
   let state = {
     auth: null,
@@ -78,7 +100,14 @@ import { startScan } from './js/qr_scanner.js';
       const resp = await fetch("./config.json");
       if (resp.ok) {
         const cfg = await resp.json();
-        state.config.hostNpub = cfg.host_npub || state.config.hostNpub;
+        if (cfg.host_npub) {
+          // config.json is the deployment source of truth for the host key. A
+          // stale dl_conn_host_npub in localStorage (from an earlier/wrong
+          // deploy) would otherwise keep encrypting discovery requests to a
+          // pubkey the host never reads, and services would never appear.
+          state.config.hostNpub = cfg.host_npub;
+          localStorage.setItem("dl_conn_host_npub", cfg.host_npub);
+        }
         if (cfg.relays) state.config.relays = cfg.relays;
       }
     } catch { /* ignore */ }
@@ -90,14 +119,21 @@ import { startScan } from './js/qr_scanner.js';
     state.auth = new NostrAuth();
     state.session = new SessionManager();
     state.relayManager = new RelayManager();
+    // Restore hostNpub from localStorage (set during first login or manual save)
+    if (!state.config.hostNpub) {
+      const savedHostNpub = localStorage.getItem("dl_conn_host_npub");
+      if (savedHostNpub) state.config.hostNpub = savedHostNpub;
+    }
     if (state.config.relays.length > 0 && state.relayManager.getAll().length === 0) {
       state.config.relays.forEach((url) => {
         try { state.relayManager.add(url); } catch { /* exists */ }
       });
     }
+    renderRelayList();
     state.session.on(onSessionEvent);
     state.relayManager.on(onRelayEvent);
     bindEvents();
+    initAutoLockUI();
     checkVaultState();
   }
 
@@ -120,8 +156,12 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   function showLoginScreen() {
+    el.vaultSection.classList.remove("hidden");
     el.unlockUi.classList.add("hidden");
     el.loginUi.classList.remove("hidden");
+    el.loginNip07.classList.remove("hidden");
+    el.btnScanQr.classList.remove("hidden");
+    if (el.nsecFallback) el.nsecFallback.classList.remove("hidden");
     el.vaultSavePrompt.classList.add("hidden");
     el.vaultStatus.textContent = "Nenhuma identidade salva. Faca login abaixo.";
   }
@@ -137,6 +177,34 @@ import { startScan } from './js/qr_scanner.js';
     }
   }
 
+  /* ── Auto-lock timer UI ───────────────────────────────────── */
+
+  function initAutoLockUI() {
+    const currentMinutes = state.session.inactivityTimeoutMinutes;
+    // Set the select to match the current value (stored in session manager)
+    if (el.autoLockTimeout) {
+      el.autoLockTimeout.value = String(currentMinutes);
+    }
+    updateAutoLockStatus(currentMinutes);
+  }
+
+  function onAutoLockChange() {
+    const minutes = parseInt(el.autoLockTimeout.value, 10);
+    state.session.setInactivityTimeout(minutes);
+    updateAutoLockStatus(minutes);
+  }
+
+  function updateAutoLockStatus(minutes) {
+    if (!el.autoLockStatus) return;
+    if (minutes === 0) {
+      el.autoLockStatus.textContent = "Bloqueio automático desativado";
+    } else if (minutes === 60) {
+      el.autoLockStatus.textContent = "Bloqueio automático: 1 hora";
+    } else {
+      el.autoLockStatus.textContent = "Bloqueio automático: " + minutes + " minutos";
+    }
+  }
+
   function bindEvents() {
     el.themeToggle.addEventListener("click", toggleTheme);
     el.btnUnlockPin.addEventListener("click", onUnlockPin);
@@ -147,18 +215,20 @@ import { startScan } from './js/qr_scanner.js';
     el.btnLoginNsec.addEventListener("click", onLoginNsec);
     el.nsecInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onLoginNsec(); });
     el.btnSaveVault.addEventListener("click", onSaveVault);
+    el.btnSkipVault.addEventListener("click", dismissSavePrompt);
     el.saveHostNpub.addEventListener("click", onSaveHostNpub);
     el.hostNpubInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onSaveHostNpub(); });
-    el.btnTestRelays.addEventListener("click", toggleRelayPanel);
     el.btnTestAllRelays.addEventListener("click", onTestAllRelays);
     el.btnAddRelay.addEventListener("click", onAddRelay);
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
     el.btnResetRelays.addEventListener("click", onResetRelays);
     el.btnLockSession.addEventListener("click", () => state.session.lock());
+    el.btnRefreshServices.addEventListener("click", onRefreshServices);
     el.btnClearServices.addEventListener("click", onClearServices);
     el.btnClearAll.addEventListener("click", onClearAll);
     el.btnScanQr.addEventListener("click", onScanQr);
     el.btnQrClose.addEventListener("click", stopQrScan);
+    el.autoLockTimeout.addEventListener("change", onAutoLockChange);
   }
 
   function setSessionStatus(text, tone) {
@@ -169,23 +239,37 @@ import { startScan } from './js/qr_scanner.js';
 
   function onSessionEvent(event) {
     if (event === "unlocked") {
-      el.vaultSection.classList.add("hidden");
+      // Keep the card up while an identity is still waiting to be saved —
+      // hiding it would take the PIN fields with it (see showSavePrompt).
+      if (!state.pendingIdentity) el.vaultSection.classList.add("hidden");
       el.btnLockSession.classList.remove("hidden");
-      setSessionStatus("Ativa", "ok");
+      setSessionStatus("Em espera", "dim");
+      // Reveal the Live column on authentication so the user sees connection
+      // feedback (status rail) while the tunnel is discovered, instead of a
+      // blank screen. Services populate when the host responds.
+      el.app.setAttribute("data-phase", "live");
       startNostr();
+    } else if (event === "pending") {
+      setSessionStatus("Em espera", "dim");
+    } else if (event === "active") {
+      setSessionStatus("Ativa", "ok");
     } else if (event === "locked") {
+      state.pendingIdentity = null;
+      el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
-      if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
+      clearLiveTimers();
       el.tunnelStatus.textContent = "Aguardando túnel…";
       setSessionStatus("Bloqueada", "dim");
-      showUnlockScreen();
+      // Return to home (login screen) when session is locked
+      showLoginScreen();
     } else if (event === "wiped") {
+      el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
-      if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
+      clearLiveTimers();
       setSessionStatus("Bloqueada", "dim");
       showLoginScreen();
     } else if (event === "auto-locked") {
@@ -225,15 +309,18 @@ import { startScan } from './js/qr_scanner.js';
     if (
       !confirm(
         "Apagar TODOS os dados deste frontend?\n\nIsso remove: identidade salva (vault), " +
-          "nsec/sk, npub do host, tema e relays salvos, e a sessão atual. " +
-          "A ação não pode ser desfeita."
+          "nsec/sk, npub do host, relays salvos, e a sessão atual. O tema claro/escuro " +
+          "é preservado. A ação não pode ser desfeita."
       )
     )
       return;
     if (state.nostr) state.nostr.disconnect();
     state.session.wipe(); // vault + WebAuthn + brute-force + bio-pin (emite "wiped")
-    // remove todo dl_conn_* que o wipe() não cobre (host_npub, theme, npub, sk, ...)
-    for (const k of Object.keys(localStorage)) if (k.startsWith("dl_conn_")) localStorage.removeItem(k);
+    // remove todo dl_conn_* que o wipe() não cobre (host_npub, npub, sk, ...)
+    // EXCETO dl_conn_theme: o tema claro/escuro deve sobreviver ao reset.
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("dl_conn_") && k !== "dl_conn_theme") localStorage.removeItem(k);
+    }
     for (const k of Object.keys(sessionStorage)) if (k.startsWith("dl_conn_")) sessionStorage.removeItem(k);
     // reinicia estado em memória
     state.services = [];
@@ -241,7 +328,7 @@ import { startScan } from './js/qr_scanner.js';
     state.authToken = null;
     state.config.hostNpub = null;
     state.pendingIdentity = null;
-    if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
+    clearLiveTimers();
     el.servicesSection.classList.add("hidden");
     el.tunnelStatus.textContent = "Aguardando túnel…";
     setSessionStatus("Bloqueada", "dim");
@@ -255,7 +342,22 @@ import { startScan } from './js/qr_scanner.js';
       state.auth.clearKey();
       state.config.hostNpub = state.config.hostNpub || localStorage.getItem("dl_conn_host_npub");
       el.vaultStatus.textContent = "Conectado: " + truncateNpub(npub);
-      startNostr();
+      // NIP-07 proves identity but never exposes the private key the client
+      // needs to decrypt the host's NIP-44 response, so startNostr() would
+      // bail silently (no `state.session.sk`). If a vault/session key is
+      // already available, proceed; otherwise seed the pending identity and
+      // reveal the nsec entry so the user can complete the secure (vault)
+      // flow that actually shows services.
+      if (state.session.sk) {
+        startNostr();
+      } else {
+        // Deliberately no pendingIdentity here: without the private key there
+        // is nothing to put in a vault, and a half-filled entry would break
+        // the save prompt. The nsec entry below is the way forward.
+        el.vaultStatus.textContent =
+          "Conectado: " + truncateNpub(npub) + ". Para acessar os serviços, salve sua chave (nsec) abaixo.";
+        if (el.nsecFallback) el.nsecFallback.open = true;
+      }
     } catch (err) {
       if (String(err.message).includes("NIP-07 extension not found")) {
         el.vaultStatus.textContent = "Extensão NIP-07 não detectada. Insira seu nsec abaixo.";
@@ -271,12 +373,42 @@ import { startScan } from './js/qr_scanner.js';
     try {
       const npub = state.auth.loginNsec(nsec);
       state.pendingIdentity = { npub, sk: state.auth.sk };
-      el.vaultStatus.textContent = "Conectado: " + truncateNpub(npub);
-      el.vaultSavePrompt.classList.remove("hidden");
       el.nsecInput.value = "";
+      // Open the session immediately: discovery hangs off the "unlocked"
+      // event, so waiting for the (optional) vault step here left the user
+      // looking at a "Conectado" message and nothing else.
+      state.session.startSession(state.pendingIdentity);
+      el.vaultStatus.textContent =
+        "Conectado: " + truncateNpub(npub) + ". Salve a identidade para não digitar o nsec de novo.";
+      showSavePrompt();
     } catch (err) {
       el.vaultStatus.textContent = "Erro: " + err.message;
     }
+  }
+
+  /**
+   * Offer the vault as a follow-up step to an already-open session: the login
+   * controls are done with, but #vault-section has to stay on screen for the
+   * PIN fields to be reachable.
+   */
+  function showSavePrompt() {
+    el.vaultSection.classList.remove("hidden");
+    el.unlockUi.classList.add("hidden");
+    el.loginUi.classList.remove("hidden");
+    el.loginNip07.classList.add("hidden");
+    el.btnScanQr.classList.add("hidden");
+    if (el.nsecFallback) el.nsecFallback.classList.add("hidden");
+    el.vaultSavePrompt.classList.remove("hidden");
+  }
+
+  /** Dismiss the vault offer and hand the whole column over to the Live zone. */
+  function dismissSavePrompt() {
+    state.pendingIdentity = null;
+    el.vaultSavePrompt.classList.add("hidden");
+    el.loginNip07.classList.remove("hidden");
+    el.btnScanQr.classList.remove("hidden");
+    if (el.nsecFallback) el.nsecFallback.classList.remove("hidden");
+    el.vaultSection.classList.add("hidden");
   }
 
   let _qrStop = null;
@@ -337,9 +469,9 @@ import { startScan } from './js/qr_scanner.js';
       } else {
         el.vaultStatus.textContent = "Identidade salva com seguranca!";
       }
-      state.pendingIdentity = null;
       el.pinCreate.value = "";
       el.pinConfirm.value = "";
+      dismissSavePrompt();
     } catch (err) {
       el.vaultStatus.textContent = "Erro: " + err.message;
     }
@@ -359,11 +491,19 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   async function startNostr() {
-    if (!state.session.sk) return;
+    if (!state.session.sk) {
+      el.relayStatus.textContent = "Chave não disponível. Faça login novamente.";
+      return;
+    }
     if (!state.config.hostNpub) {
       const saved = localStorage.getItem("dl_conn_host_npub");
-      if (saved) { state.config.hostNpub = saved; }
-      else { showHostNpubPrompt(); return; }
+      if (saved) {
+        state.config.hostNpub = saved;
+      } else {
+        el.relayStatus.textContent = "Host npub não configurado.";
+        showHostNpubPrompt();
+        return;
+      }
     }
     const relayUrls = state.relayManager.getActiveUrls();
     if (relayUrls.length === 0) {
@@ -371,29 +511,82 @@ import { startScan } from './js/qr_scanner.js';
       return;
     }
     el.relayStatus.textContent = "Conectando a relays...";
+    // Disconnect previous session if any
+    if (state.nostr) state.nostr.disconnect();
     state.nostr = new NostrClient(relayUrls, state.config.hostNpub);
     try {
       const connected = await state.nostr.connect();
+      if (connected === 0) {
+        el.relayStatus.textContent = "Nenhum relay conectado. Verifique sua conexão.";
+        return;
+      }
       el.relayStatus.textContent = connected + "/" + relayUrls.length + " relays conectados";
       const responseChannel = state.nostr.subscribeToResponses(
         state.session.npub, state.session.sk
       );
       responseChannel.addEventListener("response", (e) => handleNostrResponse(e.detail));
-      el.tunnelStatus.textContent = "Solicitando descoberta de servicos...";
-      await state.nostr.sendDiscoverRequest(state.session.npub, state.session.sk);
+      el.tunnelStatus.textContent = "Solicitando descoberta de serviços...";
+      const result = await state.nostr.sendDiscoverRequest(
+        state.session.npub, state.session.sk
+      );
+      // The publish result used to be discarded, which made a rejected or
+      // timed-out request indistinguishable from a host that simply had not
+      // answered yet.
+      if (result && result.status === "timeout") {
+        el.tunnelStatus.textContent = "Sem confirmação dos relays ao publicar o pedido.";
+        return;
+      }
+      if (result && result.status === "failed") {
+        el.tunnelStatus.textContent =
+          "Falha ao publicar o pedido: " + (result.errors || []).join("; ");
+        return;
+      }
+      el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
+      startDiscoveryTimeout();
     } catch (err) {
       el.relayStatus.textContent = "Erro: " + err.message;
     }
   }
 
+  /**
+   * The host answers nothing at all when it drops a request (offline, or the
+   * sender's npub missing from its `authorizedNpubs` whitelist). Without this
+   * the UI would sit on "Aguardando o host…" forever with no explanation.
+   */
+  function startDiscoveryTimeout() {
+    awaitingDiscovery = true;
+    if (discoveryTimer) { clearTimeout(discoveryTimer); }
+    discoveryTimer = setTimeout(() => {
+      discoveryTimer = null;
+      // Keyed on the in-flight request, not on `state.tunnelURL`: after the
+      // first discovery the URL is always set, which silently suppressed this
+      // warning for every later refresh — the button appeared to do nothing.
+      if (!awaitingDiscovery) return; // response already arrived
+      awaitingDiscovery = false;
+      el.tunnelStatus.textContent =
+        "O host não respondeu. Verifique se o daemon está rodando e se seu npub " +
+        "está em authorizedNpubs.";
+    }, DISCOVERY_TIMEOUT_MS);
+  }
+
   function handleNostrResponse(data) {
-    el.tunnelStatus.textContent = "Túnel: " + (data.tunnel_url || "conectado");
+    awaitingDiscovery = false;
+    if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
+    // Stamp the time: two consecutive refreshes with identical statuses are
+    // otherwise indistinguishable from a refresh that never landed.
+    const hora = new Date().toLocaleTimeString();
+    el.tunnelStatus.textContent =
+      "Túnel: " + (data.tunnel_url || "conectado") + " · atualizado às " + hora;
     state.tunnelURL = data.tunnel_url;
     state.authToken = data.auth_token;
     state.services = data.services || [];
     startExpiryCountdown(data.expires_in_seconds || 0);
     renderServices();
     el.servicesSection.classList.remove("hidden");
+    el.app.setAttribute("data-phase", "live");
+    // Transition session from "pending" to "active" on first successful
+    // backend contact.
+    state.session.setBackendActive();
   }
 
   function startExpiryCountdown(seconds) {
@@ -487,6 +680,55 @@ import { startScan } from './js/qr_scanner.js';
     renderServices();
   }
 
+  /**
+   * Re-send the discover request to the host so the service list and
+   * health statuses are refreshed without reloading the whole page.
+   */
+  async function onRefreshServices() {
+    if (!state.nostr || !state.session.sk) return;
+    el.btnRefreshServices.disabled = true;
+    el.btnRefreshServices.setAttribute("aria-busy", "true");
+    el.tunnelStatus.textContent = "Atualizando status…";
+    try {
+      const result = await state.nostr.sendDiscoverRequest(
+        state.session.npub, state.session.sk
+      );
+      if (result && result.status === "timeout") {
+        el.tunnelStatus.textContent = "Sem resposta do host ao atualizar.";
+        return;
+      }
+      if (result && result.status === "failed") {
+        el.tunnelStatus.textContent =
+          "Falha ao atualizar: " + (result.errors || []).join("; ");
+        return;
+      }
+      el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
+      startDiscoveryTimeout();
+    } finally {
+      el.btnRefreshServices.disabled = false;
+      el.btnRefreshServices.removeAttribute("aria-busy");
+    }
+  }
+
+  /**
+   * The service dot reflects health confirmed by the host, never mere
+   * configuration: green only for "up". A service the daemon has not probed
+   * yet ("unknown") or that failed its probe ("down") is shown accordingly, so
+   * the dashboard never claims something is live before it answered.
+   */
+  function statusDot(svc) {
+    const status = svc.status === "up" || svc.status === "down"
+      ? svc.status
+      : "unknown";
+    const meta = {
+      up: { cls: "dot-good", title: "Ativo" },
+      down: { cls: "dot-bad", title: "Inativo" },
+      unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
+    }[status];
+    return '<span class="dot ' + meta.cls + '" title="' + escapeHtml(meta.title) +
+      '" data-status="' + status + '"></span>';
+  }
+
   function renderServices() {
     el.servicesList.innerHTML = "";
     if (!state.tunnelURL) return;
@@ -507,7 +749,7 @@ import { startScan } from './js/qr_scanner.js';
         (svc.icon
           ? '<span class="service-icon" aria-hidden="true">' + escapeHtml(svc.icon) + "</span>"
           : '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-package"></use></svg></span>') +
-        (svc.websocket ? '<span class="dot dot-good" title="Live"></span>' : "") +
+        statusDot(svc) +
         '<div class="service-meta">' +
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
         (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
@@ -516,11 +758,6 @@ import { startScan } from './js/qr_scanner.js';
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
       el.servicesList.appendChild(card);
     });
-  }
-
-  function toggleRelayPanel() {
-    const hidden = el.relayPanel.classList.toggle("hidden");
-    if (!hidden) renderRelayList();
   }
 
   async function onTestAllRelays() {
