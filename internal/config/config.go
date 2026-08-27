@@ -194,10 +194,6 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if c.Nostr.Nsec == "" && c.Nostr.NsecFile == "" {
-		return errors.New("either nostr.nsec or nostr.nsecFile must be set")
-	}
-
 	for _, s := range c.Services {
 		if err := s.Validate(); err != nil {
 			return fmt.Errorf("service %q: %w", s.ID, err)

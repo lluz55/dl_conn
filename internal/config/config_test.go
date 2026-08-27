@@ -101,7 +101,11 @@ func TestValidate_InvalidPort(t *testing.T) {
 	}
 }
 
-func TestValidate_NoNsec(t *testing.T) {
+// Validate does not require nsec/nsecFile in the config: a deployment can
+// supply the key exclusively via the --nsec/--nsec-file CLI flags (e.g. from
+// a systemd secret), which are only resolved later in main, after Load has
+// already succeeded. Enforcing it here would make that path unusable.
+func TestValidate_NoNsecAllowed(t *testing.T) {
 	c := &Config{
 		Nostr: NostrConfig{
 			Relays:          []string{"wss://relay.damus.io"},
@@ -112,9 +116,8 @@ func TestValidate_NoNsec(t *testing.T) {
 			{ID: "hass", Prefix: "/hass", Target: "http://10.0.66.1:8123"},
 		},
 	}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("expected error for missing nsec")
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() should not require nsec: %v", err)
 	}
 }
 
