@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"dl_conn/internal/auth"
@@ -52,6 +55,25 @@ func (rt *Router) buildProxy(i int) {
 				req.URL.Path = "/"
 			}
 		}
+		// Rewritten responses below assume uncompressed bodies; ask the
+		// upstream not to compress so ModifyResponse doesn't have to
+		// gunzip/brotli-decode before patching asset paths.
+		req.Header.Del("Accept-Encoding")
+	}
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if prefix == "" || !isRewritableContentType(resp.Header.Get("Content-Type")) {
+			return nil
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		rewritten := rewriteAssetPaths(body, prefix)
+		resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+		resp.ContentLength = int64(len(rewritten))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
 		log.Printf("proxy error: service=%s target=%s path=%q remote=%s reason=%v",
@@ -130,6 +152,34 @@ func (rt *Router) matchService(r *http.Request) *config.ServiceConfig {
 		}
 	}
 	return nil
+}
+
+// isRewritableContentType reports whether a response body is text-based
+// markup/style/script where a root-absolute "/assets/…" reference could
+// plausibly appear and need rewriting. Deliberately excludes JSON/binary
+// content types so API payloads and images are never touched.
+func isRewritableContentType(contentType string) bool {
+	ct := strings.ToLower(contentType)
+	for _, prefix := range []string{"text/html", "text/css", "text/javascript", "application/javascript", "application/manifest+json"} {
+		if strings.HasPrefix(ct, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteAssetPaths patches root-absolute "/assets/…" references emitted by
+// SPAs that don't know they're mounted under a prefix (Vite-built frontends
+// like Frigate's are the common case): "/assets/main.js" -> "/frigate/assets/main.js".
+// Only rewrites occurrences preceded by a quote or CSS url() paren, so it
+// can't mangle unrelated text that merely contains the substring "/assets/".
+func rewriteAssetPaths(body []byte, prefix string) []byte {
+	replacement := []byte(prefix + "/assets/")
+	for _, delim := range [][]byte{[]byte(`"/assets/`), []byte(`'/assets/`), []byte("`/assets/"), []byte("(/assets/")} {
+		quote := delim[:1]
+		body = bytes.ReplaceAll(body, delim, append(append([]byte{}, quote...), replacement...))
+	}
+	return body
 }
 
 func (rt *Router) matchPrefix(path string) *config.ServiceConfig {

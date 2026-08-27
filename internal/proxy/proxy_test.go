@@ -3,6 +3,7 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,92 @@ func TestRequireAuth_BlocksNoSession(t *testing.T) {
 	}
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestRewriteAssetPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"double-quoted script src", `<script src="/assets/main-DUVUnF6L.js"></script>`, `<script src="/frigate/assets/main-DUVUnF6L.js"></script>`},
+		{"single-quoted", `href='/assets/index-ADwqpRot.css'`, `href='/frigate/assets/index-ADwqpRot.css'`},
+		{"backtick template literal", "`/assets/chunk.js`", "`/frigate/assets/chunk.js`"},
+		{"css url() unquoted", `background: url(/assets/font.woff2)`, `background: url(/frigate/assets/font.woff2)`},
+		{"untouched unrelated text", `see /assets-info page`, `see /assets-info page`},
+	}
+	for _, tt := range tests {
+		got := string(rewriteAssetPaths([]byte(tt.in), "/frigate"))
+		if got != tt.want {
+			t.Errorf("%s: rewriteAssetPaths(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestIsRewritableContentType(t *testing.T) {
+	tests := []struct {
+		ct   string
+		want bool
+	}{
+		{"text/html; charset=utf-8", true},
+		{"text/css", true},
+		{"application/javascript", true},
+		{"application/manifest+json", true},
+		{"application/json", false},
+		{"image/svg+xml", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isRewritableContentType(tt.ct); got != tt.want {
+			t.Errorf("isRewritableContentType(%q) = %v, want %v", tt.ct, got, tt.want)
+		}
+	}
+}
+
+func TestRouter_RewritesAssetPathsInProxiedHTML(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/assets/main.js" {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Write([]byte("console.log('ok')"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<script src="/assets/main.js"></script>`))
+	}))
+	defer backend.Close()
+
+	services := []config.ServiceConfig{
+		{ID: "frigate", Name: "Frigate", Prefix: "/frigate", Target: backend.URL, StripPrefix: true, Websocket: false},
+	}
+	rt := NewRouter(services, sm)
+	sessionID := sm.CreateSession()
+
+	// The HTML entrypoint should come back with the asset path rewritten
+	// under the service's prefix.
+	req := httptest.NewRequest("GET", "/frigate/", nil)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("html request: status = %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `src="/frigate/assets/main.js"`) {
+		t.Errorf("body = %q, want rewritten src pointing at /frigate/assets/main.js", body)
+	}
+
+	// The rewritten URL must then actually resolve through the proxy.
+	req2 := httptest.NewRequest("GET", "/frigate/assets/main.js", nil)
+	req2.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w2 := httptest.NewRecorder()
+	rt.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("rewritten asset request: status = %d, want %d", w2.Code, http.StatusOK)
 	}
 }
 
