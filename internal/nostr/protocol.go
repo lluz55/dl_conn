@@ -20,6 +20,16 @@ type ServiceInfo struct {
 	// Status is "up", "down" or "unknown". The frontend only paints a service
 	// green for "up" — an unprobed service is never a confirmed one.
 	Status      string `json:"status"`
+	// Direct marks a service that gets its own ephemeral tunnel (see
+	// ServiceConfig.DirectTunnel) rather than being reverse-proxied under
+	// Prefix — the frontend must not build a Prefix-based link for it, even
+	// while DirectURL is still empty.
+	Direct bool `json:"direct,omitempty"`
+	// DirectURL, when set, is this service's own ephemeral tunnel — the
+	// frontend should link straight there instead of through Prefix on the
+	// shared tunnel. Empty until that tunnel reports its URL (DirectTunnel
+	// services take a few seconds after daemon start, same as the main one).
+	DirectURL string `json:"directUrl,omitempty"`
 }
 
 // ResponsePayload is the JSON encrypted with NIP-44 and sent back.

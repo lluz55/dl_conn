@@ -65,6 +65,40 @@ services:
 	}
 }
 
+func TestLoad_ServiceDirectTunnel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	body := `nostr:
+  nsec: "nsec1placeholder00000000000000000000000000000000000"
+  relays:
+    - "wss://relay.damus.io"
+  authorizedNpubs:
+    - "npub1placeholder00000000000000000000000000000000000"
+services:
+  - id: "hass"
+    prefix: "/hass"
+    target: "http://10.0.66.1:8123"
+  - id: "frigate"
+    prefix: "/frigate"
+    target: "http://10.0.66.1:5000"
+    directTunnel: true
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Services[0].DirectTunnel {
+		t.Error("hass: DirectTunnel = true, want false (default)")
+	}
+	if !cfg.Services[1].DirectTunnel {
+		t.Error("frigate: DirectTunnel = false, want true")
+	}
+}
+
 func TestValidate_EmptyAuthorizedNpubs(t *testing.T) {
 	c := &Config{
 		Nostr: NostrConfig{

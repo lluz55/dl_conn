@@ -26,7 +26,7 @@ type Status struct {
 // and graceful shutdown.
 type Manager struct {
 	binary    string
-	port      int
+	target    string
 	notifyURL chan string
 
 	mu      sync.Mutex
@@ -36,12 +36,14 @@ type Manager struct {
 	pid     int
 }
 
-// NewManager creates a tunnel manager that runs cloudflared to proxy
-// to the given local port.
-func NewManager(binary string, port int) *Manager {
+// NewManager creates a tunnel manager that runs cloudflared to proxy to the
+// given target URL, e.g. "http://127.0.0.1:9099" for dl_conn's own server or
+// "http://10.0.66.1:5000" to point a second, independent tunnel straight at
+// a LAN service (see ServiceConfig.DirectTunnel).
+func NewManager(binary, target string) *Manager {
 	return &Manager{
 		binary:    binary,
-		port:      port,
+		target:    target,
 		notifyURL: make(chan string, 1),
 	}
 }
@@ -53,8 +55,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return fmt.Errorf("tunnel already running")
 	}
-	target := fmt.Sprintf("http://127.0.0.1:%d", m.port)
-	cmd := exec.CommandContext(ctx, m.binary, "tunnel", "--url", target, "--no-autoupdate")
+	cmd := exec.CommandContext(ctx, m.binary, "tunnel", "--url", m.target, "--no-autoupdate")
 	m.cmd = cmd
 	m.running = true
 	m.mu.Unlock()

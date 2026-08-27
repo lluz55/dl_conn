@@ -521,3 +521,44 @@ func TestHandler_ServicesWithStatus(t *testing.T) {
 		t.Fatalf("handler slice mutated: %q", h.services[0].Status)
 	}
 }
+
+func TestHandler_ServicesWithDirectURL(t *testing.T) {
+	h := NewHandler(nil, nil, "https://x.trycloudflare.com", []ServiceInfo{
+		{ID: "hass", Name: "HA", Status: "unknown"},
+		{ID: "frigate", Name: "Frigate", Status: "unknown", Direct: true},
+	})
+	h.SetStatusFunc(func(id string) string { return "up" })
+
+	// No direct-URL func installed: DirectURL stays empty for everyone.
+	if got := h.servicesWithStatus()[1].DirectURL; got != "" {
+		t.Fatalf("DirectURL without lookup = %q, want empty", got)
+	}
+
+	// Direct tunnel not up yet: still empty, but Direct stays true so the
+	// frontend knows not to fall back to a prefix-based link.
+	h.SetDirectURLFunc(func(id string) string {
+		if id == "frigate" {
+			return ""
+		}
+		return "should-not-be-used"
+	})
+	out := h.servicesWithStatus()
+	if out[1].DirectURL != "" || !out[1].Direct {
+		t.Fatalf("frigate before tunnel ready: DirectURL=%q Direct=%v, want empty/true", out[1].DirectURL, out[1].Direct)
+	}
+
+	// Direct tunnel reports its URL.
+	h.SetDirectURLFunc(func(id string) string {
+		if id == "frigate" {
+			return "https://frigate-direct.trycloudflare.com"
+		}
+		return ""
+	})
+	out = h.servicesWithStatus()
+	if out[1].DirectURL != "https://frigate-direct.trycloudflare.com" {
+		t.Fatalf("frigate DirectURL = %q, want the tunnel URL", out[1].DirectURL)
+	}
+	if out[0].DirectURL != "" {
+		t.Fatalf("hass DirectURL = %q, want empty (not a direct-tunnel service)", out[0].DirectURL)
+	}
+}

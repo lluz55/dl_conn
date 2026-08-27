@@ -740,11 +740,25 @@ import { startScan } from './js/qr_scanner.js';
     state.services.forEach((svc) => {
       const card = document.createElement("div");
       card.className = "service-card";
+      // Direct-tunnel services (see ServiceInfo.Direct) get their own
+      // ephemeral Cloudflare Tunnel and must never be linked through the
+      // shared tunnel's /auth?redirect=prefix flow — that prefix isn't
+      // proxied at all in this mode. Their own tunnel takes a few seconds
+      // to come up, so directUrl may still be empty; show a pending state
+      // rather than a link to nowhere.
+      const isPendingDirect = svc.direct && !svc.directUrl;
       // Percent-encode both values: they land inside an href attribute, and
       // the prefix arrives over the wire from the host's DM.
-      const href = state.tunnelURL + "/auth?token=" +
-        encodeURIComponent(state.authToken || "") +
-        "&redirect=" + encodeURIComponent(svc.prefix || "/");
+      const href = svc.direct
+        ? (svc.directUrl || "#")
+        : state.tunnelURL + "/auth?token=" +
+          encodeURIComponent(state.authToken || "") +
+          "&redirect=" + encodeURIComponent(svc.prefix || "/");
+      const linkHtml = isPendingDirect
+        ? '<span class="service-link service-link-pending">' +
+          '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Iniciando túnel…</span>'
+        : '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
+          '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
       card.innerHTML =
         (svc.icon
           ? '<span class="service-icon" aria-hidden="true">' + escapeHtml(svc.icon) + "</span>"
@@ -754,8 +768,7 @@ import { startScan } from './js/qr_scanner.js';
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
         (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
         "</div>" +
-        '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
-        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
+        linkHtml;
       el.servicesList.appendChild(card);
     });
   }

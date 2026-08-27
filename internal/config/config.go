@@ -48,6 +48,15 @@ type ServiceConfig struct {
 	// its "/frigate" mount prefix), those routes point at the same target
 	// but aren't a distinct service the user should see or click into.
 	Hidden bool `mapstructure:"hidden"`
+	// DirectTunnel gives this service its own ephemeral Cloudflare Tunnel
+	// straight to Target instead of reverse-proxying it under Prefix. For a
+	// frontend that assumes it's always at the origin root (Frigate's
+	// Vite/i18next bundle hardcodes plenty of root-absolute references),
+	// serving it from the actual root of its own tunnel sidesteps every
+	// sub-path rewriting problem outright. Prefix/StripPrefix are unused in
+	// this mode — Prefix must still be set (schema requires it) but nothing
+	// routes through it.
+	DirectTunnel bool `mapstructure:"directTunnel"`
 }
 
 // AuthConfig holds token and session TTLs.

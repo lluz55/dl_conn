@@ -53,36 +53,19 @@ services:
     stripPrefix: true
     websocket: true
 
+  # Some frontends (Frigate's is the known case) hardcode root-absolute
+  # references — asset imports, i18next locales, their own WebSocket URL —
+  # that assume they're at the origin root. Reverse-proxying those under a
+  # prefix like /frigate never fully works. directTunnel gives the service
+  # its own ephemeral Cloudflare Tunnel straight to target instead,
+  # sidestepping the sub-path problem entirely; prefix/stripPrefix are
+  # unused in this mode (prefix is still required by the schema).
   - id: "frigate"
     name: "Frigate"
     icon: "video"
     prefix: "/frigate"
     target: "http://10.0.66.1:5000"
-    stripPrefix: true
-    websocket: false
-
-  # Frigate's own frontend calls its API/WebSocket at the origin root (it
-  # doesn't know it's mounted under /frigate) — proxy those root paths
-  # straight through to the same backend. "hidden" keeps them out of the
-  # discovery list and health status: they aren't a thing to click into,
-  # just plumbing the /frigate entry above depends on.
-  - id: "frigate-api"
-    name: "Frigate API"
-    icon: "video"
-    prefix: "/api"
-    target: "http://10.0.66.1:5000"
-    stripPrefix: false
-    websocket: false
-    hidden: true
-
-  - id: "frigate-ws"
-    name: "Frigate WebSocket"
-    icon: "video"
-    prefix: "/ws"
-    target: "http://10.0.66.1:5000"
-    stripPrefix: false
-    websocket: true
-    hidden: true
+    directTunnel: true
 
   - id: "zigbee2mqtt"
     name: "Zigbee2MQTT"

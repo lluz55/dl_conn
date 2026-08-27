@@ -806,6 +806,12 @@ body {
   background-color: var(--color-primary);
   color: var(--color-on-primary);
 }
+.service-link-pending {
+  color: var(--color-on-surface-dim);
+  border-color: var(--color-outline);
+  opacity: 0.7;
+  cursor: default;
+}
 
 /* ── Dots & status tones ──────────────────────────────────────── */
 .dot {

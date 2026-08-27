@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -52,7 +53,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	// Phase 2: tunnel manager
-	tm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, cfg.Tunnel.ListenPort)
+	tm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, fmt.Sprintf("http://127.0.0.1:%d", cfg.Tunnel.ListenPort))
 	if err := tm.Start(ctx); err != nil {
 		return fmt.Errorf("starting tunnel: %w", err)
 	}
@@ -100,6 +101,7 @@ func run(cmd *cobra.Command, _ []string) error {
 			Prefix:    s.Prefix,
 			Websocket: s.Websocket,
 			Status:    health.StatusUnknown,
+			Direct:    s.DirectTunnel,
 		}
 	}
 
@@ -160,13 +162,49 @@ func run(cmd *cobra.Command, _ []string) error {
 	monitor := health.New(visibleServices)
 	go monitor.Run(ctx)
 
+	// DirectTunnel services (e.g. Frigate) get their own ephemeral Cloudflare
+	// Tunnel straight to Target instead of being reverse-proxied under a
+	// prefix — see ServiceConfig.DirectTunnel. Each cloudflared process takes
+	// a few seconds to report its hostname, so URLs land in directURLs
+	// asynchronously as they come in rather than blocking startup.
+	var directURLsMu sync.Mutex
+	directURLs := make(map[string]string)
+	proxiedServices := make([]config.ServiceConfig, 0, len(cfg.Services))
+	for _, s := range cfg.Services {
+		if !s.DirectTunnel {
+			proxiedServices = append(proxiedServices, s)
+			continue
+		}
+		dtm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, s.Target)
+		if err := dtm.Start(ctx); err != nil {
+			log.Printf("direct tunnel for %s: failed to start: %v", s.ID, err)
+			continue
+		}
+		defer func(m *tunnel.Manager) { _ = m.Shutdown(ctx) }(dtm)
+		go func(id string, m *tunnel.Manager) {
+			select {
+			case tunnelURL := <-m.URL():
+				directURLsMu.Lock()
+				directURLs[id] = tunnelURL
+				directURLsMu.Unlock()
+				log.Printf("Direct tunnel for %s: %s", id, tunnelURL)
+			case <-ctx.Done():
+			}
+		}(s.ID, dtm)
+	}
+
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
 	handler.SetStatusFunc(monitor.Status)
 	handler.SetProbeAll(monitor.ProbeAll)
+	handler.SetDirectURLFunc(func(id string) string {
+		directURLsMu.Lock()
+		defer directURLsMu.Unlock()
+		return directURLs[id]
+	})
 	go handler.Serve(ctx)
 
 	// HTTP server: serve web + proxy + auth + tunnel target
-	router := proxy.NewRouter(cfg.Services, sessionMgr)
+	router := proxy.NewRouter(proxiedServices, sessionMgr)
 
 	mux := http.NewServeMux()
 
@@ -184,7 +222,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// the trailing-slash form as a subtree match, but a bare request for
 	// e.g. "/ws" (a WebSocket upgrade, which can't follow the 301 ServeMux
 	// would otherwise issue to "/ws/") needs the exact pattern too.
-	for _, svc := range cfg.Services {
+	for _, svc := range proxiedServices {
 		mux.Handle(svc.Prefix, router)
 		mux.Handle(svc.Prefix+"/", router)
 	}
