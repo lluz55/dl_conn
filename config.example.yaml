@@ -1,0 +1,70 @@
+# dl_conn — Example Configuration
+# Copy this file to config.yaml and adjust according to your environment.
+# Note: Never commit your actual config.yaml containing private keys (nsec).
+
+nostr:
+  # Nostr private key (nsec) of the daemon.
+  # Can be specified directly here or via nsecFile (recommended with SOPS/secrets).
+  # nsec: "nsec1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  nsecFile: "/run/secrets/nostr/dl-conn-key"
+
+  # Relays used for decentralized signaling and DMs.
+  relays:
+    - "wss://relay.damus.io"
+    - "wss://nos.lol"
+    - "wss://relay.nostr.band"
+    - "wss://relay.primal.net"
+    - "wss://nostr.mom"
+
+  # Public keys (npub) authorized to request and receive tunnel access.
+  authorizedNpubs:
+    - "npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  # Fallback to NIP-04 if client does not support NIP-44 (default: false)
+  fallbackNip04: false
+
+tunnel:
+  # Local port where dl_conn's reverse proxy will listen.
+  listenPort: 9099
+
+  # Path to the cloudflared executable (default: "cloudflared").
+  cloudflaredPath: "cloudflared"
+
+  # Automatically start cloudflared tunnel on daemon startup (default: true).
+  autoStart: true
+
+  # Idle timeout before stopping ephemeral tunnel if no activity occurs.
+  inactivityTimeout: "10m"
+
+auth:
+  # Time-to-live for single-use authentication tokens.
+  tokenTTL: "120s"
+
+  # Time-to-live for authenticated browser sessions.
+  sessionTTL: "4h"
+
+# Local services exposed through the reverse proxy.
+services:
+  - id: "hass"
+    name: "Home Assistant"
+    icon: "home"
+    prefix: "/hass"
+    target: "http://10.0.66.1:8123"
+    stripPrefix: true
+    websocket: true
+
+  - id: "frigate"
+    name: "Frigate"
+    icon: "video"
+    prefix: "/frigate"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: true
+    websocket: false
+
+  - id: "zigbee2mqtt"
+    name: "Zigbee2MQTT"
+    icon: "router"
+    prefix: "/zigbee2mqtt"
+    target: "http://10.1.1.10:8080"
+    stripPrefix: true
+    websocket: true
