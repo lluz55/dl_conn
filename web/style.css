@@ -120,7 +120,11 @@
   width: 20px;
   height: 20px;
   flex-shrink: 0;
-  fill: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 .icon-sm { width: 16px; height: 16px; }
@@ -776,12 +780,20 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
-  font-size: 2rem;
-  opacity: 0.85;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-icon);
+  background: var(--color-surface-strong);
+  color: var(--color-primary);
+  font-size: 1.75rem;
+  flex-shrink: 0;
+  line-height: 1;
 }
-.service-icon svg { width: 28px; height: 28px; }
+.service-icon svg,
+.service-icon svg.icon {
+  width: 26px;
+  height: 26px;
+}
 
 .service-name {
   font-size: var(--fs-md);
@@ -806,13 +818,6 @@ body {
   background-color: var(--color-primary);
   color: var(--color-on-primary);
 }
-.service-link-pending {
-  color: var(--color-on-surface-dim);
-  border-color: var(--color-outline);
-  opacity: 0.7;
-  cursor: default;
-}
-
 /* ── Dots & status tones ──────────────────────────────────────── */
 .dot {
   display: inline-block;
