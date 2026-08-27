@@ -82,9 +82,17 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	authHandler := auth.NewAuthHandler(tokenMgr, sessionMgr)
 
-	// Map services for the Nostr response
-	serviceInfos := make([]nostr.ServiceInfo, len(cfg.Services))
-	for i, s := range cfg.Services {
+	// Map services for the Nostr response. Hidden services (extra root-level
+	// routes a backend's own frontend needs, e.g. Frigate's "/api"/"/ws")
+	// are proxied but aren't a distinct thing the user should see or click.
+	visibleServices := make([]config.ServiceConfig, 0, len(cfg.Services))
+	for _, s := range cfg.Services {
+		if !s.Hidden {
+			visibleServices = append(visibleServices, s)
+		}
+	}
+	serviceInfos := make([]nostr.ServiceInfo, len(visibleServices))
+	for i, s := range visibleServices {
 		serviceInfos[i] = nostr.ServiceInfo{
 			ID:        s.ID,
 			Name:      s.Name,
@@ -149,7 +157,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// Health monitor: services are advertised as "unknown" until a probe
 	// confirms the local target answers, so the dashboard never shows green
 	// for something that was merely configured.
-	monitor := health.New(cfg.Services)
+	monitor := health.New(visibleServices)
 	go monitor.Run(ctx)
 
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
@@ -171,10 +179,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	mux.HandleFunc("/auth", authHandler.HandleAuth)
 	mux.Handle("/_static/", http.StripPrefix("/_static/", fs))
 
-	// Proxy (Zero-Trust)
-	mux.Handle("/api/", http.StripPrefix("/api", router))
-	// Service routes through the proxy
+	// Service routes through the proxy (Zero-Trust). Each prefix is
+	// registered both bare and with a trailing slash: ServeMux only treats
+	// the trailing-slash form as a subtree match, but a bare request for
+	// e.g. "/ws" (a WebSocket upgrade, which can't follow the 301 ServeMux
+	// would otherwise issue to "/ws/") needs the exact pattern too.
 	for _, svc := range cfg.Services {
+		mux.Handle(svc.Prefix, router)
 		mux.Handle(svc.Prefix+"/", router)
 	}
 

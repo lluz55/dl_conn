@@ -42,6 +42,12 @@ type ServiceConfig struct {
 	Target      string `mapstructure:"target"`
 	StripPrefix bool   `mapstructure:"stripPrefix"`
 	Websocket   bool   `mapstructure:"websocket"`
+	// Hidden excludes the service from Nostr discovery and health-status
+	// reporting while still proxying it. For a backend whose frontend needs
+	// extra root-level routes (e.g. Frigate's own "/api"/"/ws", unaware of
+	// its "/frigate" mount prefix), those routes point at the same target
+	// but aren't a distinct service the user should see or click into.
+	Hidden bool `mapstructure:"hidden"`
 }
 
 // AuthConfig holds token and session TTLs.

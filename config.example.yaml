@@ -61,6 +61,29 @@ services:
     stripPrefix: true
     websocket: false
 
+  # Frigate's own frontend calls its API/WebSocket at the origin root (it
+  # doesn't know it's mounted under /frigate) — proxy those root paths
+  # straight through to the same backend. "hidden" keeps them out of the
+  # discovery list and health status: they aren't a thing to click into,
+  # just plumbing the /frigate entry above depends on.
+  - id: "frigate-api"
+    name: "Frigate API"
+    icon: "video"
+    prefix: "/api"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: false
+    websocket: false
+    hidden: true
+
+  - id: "frigate-ws"
+    name: "Frigate WebSocket"
+    icon: "video"
+    prefix: "/ws"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: false
+    websocket: true
+    hidden: true
+
   - id: "zigbee2mqtt"
     name: "Zigbee2MQTT"
     icon: "router"
