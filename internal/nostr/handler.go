@@ -14,7 +14,6 @@ type Handler struct {
 	tunnelURL    string
 	services     []ServiceInfo
 	statusFn     func(id string) string
-	directURLFn  func(id string) string
 	probeAllFn   func(context.Context)
 }
 
@@ -40,13 +39,6 @@ func (h *Handler) SetStatusFunc(fn func(id string) string) {
 	h.statusFn = fn
 }
 
-// SetDirectURLFunc installs a lookup for DirectTunnel services' own ephemeral
-// URLs, consulted at response time since that URL isn't known until its
-// tunnel reports in (possibly after the handler was constructed).
-func (h *Handler) SetDirectURLFunc(fn func(id string) string) {
-	h.directURLFn = fn
-}
-
 // SetProbeAll installs a function that triggers a fresh health probe of every
 // service. When set, each discovery response runs one probe first so the
 // caller gets current availability rather than the last cached 30s snapshot.
@@ -64,9 +56,6 @@ func (h *Handler) servicesWithStatus() []ServiceInfo {
 	copy(out, h.services)
 	for i := range out {
 		out[i].Status = h.statusFn(out[i].ID)
-		if h.directURLFn != nil {
-			out[i].DirectURL = h.directURLFn(out[i].ID)
-		}
 	}
 	return out
 }

@@ -1,15 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -53,7 +54,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	// Phase 2: tunnel manager
-	tm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, fmt.Sprintf("http://127.0.0.1:%d", cfg.Tunnel.ListenPort))
+	tm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, cfg.Tunnel.ListenPort)
 	if err := tm.Start(ctx); err != nil {
 		return fmt.Errorf("starting tunnel: %w", err)
 	}
@@ -101,7 +102,6 @@ func run(cmd *cobra.Command, _ []string) error {
 			Prefix:    s.Prefix,
 			Websocket: s.Websocket,
 			Status:    health.StatusUnknown,
-			Direct:    s.DirectTunnel,
 		}
 	}
 
@@ -162,55 +162,9 @@ func run(cmd *cobra.Command, _ []string) error {
 	monitor := health.New(visibleServices)
 	go monitor.Run(ctx)
 
-	// DirectTunnel services (e.g. Frigate) get their own ephemeral Cloudflare
-	// Tunnel straight to Target instead of being reverse-proxied under a
-	// prefix — see ServiceConfig.DirectTunnel. Each cloudflared process takes
-	// a few seconds to report its hostname, so URLs land in directURLs
-	// asynchronously as they come in rather than blocking startup.
-	var directURLsMu sync.Mutex
-	directURLs := make(map[string]string)
-	proxiedServices := make([]config.ServiceConfig, 0, len(cfg.Services))
-	for _, s := range cfg.Services {
-		if !s.DirectTunnel {
-			proxiedServices = append(proxiedServices, s)
-			continue
-		}
-		dtm := tunnel.NewManager(cfg.Tunnel.CloudflaredPath, s.Target)
-		if err := dtm.Start(ctx); err != nil {
-			log.Printf("direct tunnel for %s: failed to start: %v", s.ID, err)
-			continue
-		}
-		defer func(m *tunnel.Manager) { _ = m.Shutdown(ctx) }(dtm)
-		go func(id string, m *tunnel.Manager) {
-			var directURL string
-			select {
-			case directURL = <-m.URL():
-			case <-ctx.Done():
-				return
-			}
-			// The frontend shows a "starting tunnel…" pending state (see
-			// ServiceInfo.Direct) until DirectURL is set — don't set it
-			// until the URL is actually reachable, not just printed.
-			onAttempt, lastDetail := readinessLogger(fmt.Sprintf("direct tunnel for %s", id))
-			if !tunnel.WaitReady(ctx, directURL, tunnel.DefaultReadyTimeout, onAttempt) {
-				log.Printf("direct tunnel for %s: %s did not become reachable within %s (last: %s)", id, directURL, tunnel.DefaultReadyTimeout, *lastDetail)
-				return
-			}
-			directURLsMu.Lock()
-			directURLs[id] = directURL
-			directURLsMu.Unlock()
-			log.Printf("Direct tunnel for %s ready: %s", id, directURL)
-		}(s.ID, dtm)
-	}
-
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
 	handler.SetStatusFunc(monitor.Status)
 	handler.SetProbeAll(monitor.ProbeAll)
-	handler.SetDirectURLFunc(func(id string) string {
-		directURLsMu.Lock()
-		defer directURLsMu.Unlock()
-		return directURLs[id]
-	})
 	// Don't answer discovery DMs until the tunnel is confirmed reachable —
 	// cloudflared printing the ephemeral hostname doesn't mean Cloudflare's
 	// edge has finished routing to it yet. Until then, requests just go
@@ -234,14 +188,16 @@ func run(cmd *cobra.Command, _ []string) error {
 	}()
 
 	// HTTP server: serve web + proxy + auth + tunnel target
-	router := proxy.NewRouter(proxiedServices, sessionMgr)
+	router := proxy.NewRouter(cfg.Services, sessionMgr)
 
 	mux := http.NewServeMux()
 
-	// SPA static files
+	// SPA static files. The catch-all pattern also has to let root-absolute
+	// sub-resource requests from proxied SPAs through to the router — see
+	// proxy.RootFallback.
 	webDir := filepath.Join(".", "web")
 	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
-	mux.Handle("/", fs)
+	mux.Handle("/", proxy.RootFallback(router, fs, http.Dir(webDir)))
 
 	// Auth endpoint
 	mux.HandleFunc("/auth", authHandler.HandleAuth)
@@ -252,7 +208,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// the trailing-slash form as a subtree match, but a bare request for
 	// e.g. "/ws" (a WebSocket upgrade, which can't follow the 301 ServeMux
 	// would otherwise issue to "/ws/") needs the exact pattern too.
-	for _, svc := range proxiedServices {
+	for _, svc := range cfg.Services {
 		mux.Handle(svc.Prefix, router)
 		mux.Handle(svc.Prefix+"/", router)
 	}
@@ -345,6 +301,33 @@ type statusRecorder struct {
 func (rec *statusRecorder) WriteHeader(status int) {
 	rec.status = status
 	rec.ResponseWriter.WriteHeader(status)
+}
+
+// Hijack lets a WebSocket upgrade through. httputil.ReverseProxy takes over
+// the raw connection to switch protocols, and a wrapper that only satisfies
+// http.ResponseWriter turns every upgrade into "can't switch protocols using
+// non-Hijacker ResponseWriter type" — a 502 the browser reports as a failed
+// handshake. Recording 101 here also keeps the access log honest: the
+// upgrade response is written straight to the connection, never through
+// WriteHeader.
+func (rec *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := rec.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter %T is not an http.Hijacker", rec.ResponseWriter)
+	}
+	conn, brw, err := hj.Hijack()
+	if err == nil {
+		rec.status = http.StatusSwitchingProtocols
+	}
+	return conn, brw, err
+}
+
+// Unwrap exposes the underlying ResponseWriter to http.ResponseController,
+// so the capabilities this wrapper doesn't implement itself — flushing above
+// all, which is what keeps Frigate's live MJPEG/event streams moving instead
+// of sitting in a buffer — keep working through the middleware.
+func (rec *statusRecorder) Unwrap() http.ResponseWriter {
+	return rec.ResponseWriter
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

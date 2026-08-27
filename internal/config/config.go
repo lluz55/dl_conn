@@ -48,15 +48,33 @@ type ServiceConfig struct {
 	// its "/frigate" mount prefix), those routes point at the same target
 	// but aren't a distinct service the user should see or click into.
 	Hidden bool `mapstructure:"hidden"`
-	// DirectTunnel gives this service its own ephemeral Cloudflare Tunnel
-	// straight to Target instead of reverse-proxying it under Prefix. For a
-	// frontend that assumes it's always at the origin root (Frigate's
-	// Vite/i18next bundle hardcodes plenty of root-absolute references),
-	// serving it from the actual root of its own tunnel sidesteps every
-	// sub-path rewriting problem outright. Prefix/StripPrefix are unused in
-	// this mode — Prefix must still be set (schema requires it) but nothing
-	// routes through it.
-	DirectTunnel bool `mapstructure:"directTunnel"`
+	// RootPaths lists sub-resource directories this backend serves from its
+	// own root but whose frontend asks for at the wrong place once mounted
+	// under Prefix. Frigate's i18next config is the known case: its
+	// loadPath is "locales/{{lng}}/{{ns}}.json" — document-relative, so the
+	// browser resolves it against whatever SPA route is currently in the
+	// address bar ("/frigate/settings/cameras" → "/frigate/settings/locales/…").
+	// Declaring "/locales/" lets the router recognize such a request
+	// wherever it lands and rewrite it back to the backend's root form.
+	// Each entry must start and end with "/".
+	RootPaths []string `mapstructure:"rootPaths"`
+	// ForwardedFor controls whether the proxy sends X-Forwarded-For to this
+	// backend. Unset means yes, which is what a reverse proxy should do:
+	// the header carries the visitor's real IP down the chain (cloudflared
+	// → dl_conn → backend). Set it to false for a backend that refuses
+	// requests carrying the header unless the proxy is on an allowlist it
+	// keeps — Home Assistant answers 400 Bad Request to every request when
+	// "use_x_forwarded_for" is on and dl_conn's address isn't in its
+	// "trusted_proxies". Suppressing the header is the workaround when the
+	// backend's own config is out of reach; the backend then sees every
+	// request as coming from dl_conn itself.
+	ForwardedFor *bool `mapstructure:"forwardedFor"`
+}
+
+// SendsForwardedFor reports whether X-Forwarded-For should be passed to this
+// service. Absent configuration means yes.
+func (s *ServiceConfig) SendsForwardedFor() bool {
+	return s.ForwardedFor == nil || *s.ForwardedFor
 }
 
 // AuthConfig holds token and session TTLs.
@@ -205,6 +223,11 @@ func (s *ServiceConfig) Validate() error {
 	}
 	if !strings.HasPrefix(s.Prefix, "/") {
 		return fmt.Errorf("prefix must start with /: %s", s.Prefix)
+	}
+	for _, rp := range s.RootPaths {
+		if !strings.HasPrefix(rp, "/") || !strings.HasSuffix(rp, "/") || rp == "/" {
+			return fmt.Errorf("rootPath must be a directory path like /locales/: %s", rp)
+		}
 	}
 	return nil
 }
