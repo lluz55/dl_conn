@@ -96,6 +96,9 @@
         <h1>dl_conn</h1>
       </div>
       <div class="header-actions">
+        <button id="btn-toggle-relays" class="btn-icon" aria-label="Configurar relays" data-tip="Configurar relays" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg>
+        </button>
         <button id="btn-lock-session" class="btn-icon hidden" aria-label="Bloquear sessão" data-tip="Bloquear sessão">
           <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
         </button>
@@ -174,8 +177,8 @@
         <button id="btn-clear-all" class="btn-link-danger" data-tip="Apagar todos os dados do frontend">Apagar todos os dados</button>
       </section>
 
-      <!-- Relay Manager -->
-      <section id="relay-panel" class="card">
+      <!-- Relay Manager (revealed via the header's relay-settings toggle) -->
+      <section id="relay-panel" class="card hidden">
         <div class="relay-panel-header">
           <h2>Relays</h2>
           <span id="relay-summary" class="status-sub" role="status"></span>
@@ -195,8 +198,8 @@
         <button id="btn-reset-relays" class="btn-link-danger" data-tip="Restaurar relays padrão">Restaurar padrões</button>
       </section>
 
-      <!-- Auto-lock timer settings -->
-      <section id="auto-lock-section" class="card">
+      <!-- Auto-lock timer settings (shown only after a successful login) -->
+      <section id="auto-lock-section" class="card hidden">
         <div class="card-head">
           <h2>Bloqueio automático</h2>
           <svg class="icon" aria-hidden="true"><use href="#i-timer"></use></svg>

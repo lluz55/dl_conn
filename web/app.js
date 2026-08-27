@@ -35,6 +35,7 @@ import { startScan } from './js/qr_scanner.js';
     hostNpubSection: $("host-npub-section"),
     hostNpubInput: $("host-npub-input"),
     saveHostNpub: $("save-host-npub"),
+    btnToggleRelays: $("btn-toggle-relays"),
     relayPanel: $("relay-panel"),
     relaySummary: $("relay-summary"),
     btnTestAllRelays: $("btn-test-all-relays"),
@@ -218,6 +219,7 @@ import { startScan } from './js/qr_scanner.js';
     el.btnSkipVault.addEventListener("click", dismissSavePrompt);
     el.saveHostNpub.addEventListener("click", onSaveHostNpub);
     el.hostNpubInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onSaveHostNpub(); });
+    el.btnToggleRelays.addEventListener("click", onToggleRelays);
     el.btnTestAllRelays.addEventListener("click", onTestAllRelays);
     el.btnAddRelay.addEventListener("click", onAddRelay);
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
@@ -243,6 +245,7 @@ import { startScan } from './js/qr_scanner.js';
       // hiding it would take the PIN fields with it (see showSavePrompt).
       if (!state.pendingIdentity) el.vaultSection.classList.add("hidden");
       el.btnLockSession.classList.remove("hidden");
+      el.autoLockSection.classList.remove("hidden");
       setSessionStatus("Em espera", "dim");
       // Reveal the Live column on authentication so the user sees connection
       // feedback (status rail) while the tunnel is discovered, instead of a
@@ -257,6 +260,7 @@ import { startScan } from './js/qr_scanner.js';
       state.pendingIdentity = null;
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
+      el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
@@ -268,6 +272,7 @@ import { startScan } from './js/qr_scanner.js';
     } else if (event === "wiped") {
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
+      el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
       clearLiveTimers();
       setSessionStatus("Bloqueada", "dim");
@@ -962,6 +967,12 @@ import { startScan } from './js/qr_scanner.js';
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
       el.servicesList.appendChild(card);
     });
+  }
+
+  function onToggleRelays() {
+    const willShow = el.relayPanel.classList.contains("hidden");
+    el.relayPanel.classList.toggle("hidden", !willShow);
+    el.btnToggleRelays.setAttribute("aria-expanded", String(willShow));
   }
 
   async function onTestAllRelays() {
