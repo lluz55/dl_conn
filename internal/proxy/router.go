@@ -176,16 +176,27 @@ func isRewritableContentType(contentType string) bool {
 	return false
 }
 
-// rewriteAssetPaths patches root-absolute "/assets/…" references emitted by
-// SPAs that don't know they're mounted under a prefix (Vite-built frontends
-// like Frigate's are the common case): "/assets/main.js" -> "/frigate/assets/main.js".
-// Only rewrites occurrences preceded by a quote or CSS url() paren, so it
-// can't mangle unrelated text that merely contains the substring "/assets/".
+// rootPathFamilies are well-known root-absolute directories SPAs reference
+// as literal strings — a Vite build's own asset imports ("/assets/…") and,
+// separately, i18next-http-backend's default loadPath template
+// ("/locales/{{lng}}/{{ns}}.json") are both plain string constants baked
+// into the bundle, not runtime-computed like the WebSocket URL was. Add
+// more here if another literal root reference turns up.
+var rootPathFamilies = []string{"/assets/", "/locales/"}
+
+// rewriteAssetPaths patches root-absolute references (see rootPathFamilies)
+// emitted by SPAs that don't know they're mounted under a prefix (Vite-built
+// frontends like Frigate's are the common case):
+// "/assets/main.js" -> "/frigate/assets/main.js". Only rewrites occurrences
+// preceded by a quote or CSS url() paren, so it can't mangle unrelated text
+// that merely contains one of these substrings.
 func rewriteAssetPaths(body []byte, prefix string) []byte {
-	replacement := []byte(prefix + "/assets/")
-	for _, delim := range [][]byte{[]byte(`"/assets/`), []byte(`'/assets/`), []byte("`/assets/"), []byte("(/assets/")} {
-		quote := delim[:1]
-		body = bytes.ReplaceAll(body, delim, append(append([]byte{}, quote...), replacement...))
+	for _, family := range rootPathFamilies {
+		replacement := []byte(prefix + family)
+		for _, q := range []string{`"`, `'`, "`", "("} {
+			delim := []byte(q + family)
+			body = bytes.ReplaceAll(body, delim, append([]byte(q), replacement...))
+		}
 	}
 	return body
 }

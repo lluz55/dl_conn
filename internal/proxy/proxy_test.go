@@ -182,6 +182,7 @@ func TestRewriteAssetPaths(t *testing.T) {
 		{"backtick template literal", "`/assets/chunk.js`", "`/frigate/assets/chunk.js`"},
 		{"css url() unquoted", `background: url(/assets/font.woff2)`, `background: url(/frigate/assets/font.woff2)`},
 		{"untouched unrelated text", `see /assets-info page`, `see /assets-info page`},
+		{"i18next loadPath template", `loadPath:"/locales/{{lng}}/{{ns}}.json"`, `loadPath:"/frigate/locales/{{lng}}/{{ns}}.json"`},
 	}
 	for _, tt := range tests {
 		got := string(rewriteAssetPaths([]byte(tt.in), "/frigate"))
