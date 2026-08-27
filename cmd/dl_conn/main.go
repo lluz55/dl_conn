@@ -182,14 +182,23 @@ func run(cmd *cobra.Command, _ []string) error {
 		}
 		defer func(m *tunnel.Manager) { _ = m.Shutdown(ctx) }(dtm)
 		go func(id string, m *tunnel.Manager) {
+			var directURL string
 			select {
-			case tunnelURL := <-m.URL():
-				directURLsMu.Lock()
-				directURLs[id] = tunnelURL
-				directURLsMu.Unlock()
-				log.Printf("Direct tunnel for %s: %s", id, tunnelURL)
+			case directURL = <-m.URL():
 			case <-ctx.Done():
+				return
 			}
+			// The frontend shows a "starting tunnel…" pending state (see
+			// ServiceInfo.Direct) until DirectURL is set — don't set it
+			// until the URL is actually reachable, not just printed.
+			if !tunnel.WaitReady(ctx, directURL, tunnel.DefaultReadyTimeout) {
+				log.Printf("direct tunnel for %s: %s did not become reachable within %s", id, directURL, tunnel.DefaultReadyTimeout)
+				return
+			}
+			directURLsMu.Lock()
+			directURLs[id] = directURL
+			directURLsMu.Unlock()
+			log.Printf("Direct tunnel for %s ready: %s", id, directURL)
 		}(s.ID, dtm)
 	}
 
@@ -201,7 +210,26 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer directURLsMu.Unlock()
 		return directURLs[id]
 	})
-	go handler.Serve(ctx)
+	// Don't answer discovery DMs until the tunnel is confirmed reachable —
+	// cloudflared printing the ephemeral hostname doesn't mean Cloudflare's
+	// edge has finished routing to it yet. Until then, requests just go
+	// unanswered, which the frontend already treats as "host offline" and
+	// retries/times out on — no protocol change needed for this to work.
+	// (The HTTP server below starts concurrently with this wait; by the
+	// time the tunnel is actually reachable, :9099 is already listening.)
+	go func() {
+		if tunnelURL == "" {
+			log.Println("No tunnel URL available — enabling discovery responses without a readiness check")
+		} else {
+			log.Println("Waiting for the tunnel to become reachable through Cloudflare's edge...")
+			if tunnel.WaitReady(ctx, tunnelURL+"/_healthz", tunnel.DefaultReadyTimeout) {
+				log.Println("Tunnel is reachable — discovery responses enabled")
+			} else {
+				log.Printf("WARNING: tunnel readiness check timed out after %s — enabling discovery responses anyway", tunnel.DefaultReadyTimeout)
+			}
+		}
+		handler.Serve(ctx)
+	}()
 
 	// HTTP server: serve web + proxy + auth + tunnel target
 	router := proxy.NewRouter(proxiedServices, sessionMgr)

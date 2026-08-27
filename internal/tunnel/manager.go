@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,6 +14,50 @@ import (
 )
 
 var tunnelURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
+
+// DefaultReadyTimeout bounds how long WaitReady waits for a freshly minted
+// ephemeral URL to actually route traffic before giving up.
+const DefaultReadyTimeout = 30 * time.Second
+
+// readyPollInterval is how often WaitReady retries while waiting.
+const readyPollInterval = 1 * time.Second
+
+// WaitReady polls url until it gets a response with status below 500 (proof
+// Cloudflare's edge is routing to the origin — even a 404 counts, this
+// isn't checking the origin's own correctness) or ctx is done / timeout
+// elapses. cloudflared printing the ephemeral hostname does not mean the
+// edge has finished provisioning it: requests in that window come back as
+// Cloudflare's own error page, not anything the origin would ever send.
+func WaitReady(ctx context.Context, url string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(timeout)
+	for {
+		if probeOnce(ctx, client, url) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(readyPollInterval):
+		}
+	}
+}
+
+func probeOnce(ctx context.Context, client *http.Client, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 500
+}
 
 // Status represents the state of the tunnel process.
 type Status struct {

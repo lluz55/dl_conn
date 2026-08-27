@@ -1,7 +1,11 @@
 package tunnel
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -88,6 +92,71 @@ func TestRegexDoesNotMatchNonCloudflare(t *testing.T) {
 		if tunnelURLRegex.MatchString(c) {
 			t.Errorf("regex should not match %q", c)
 		}
+	}
+}
+
+func TestWaitReady_SucceedsOnFirstGoodResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if !WaitReady(context.Background(), srv.URL, 2*time.Second) {
+		t.Fatal("WaitReady = false, want true for a server answering 200")
+	}
+}
+
+func TestWaitReady_TreatsNon5xxAsReady(t *testing.T) {
+	// A 404 still proves Cloudflare's edge is routing to the origin — this
+	// isn't checking the origin's own correctness, just reachability.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	if !WaitReady(context.Background(), srv.URL, 2*time.Second) {
+		t.Fatal("WaitReady = false, want true for a 404 (still a real response)")
+	}
+}
+
+func TestWaitReady_RetriesUntil5xxClears(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 3 {
+			w.WriteHeader(http.StatusBadGateway) // simulates Cloudflare's own "not routed yet" page
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	if !WaitReady(context.Background(), srv.URL, 5*time.Second) {
+		t.Fatal("WaitReady = false, want true once the 502s clear")
+	}
+	if calls < 3 {
+		t.Errorf("calls = %d, want at least 3 (retried through the 502s)", calls)
+	}
+	if elapsed := time.Since(start); elapsed < 2*readyPollInterval {
+		t.Errorf("elapsed = %v, want at least %v (should have actually retried, not returned instantly)", elapsed, 2*readyPollInterval)
+	}
+}
+
+func TestWaitReady_TimesOutWhenNeverReachable(t *testing.T) {
+	if WaitReady(context.Background(), "http://127.0.0.1:1", 1500*time.Millisecond) {
+		t.Fatal("WaitReady = true, want false for an address nothing listens on")
+	}
+}
+
+func TestWaitReady_RespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if WaitReady(ctx, "http://127.0.0.1:1", 30*time.Second) {
+		t.Fatal("WaitReady = true, want false for an already-cancelled context")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("elapsed = %v, want WaitReady to return promptly on cancellation, not wait out the timeout", elapsed)
 	}
 }
 
