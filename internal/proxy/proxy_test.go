@@ -61,27 +61,37 @@ func TestRouter_ServiceMatching(t *testing.T) {
 	rt := NewRouter(testServices(), nil)
 
 	tests := []struct {
+		name     string
 		path     string
+		referer  string
 		wantID   string
 		wantMatch bool
 	}{
-		{"/hass/api/websocket", "hass", true},
-		{"/frigate/", "frigate", true},
-		{"/zigbee2mqtt", "zigbee2mqtt", true},
-		{"/unknown", "", false},
+		{"direct hass prefix", "/hass/api/websocket", "", "hass", true},
+		{"direct frigate prefix", "/frigate/", "", "frigate", true},
+		{"direct zigbee2mqtt prefix", "/zigbee2mqtt", "", "zigbee2mqtt", true},
+		{"unknown path, no referer", "/unknown", "", "", false},
+		{"root-absolute asset, frigate referer", "/assets/index-Qpl7Np-l.js", "https://tunnel.example/frigate/", "frigate", true},
+		{"root-absolute favicon, hass referer", "/favicon.ico", "https://tunnel.example/hass/dashboard", "hass", true},
+		{"root-absolute asset, unmatched referer", "/assets/x.js", "https://tunnel.example/unknown", "", false},
+		{"root-absolute asset, unparseable referer", "/assets/x.js", "://bad-url", "", false},
 	}
 
 	for _, tt := range tests {
-		svc := rt.matchService(tt.path)
+		req := httptest.NewRequest("GET", tt.path, nil)
+		if tt.referer != "" {
+			req.Header.Set("Referer", tt.referer)
+		}
+		svc := rt.matchService(req)
 		if tt.wantMatch {
 			if svc == nil {
-				t.Errorf("matchService(%q): expected match, got nil", tt.path)
+				t.Errorf("%s: matchService(%q, referer=%q): expected match, got nil", tt.name, tt.path, tt.referer)
 			} else if svc.ID != tt.wantID {
-				t.Errorf("matchService(%q): got %q, want %q", tt.path, svc.ID, tt.wantID)
+				t.Errorf("%s: matchService(%q, referer=%q): got %q, want %q", tt.name, tt.path, tt.referer, svc.ID, tt.wantID)
 			}
 		} else {
 			if svc != nil {
-				t.Errorf("matchService(%q): expected nil, got %q", tt.path, svc.ID)
+				t.Errorf("%s: matchService(%q, referer=%q): expected nil, got %q", tt.name, tt.path, tt.referer, svc.ID)
 			}
 		}
 	}

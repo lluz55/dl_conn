@@ -94,7 +94,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Route to service based on prefix
-	svc := rt.matchService(r.URL.Path)
+	svc := rt.matchService(r)
 	if svc == nil {
 		log.Printf("route not found: path=%q remote=%s reason=no configured service prefix matches",
 			r.URL.Path, r.RemoteAddr)
@@ -113,8 +113,26 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-// matchService finds the service matching the request path prefix.
-func (rt *Router) matchService(path string) *config.ServiceConfig {
+// matchService finds the service matching the request path prefix. Proxied
+// SPAs (Frigate, etc.) commonly emit root-absolute asset URLs ("/assets/…",
+// "/main-*.js", "/favicon.ico") that have no idea they're mounted under a
+// prefix like "/frigate" — the browser requests those at the origin root.
+// When no prefix matches directly, fall back to the Referer header: if the
+// page that issued the sub-resource request lives under a configured
+// prefix, route the request to that same service.
+func (rt *Router) matchService(r *http.Request) *config.ServiceConfig {
+	if svc := rt.matchPrefix(r.URL.Path); svc != nil {
+		return svc
+	}
+	if ref := r.Referer(); ref != "" {
+		if refURL, err := url.Parse(ref); err == nil {
+			return rt.matchPrefix(refURL.Path)
+		}
+	}
+	return nil
+}
+
+func (rt *Router) matchPrefix(path string) *config.ServiceConfig {
 	for i := range rt.services {
 		if strings.HasPrefix(path, rt.services[i].Prefix) {
 			return &rt.services[i]
