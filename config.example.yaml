@@ -48,6 +48,7 @@ auth:
 # Per-service keys:
 #   id           identifier used in the Nostr protocol and in the frontend.
 #   name/icon    what the dashboard shows.
+#   description  optional text shown under the name on the dashboard card.
 #   prefix       public path this service is mounted under, e.g. "/hass".
 #   target       local URL of the backend.
 #   stripPrefix  remove the prefix before forwarding (a backend that isn't
@@ -100,6 +101,7 @@ services:
   - id: "hass"
     name: "Home Assistant"
     icon: "home"
+    description: "Automação e controle da casa"
     prefix: "/hass"
     target: "http://10.0.66.1:8123"
     stripPrefix: true

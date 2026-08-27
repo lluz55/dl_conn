@@ -96,12 +96,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	serviceInfos := make([]nostr.ServiceInfo, len(visibleServices))
 	for i, s := range visibleServices {
 		serviceInfos[i] = nostr.ServiceInfo{
-			ID:        s.ID,
-			Name:      s.Name,
-			Icon:      s.Icon,
-			Prefix:    s.Prefix,
-			Websocket: s.Websocket,
-			Status:    health.StatusUnknown,
+			ID:          s.ID,
+			Name:        s.Name,
+			Icon:        s.Icon,
+			Description: s.Description,
+			Prefix:      s.Prefix,
+			Websocket:   s.Websocket,
+			Status:      health.StatusUnknown,
 		}
 	}
 

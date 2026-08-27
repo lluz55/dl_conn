@@ -38,6 +38,9 @@ type ServiceConfig struct {
 	ID          string `mapstructure:"id"`
 	Name        string `mapstructure:"name"`
 	Icon        string `mapstructure:"icon"`
+	// Description is optional, free-form text shown under the service's name
+	// on the dashboard. Purely cosmetic — never used for routing.
+	Description string `mapstructure:"description"`
 	Prefix      string `mapstructure:"prefix"`
 	Target      string `mapstructure:"target"`
 	StripPrefix bool   `mapstructure:"stripPrefix"`
