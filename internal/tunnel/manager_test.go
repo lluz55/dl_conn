@@ -20,16 +20,6 @@ const fakeTunnelOutput = `2024-01-01T00:00:00Z INF Starting tunnel...
 2024-01-01T00:00:02Z TUNNEL Connected to edge
 `
 
-func TestNewManager_StoresArbitraryTarget(t *testing.T) {
-	// NewManager must accept any target URL verbatim — a LAN host for a
-	// service's own direct tunnel (ServiceConfig.DirectTunnel), not just
-	// dl_conn's own "http://127.0.0.1:<port>".
-	m := NewManager("cloudflared", "http://10.0.66.1:5000")
-	if m.target != "http://10.0.66.1:5000" {
-		t.Errorf("target = %q, want %q", m.target, "http://10.0.66.1:5000")
-	}
-}
-
 func TestScannerExtractsURL(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -42,7 +32,7 @@ func TestScannerExtractsURL(t *testing.T) {
 
 	m := &Manager{
 		binary:    "cloudflared",
-		target:    "http://127.0.0.1:9099",
+		port:      9099,
 		notifyURL: make(chan string, 1),
 	}
 
@@ -70,7 +60,7 @@ func TestScannerIgnoresLinesWithoutURL(t *testing.T) {
 
 	m := &Manager{
 		binary:    "cloudflared",
-		target:    "http://127.0.0.1:9099",
+		port:      9099,
 		notifyURL: make(chan string, 1),
 	}
 

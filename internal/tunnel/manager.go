@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,6 +33,24 @@ const DefaultReadyTimeout = 5 * time.Minute
 // readyPollInterval is how often WaitReady retries while waiting.
 const readyPollInterval = 1 * time.Second
 
+// quickTunnelResolver bypasses the OS/system resolver and asks Cloudflare's
+// own 1.1.1.1 directly. A brand-new *.trycloudflare.com hostname is
+// NXDOMAIN for the first few minutes after cloudflared prints it (see
+// DefaultReadyTimeout) — a caching resolver sitting in front of the OS
+// (e.g. a router or local dnsmasq) that happens to query during that window
+// can cache the negative answer for its own negative-TTL and keep serving
+// it long after the record goes live everywhere else. Observed in
+// practice: a local dnsmasq held a stale NXDOMAIN for several minutes while
+// 1.1.1.1 itself already had the A records. Resolving straight against
+// 1.1.1.1 sidesteps any such local cache entirely.
+var quickTunnelResolver = &net.Resolver{
+	PreferGo: true,
+	Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		d := net.Dialer{Timeout: 5 * time.Second}
+		return d.DialContext(ctx, network, "1.1.1.1:53")
+	},
+}
+
 // WaitReady polls url until it gets a response with status below 500 (proof
 // Cloudflare's edge is routing to the origin — even a 404 counts, this
 // isn't checking the origin's own correctness) or ctx is done / timeout
@@ -46,7 +65,11 @@ const readyPollInterval = 1 * time.Second
 // clue why, which is exactly what made the first version of this hard to
 // debug.
 func WaitReady(ctx context.Context, url string, timeout time.Duration, onAttempt func(elapsed time.Duration, detail string)) bool {
-	client := &http.Client{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Resolver: quickTunnelResolver}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
 	start := time.Now()
 	deadline := start.Add(timeout)
 	for {
@@ -97,7 +120,7 @@ type Status struct {
 // and graceful shutdown.
 type Manager struct {
 	binary    string
-	target    string
+	port      int
 	notifyURL chan string
 
 	mu      sync.Mutex
@@ -107,14 +130,12 @@ type Manager struct {
 	pid     int
 }
 
-// NewManager creates a tunnel manager that runs cloudflared to proxy to the
-// given target URL, e.g. "http://127.0.0.1:9099" for dl_conn's own server or
-// "http://10.0.66.1:5000" to point a second, independent tunnel straight at
-// a LAN service (see ServiceConfig.DirectTunnel).
-func NewManager(binary, target string) *Manager {
+// NewManager creates a tunnel manager that runs cloudflared to proxy
+// to the given local port.
+func NewManager(binary string, port int) *Manager {
 	return &Manager{
 		binary:    binary,
-		target:    target,
+		port:      port,
 		notifyURL: make(chan string, 1),
 	}
 }
@@ -126,7 +147,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return fmt.Errorf("tunnel already running")
 	}
-	cmd := exec.CommandContext(ctx, m.binary, "tunnel", "--url", m.target, "--no-autoupdate")
+	target := fmt.Sprintf("http://127.0.0.1:%d", m.port)
+	cmd := exec.CommandContext(ctx, m.binary, "tunnel", "--url", target, "--no-autoupdate")
 	m.cmd = cmd
 	m.running = true
 	m.mu.Unlock()
