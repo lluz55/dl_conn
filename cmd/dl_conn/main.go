@@ -191,8 +191,9 @@ func run(cmd *cobra.Command, _ []string) error {
 			// The frontend shows a "starting tunnel…" pending state (see
 			// ServiceInfo.Direct) until DirectURL is set — don't set it
 			// until the URL is actually reachable, not just printed.
-			if !tunnel.WaitReady(ctx, directURL, tunnel.DefaultReadyTimeout) {
-				log.Printf("direct tunnel for %s: %s did not become reachable within %s", id, directURL, tunnel.DefaultReadyTimeout)
+			onAttempt, lastDetail := readinessLogger(fmt.Sprintf("direct tunnel for %s", id))
+			if !tunnel.WaitReady(ctx, directURL, tunnel.DefaultReadyTimeout, onAttempt) {
+				log.Printf("direct tunnel for %s: %s did not become reachable within %s (last: %s)", id, directURL, tunnel.DefaultReadyTimeout, *lastDetail)
 				return
 			}
 			directURLsMu.Lock()
@@ -222,10 +223,11 @@ func run(cmd *cobra.Command, _ []string) error {
 			log.Println("No tunnel URL available — enabling discovery responses without a readiness check")
 		} else {
 			log.Println("Waiting for the tunnel to become reachable through Cloudflare's edge...")
-			if tunnel.WaitReady(ctx, tunnelURL+"/_healthz", tunnel.DefaultReadyTimeout) {
+			onAttempt, lastDetail := readinessLogger("main tunnel")
+			if tunnel.WaitReady(ctx, tunnelURL+"/_healthz", tunnel.DefaultReadyTimeout, onAttempt) {
 				log.Println("Tunnel is reachable — discovery responses enabled")
 			} else {
-				log.Printf("WARNING: tunnel readiness check timed out after %s — enabling discovery responses anyway", tunnel.DefaultReadyTimeout)
+				log.Printf("WARNING: tunnel readiness check timed out after %s (last: %s) — enabling discovery responses anyway", tunnel.DefaultReadyTimeout, *lastDetail)
 			}
 		}
 		handler.Serve(ctx)
@@ -281,6 +283,26 @@ func run(cmd *cobra.Command, _ []string) error {
 	log.Println("Shutting down...")
 	_ = server.Shutdown(context.Background())
 	return nil
+}
+
+// readinessLogger builds a tunnel.WaitReady progress callback for label:
+// logs the very first attempt immediately (so a hung wait shows *something*
+// right away — DNS failure vs. a real HTTP status look very different) and
+// then throttles to roughly every 10s so a long wait doesn't spam the log
+// once a second. The returned pointer always holds the most recent detail,
+// for the caller to report if WaitReady ultimately times out.
+func readinessLogger(label string) (onAttempt func(elapsed time.Duration, detail string), lastDetail *string) {
+	var attempts int
+	detail := "no attempt made yet"
+	lastDetail = &detail
+	onAttempt = func(elapsed time.Duration, d string) {
+		attempts++
+		*lastDetail = d
+		if attempts == 1 || attempts%10 == 0 {
+			log.Printf("%s: still waiting after %s (%s)", label, elapsed.Round(time.Second), d)
+		}
+	}
+	return onAttempt, lastDetail
 }
 
 // spaCSP mirrors the <meta> policy in web/index.html. The meta tag is what

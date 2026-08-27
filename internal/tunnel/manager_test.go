@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,7 +102,7 @@ func TestWaitReady_SucceedsOnFirstGoodResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if !WaitReady(context.Background(), srv.URL, 2*time.Second) {
+	if !WaitReady(context.Background(), srv.URL, 2*time.Second, nil) {
 		t.Fatal("WaitReady = false, want true for a server answering 200")
 	}
 }
@@ -114,7 +115,7 @@ func TestWaitReady_TreatsNon5xxAsReady(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if !WaitReady(context.Background(), srv.URL, 2*time.Second) {
+	if !WaitReady(context.Background(), srv.URL, 2*time.Second, nil) {
 		t.Fatal("WaitReady = false, want true for a 404 (still a real response)")
 	}
 }
@@ -131,7 +132,7 @@ func TestWaitReady_RetriesUntil5xxClears(t *testing.T) {
 	defer srv.Close()
 
 	start := time.Now()
-	if !WaitReady(context.Background(), srv.URL, 5*time.Second) {
+	if !WaitReady(context.Background(), srv.URL, 5*time.Second, nil) {
 		t.Fatal("WaitReady = false, want true once the 502s clear")
 	}
 	if calls < 3 {
@@ -143,7 +144,7 @@ func TestWaitReady_RetriesUntil5xxClears(t *testing.T) {
 }
 
 func TestWaitReady_TimesOutWhenNeverReachable(t *testing.T) {
-	if WaitReady(context.Background(), "http://127.0.0.1:1", 1500*time.Millisecond) {
+	if WaitReady(context.Background(), "http://127.0.0.1:1", 1500*time.Millisecond, nil) {
 		t.Fatal("WaitReady = true, want false for an address nothing listens on")
 	}
 }
@@ -152,11 +153,54 @@ func TestWaitReady_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	if WaitReady(ctx, "http://127.0.0.1:1", 30*time.Second) {
+	if WaitReady(ctx, "http://127.0.0.1:1", 30*time.Second, nil) {
 		t.Fatal("WaitReady = true, want false for an already-cancelled context")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("elapsed = %v, want WaitReady to return promptly on cancellation, not wait out the timeout", elapsed)
+	}
+}
+
+func TestWaitReady_OnAttemptReceivesDiagnostics(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var details []string
+	onAttempt := func(elapsed time.Duration, detail string) {
+		details = append(details, detail)
+	}
+	if !WaitReady(context.Background(), srv.URL, 3*time.Second, onAttempt) {
+		t.Fatal("WaitReady = false, want true")
+	}
+	if len(details) < 2 {
+		t.Fatalf("onAttempt called %d times, want at least 2", len(details))
+	}
+	if details[0] != "status 502" {
+		t.Errorf("first attempt detail = %q, want %q", details[0], "status 502")
+	}
+	if last := details[len(details)-1]; last != "status 200" {
+		t.Errorf("last attempt detail = %q, want %q", last, "status 200")
+	}
+}
+
+func TestWaitReady_OnAttemptReportsNetworkErrors(t *testing.T) {
+	var details []string
+	onAttempt := func(elapsed time.Duration, detail string) {
+		details = append(details, detail)
+	}
+	WaitReady(context.Background(), "http://127.0.0.1:1", 1500*time.Millisecond, onAttempt)
+	if len(details) == 0 {
+		t.Fatal("onAttempt was never called")
+	}
+	if !strings.Contains(details[0], "request failed") {
+		t.Errorf("detail = %q, want it to mention the connection failure", details[0])
 	}
 }
 

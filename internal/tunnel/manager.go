@@ -16,8 +16,11 @@ import (
 var tunnelURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
 
 // DefaultReadyTimeout bounds how long WaitReady waits for a freshly minted
-// ephemeral URL to actually route traffic before giving up.
-const DefaultReadyTimeout = 30 * time.Second
+// ephemeral URL to actually route traffic before giving up. Cloudflare's own
+// DNS propagation for a brand-new *.trycloudflare.com hostname — not
+// anything dl_conn controls — has been observed taking well over 30s, so
+// this errs generous rather than giving up on a tunnel that's merely slow.
+const DefaultReadyTimeout = 120 * time.Second
 
 // readyPollInterval is how often WaitReady retries while waiting.
 const readyPollInterval = 1 * time.Second
@@ -26,13 +29,25 @@ const readyPollInterval = 1 * time.Second
 // Cloudflare's edge is routing to the origin — even a 404 counts, this
 // isn't checking the origin's own correctness) or ctx is done / timeout
 // elapses. cloudflared printing the ephemeral hostname does not mean the
-// edge has finished provisioning it: requests in that window come back as
-// Cloudflare's own error page, not anything the origin would ever send.
-func WaitReady(ctx context.Context, url string, timeout time.Duration) bool {
+// edge has finished provisioning it: requests in that window fail outright
+// (DNS not yet resolvable) or come back as Cloudflare's own error page, not
+// anything the origin would ever send.
+//
+// onAttempt, if non-nil, is called after every attempt with the elapsed
+// time and a short description of what happened (a network error, an HTTP
+// status, ...) — without it, a long wait is silent and a failure carries no
+// clue why, which is exactly what made the first version of this hard to
+// debug.
+func WaitReady(ctx context.Context, url string, timeout time.Duration, onAttempt func(elapsed time.Duration, detail string)) bool {
 	client := &http.Client{Timeout: 5 * time.Second}
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := start.Add(timeout)
 	for {
-		if probeOnce(ctx, client, url) {
+		ready, detail := probeOnce(ctx, client, url)
+		if onAttempt != nil {
+			onAttempt(time.Since(start), detail)
+		}
+		if ready {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -46,17 +61,21 @@ func WaitReady(ctx context.Context, url string, timeout time.Duration) bool {
 	}
 }
 
-func probeOnce(ctx context.Context, client *http.Client, url string) bool {
+// probeOnce performs a single reachability check. detail describes the
+// outcome either way (a network error, or the HTTP status received) so
+// callers can log it for diagnostics.
+func probeOnce(ctx context.Context, client *http.Client, url string) (ready bool, detail string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false
+		return false, fmt.Sprintf("building request: %v", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return false, fmt.Sprintf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode < 500
+	detail = fmt.Sprintf("status %d", resp.StatusCode)
+	return resp.StatusCode < 500, detail
 }
 
 // Status represents the state of the tunnel process.
