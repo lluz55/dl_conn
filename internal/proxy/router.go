@@ -172,8 +172,13 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return // handled by static file server
 	}
 
-	// Zero-Trust: every other request requires a valid session
-	if rt.sessions == nil || !rt.sessions.ValidateSession(rt.sessions.GetSessionID(r)) {
+	// Zero-Trust: every other request requires a valid session, except web
+	// app manifests. Browsers fetch <link rel="manifest"> without
+	// credentials regardless of crossorigin, so the session cookie never
+	// reaches this request; a manifest only carries public metadata (icon,
+	// name, theme color), so exempting it is safe.
+	if !strings.HasSuffix(r.URL.Path, ".webmanifest") &&
+		(rt.sessions == nil || !rt.sessions.ValidateSession(rt.sessions.GetSessionID(r))) {
 		log.Printf("auth denied: path=%q remote=%s reason=missing or invalid session",
 			r.URL.Path, r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
