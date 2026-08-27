@@ -49,6 +49,14 @@ func (rt *Router) buildProxy(i int) {
 		req.Header.Set("X-Forwarded-For", req.RemoteAddr)
 		req.Header.Set("X-Forwarded-Proto", "https")
 		req.Header.Set("X-Forwarded-Host", req.Host)
+		// De-facto standard header (used by Frigate, Home Assistant
+		// ingress, etc.) telling an app-aware backend what public
+		// prefix it's mounted under, so it can generate correct
+		// asset/API/WebSocket URLs itself instead of assuming root.
+		// Backends that don't recognize it just ignore it.
+		if prefix != "" {
+			req.Header.Set("X-Ingress-Path", prefix)
+		}
 		if stripPrefix {
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
 			if req.URL.Path == "" {

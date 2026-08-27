@@ -257,6 +257,35 @@ func TestRouter_RewritesAssetPathsInProxiedHTML(t *testing.T) {
 	}
 }
 
+func TestRouter_SetsXIngressPathHeader(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotHeader string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Ingress-Path")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	services := testServices()
+	for i := range services {
+		if services[i].ID == "frigate" {
+			services[i].Target = backend.URL
+		}
+	}
+	rt := NewRouter(services, sm)
+	sessionID := sm.CreateSession()
+
+	req := httptest.NewRequest("GET", "/frigate/", nil)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+
+	if gotHeader != "/frigate" {
+		t.Errorf("X-Ingress-Path = %q, want %q", gotHeader, "/frigate")
+	}
+}
+
 func testServices() []config.ServiceConfig {
 	return []config.ServiceConfig{
 		{ID: "hass", Name: "Home Assistant", Prefix: "/hass", Target: "http://127.0.0.1:8123", StripPrefix: true, Websocket: true},
