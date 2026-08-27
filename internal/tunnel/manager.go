@@ -16,11 +16,18 @@ import (
 var tunnelURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
 
 // DefaultReadyTimeout bounds how long WaitReady waits for a freshly minted
-// ephemeral URL to actually route traffic before giving up. Cloudflare's own
-// DNS propagation for a brand-new *.trycloudflare.com hostname — not
-// anything dl_conn controls — has been observed taking well over 30s, so
-// this errs generous rather than giving up on a tunnel that's merely slow.
-const DefaultReadyTimeout = 120 * time.Second
+// ephemeral URL to actually route traffic before giving up.
+//
+// Measured directly (dig @1.1.1.1 against a live quick-tunnel hostname,
+// bypassing any local resolver): the record was still NXDOMAIN at Cloudflare's
+// own authoritative resolver several minutes in, then resolved. This is
+// Cloudflare's own DNS propagation for a brand-new *.trycloudflare.com
+// hostname — not anything dl_conn controls, and not a local network/adblock
+// issue (ruled out: curl and dig both fail identically to the Go client,
+// and 1.1.1.1 itself doesn't have the record yet). Quick Tunnels are an
+// unsupported, best-effort Cloudflare feature with no propagation-time SLA,
+// so this errs generous rather than giving up on one that's merely slow.
+const DefaultReadyTimeout = 5 * time.Minute
 
 // readyPollInterval is how often WaitReady retries while waiting.
 const readyPollInterval = 1 * time.Second

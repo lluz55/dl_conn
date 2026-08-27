@@ -288,7 +288,7 @@ func run(cmd *cobra.Command, _ []string) error {
 // readinessLogger builds a tunnel.WaitReady progress callback for label:
 // logs the very first attempt immediately (so a hung wait shows *something*
 // right away — DNS failure vs. a real HTTP status look very different) and
-// then throttles to roughly every 10s so a long wait doesn't spam the log
+// then throttles to roughly every 30s so a long wait doesn't spam the log
 // once a second. The returned pointer always holds the most recent detail,
 // for the caller to report if WaitReady ultimately times out.
 func readinessLogger(label string) (onAttempt func(elapsed time.Duration, detail string), lastDetail *string) {
@@ -298,7 +298,7 @@ func readinessLogger(label string) (onAttempt func(elapsed time.Duration, detail
 	onAttempt = func(elapsed time.Duration, d string) {
 		attempts++
 		*lastDetail = d
-		if attempts == 1 || attempts%10 == 0 {
+		if attempts == 1 || attempts%30 == 0 {
 			log.Printf("%s: still waiting after %s (%s)", label, elapsed.Round(time.Second), d)
 		}
 	}
