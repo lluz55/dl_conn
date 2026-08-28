@@ -216,6 +216,16 @@
           </select>
         </div>
         <p class="status-sub" id="auto-lock-status">Bloqueio automático: 15 minutos</p>
+        <div id="biometric-enroll" class="hidden">
+          <p class="status-sub">Desbloqueio biométrico disponível e ainda não ativado.</p>
+          <div class="pin-input-group">
+            <input type="password" id="biometric-pin" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN para ativar biometria" />
+            <button id="btn-enable-biometric-later" class="btn btn-secondary" data-tip="Ativar desbloqueio biométrico">
+              <svg class="icon" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
+              Ativar biometria
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- Host npub input (shown when no host configured) -->

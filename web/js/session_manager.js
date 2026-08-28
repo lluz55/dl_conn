@@ -94,6 +94,17 @@ export class SessionManager {
     return isBiometricAvailable();
   }
 
+  /**
+   * True when biometric unlock could be turned on but isn't yet — the
+   * platform supports it and the user hasn't already enrolled a credential.
+   * Drives the "enable biometric" offer shown after a plain PIN unlock/login
+   * for someone who declined it (or wasn't offered it) during vault setup.
+   */
+  async canEnableBiometric() {
+    if (hasCredential()) return false;
+    return isBiometricAvailable();
+  }
+
   /* ── Vault creation ────────────────────────────────────────── */
 
   /**

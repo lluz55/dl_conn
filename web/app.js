@@ -62,6 +62,9 @@ import { startScan } from './js/qr_scanner.js';
     autoLockSection: $("auto-lock-section"),
     autoLockTimeout: $("auto-lock-timeout"),
     autoLockStatus: $("auto-lock-status"),
+    biometricEnroll: $("biometric-enroll"),
+    biometricPin: $("biometric-pin"),
+    btnEnableBiometricLater: $("btn-enable-biometric-later"),
   };
 
   let expiryTimer = null;
@@ -82,6 +85,30 @@ import { startScan } from './js/qr_scanner.js';
   function clearLiveTimers() {
     if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
+  }
+
+  /**
+   * Best-effort revoke of the server-side proxy session (the dl_conn_session
+   * cookie set by /auth on the tunnel host, not this vault's own in-memory
+   * lock). Without this, locking or wiping the vault only hides the identity
+   * in this tab — a cookie a device already picked up keeps working against
+   * every proxied service for the rest of its TTL. Only reachable when this
+   * page itself is being served from the tunnel origin (same-origin cookie);
+   * a copy hosted elsewhere (e.g. GitHub Pages) has no session to revoke from
+   * here and the request is simply dropped by the browser.
+   */
+  async function revokeServerSession() {
+    if (!state.tunnelURL) return;
+    try {
+      await fetch(state.tunnelURL + "/auth/logout", {
+        method: "POST",
+        credentials: "include",
+        keepalive: true,
+      });
+    } catch (_) {
+      // Offline or cross-origin without CORS — locking the vault still
+      // proceeds regardless.
+    }
   }
 
   let state = {
@@ -231,6 +258,8 @@ import { startScan } from './js/qr_scanner.js';
     el.btnScanQr.addEventListener("click", onScanQr);
     el.btnQrClose.addEventListener("click", stopQrScan);
     el.autoLockTimeout.addEventListener("change", onAutoLockChange);
+    el.btnEnableBiometricLater.addEventListener("click", onEnableBiometricLater);
+    el.biometricPin.addEventListener("keypress", (e) => { if (e.key === "Enter") onEnableBiometricLater(); });
   }
 
   function setSessionStatus(text, tone) {
@@ -251,12 +280,14 @@ import { startScan } from './js/qr_scanner.js';
       // feedback (status rail) while the tunnel is discovered, instead of a
       // blank screen. Services populate when the host responds.
       el.app.setAttribute("data-phase", "live");
+      refreshBiometricEnrollUI();
       startNostr();
     } else if (event === "pending") {
       setSessionStatus("Em espera", "dim");
     } else if (event === "active") {
       setSessionStatus("Ativa", "ok");
     } else if (event === "locked") {
+      revokeServerSession();
       state.pendingIdentity = null;
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
@@ -267,9 +298,13 @@ import { startScan } from './js/qr_scanner.js';
       clearLiveTimers();
       el.tunnelStatus.textContent = "Aguardando túnel…";
       setSessionStatus("Bloqueada", "dim");
-      // Return to home (login screen) when session is locked
-      showLoginScreen();
+      // A locked session (manual or auto-lock) still has its vault on disk —
+      // send the user back to the PIN/biometric unlock screen, not the
+      // signup/login screen checkVaultState() falls back to when there's
+      // truly no vault (only wipe/first-run reach that path).
+      checkVaultState();
     } else if (event === "wiped") {
+      revokeServerSession();
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
@@ -301,6 +336,41 @@ import { startScan } from './js/qr_scanner.js';
       await state.session.unlockWithBiometric();
     } catch (err) {
       el.vaultStatus.textContent = err.message;
+    }
+  }
+
+  /**
+   * Shows/hides the "enable biometric" offer in the auto-lock card for
+   * whoever declined it (or wasn't asked, e.g. NIP-07 login) when the vault
+   * was first created. Re-checked on every unlock/login since the answer
+   * depends on both platform support and whether a credential already
+   * exists — either can change between sessions.
+   */
+  function refreshBiometricEnrollUI() {
+    // Biometric unlock bridges to a PIN-protected vault (see
+    // unlockWithBiometric); offering it before one exists — an ephemeral
+    // nsec/NIP-07 session that hasn't been saved yet, or was dismissed via
+    // "Agora não" — would register a credential with nothing for it to
+    // unlock.
+    if (!state.session.hasVault) {
+      el.biometricEnroll.classList.add("hidden");
+      return;
+    }
+    state.session.canEnableBiometric().then((ok) => {
+      el.biometricEnroll.classList.toggle("hidden", !ok);
+    });
+  }
+
+  async function onEnableBiometricLater() {
+    const pin = el.biometricPin.value.trim();
+    if (!pin) { el.autoLockStatus.textContent = "Digite o PIN para ativar a biometria"; return; }
+    try {
+      await state.session.enableBiometric(pin);
+      el.biometricPin.value = "";
+      el.biometricEnroll.classList.add("hidden");
+      el.autoLockStatus.textContent = "Biometria ativada!";
+    } catch (err) {
+      el.autoLockStatus.textContent = "Erro ao ativar biometria: " + err.message;
     }
   }
 
@@ -477,6 +547,9 @@ import { startScan } from './js/qr_scanner.js';
       el.pinCreate.value = "";
       el.pinConfirm.value = "";
       dismissSavePrompt();
+      // The vault now exists — if biometric was left unchecked (or failed
+      // above), offer it again right away instead of only on the next login.
+      refreshBiometricEnrollUI();
     } catch (err) {
       el.vaultStatus.textContent = "Erro: " + err.message;
     }
