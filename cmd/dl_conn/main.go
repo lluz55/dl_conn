@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -82,16 +84,25 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	authHandler := auth.NewAuthHandler(tokenMgr, sessionMgr)
 
-	// Map services for the Nostr response
-	serviceInfos := make([]nostr.ServiceInfo, len(cfg.Services))
-	for i, s := range cfg.Services {
+	// Map services for the Nostr response. Hidden services (extra root-level
+	// routes a backend's own frontend needs, e.g. Frigate's "/api"/"/ws")
+	// are proxied but aren't a distinct thing the user should see or click.
+	visibleServices := make([]config.ServiceConfig, 0, len(cfg.Services))
+	for _, s := range cfg.Services {
+		if !s.Hidden {
+			visibleServices = append(visibleServices, s)
+		}
+	}
+	serviceInfos := make([]nostr.ServiceInfo, len(visibleServices))
+	for i, s := range visibleServices {
 		serviceInfos[i] = nostr.ServiceInfo{
-			ID:        s.ID,
-			Name:      s.Name,
-			Icon:      s.Icon,
-			Prefix:    s.Prefix,
-			Websocket: s.Websocket,
-			Status:    health.StatusUnknown,
+			ID:          s.ID,
+			Name:        s.Name,
+			Icon:        s.Icon,
+			Description: s.Description,
+			Prefix:      s.Prefix,
+			Websocket:   s.Websocket,
+			Status:      health.StatusUnknown,
 		}
 	}
 
@@ -149,32 +160,57 @@ func run(cmd *cobra.Command, _ []string) error {
 	// Health monitor: services are advertised as "unknown" until a probe
 	// confirms the local target answers, so the dashboard never shows green
 	// for something that was merely configured.
-	monitor := health.New(cfg.Services)
+	monitor := health.New(visibleServices)
 	go monitor.Run(ctx)
 
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
 	handler.SetStatusFunc(monitor.Status)
 	handler.SetProbeAll(monitor.ProbeAll)
-	go handler.Serve(ctx)
+	// Don't answer discovery DMs until the tunnel is confirmed reachable —
+	// cloudflared printing the ephemeral hostname doesn't mean Cloudflare's
+	// edge has finished routing to it yet. Until then, requests just go
+	// unanswered, which the frontend already treats as "host offline" and
+	// retries/times out on — no protocol change needed for this to work.
+	// (The HTTP server below starts concurrently with this wait; by the
+	// time the tunnel is actually reachable, :9099 is already listening.)
+	go func() {
+		if tunnelURL == "" {
+			log.Println("No tunnel URL available — enabling discovery responses without a readiness check")
+		} else {
+			log.Println("Waiting for the tunnel to become reachable through Cloudflare's edge...")
+			onAttempt, lastDetail := readinessLogger("main tunnel")
+			if tunnel.WaitReady(ctx, tunnelURL+"/_healthz", tunnel.DefaultReadyTimeout, onAttempt) {
+				log.Println("Tunnel is reachable — discovery responses enabled")
+			} else {
+				log.Printf("WARNING: tunnel readiness check timed out after %s (last: %s) — enabling discovery responses anyway", tunnel.DefaultReadyTimeout, *lastDetail)
+			}
+		}
+		handler.Serve(ctx)
+	}()
 
 	// HTTP server: serve web + proxy + auth + tunnel target
 	router := proxy.NewRouter(cfg.Services, sessionMgr)
 
 	mux := http.NewServeMux()
 
-	// SPA static files
+	// SPA static files. The catch-all pattern also has to let root-absolute
+	// sub-resource requests from proxied SPAs through to the router — see
+	// proxy.RootFallback.
 	webDir := filepath.Join(".", "web")
 	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
-	mux.Handle("/", fs)
+	mux.Handle("/", proxy.RootFallback(router, fs, http.Dir(webDir)))
 
 	// Auth endpoint
 	mux.HandleFunc("/auth", authHandler.HandleAuth)
 	mux.Handle("/_static/", http.StripPrefix("/_static/", fs))
 
-	// Proxy (Zero-Trust)
-	mux.Handle("/api/", http.StripPrefix("/api", router))
-	// Service routes through the proxy
+	// Service routes through the proxy (Zero-Trust). Each prefix is
+	// registered both bare and with a trailing slash: ServeMux only treats
+	// the trailing-slash form as a subtree match, but a bare request for
+	// e.g. "/ws" (a WebSocket upgrade, which can't follow the 301 ServeMux
+	// would otherwise issue to "/ws/") needs the exact pattern too.
 	for _, svc := range cfg.Services {
+		mux.Handle(svc.Prefix, router)
 		mux.Handle(svc.Prefix+"/", router)
 	}
 
@@ -204,6 +240,26 @@ func run(cmd *cobra.Command, _ []string) error {
 	log.Println("Shutting down...")
 	_ = server.Shutdown(context.Background())
 	return nil
+}
+
+// readinessLogger builds a tunnel.WaitReady progress callback for label:
+// logs the very first attempt immediately (so a hung wait shows *something*
+// right away — DNS failure vs. a real HTTP status look very different) and
+// then throttles to roughly every 30s so a long wait doesn't spam the log
+// once a second. The returned pointer always holds the most recent detail,
+// for the caller to report if WaitReady ultimately times out.
+func readinessLogger(label string) (onAttempt func(elapsed time.Duration, detail string), lastDetail *string) {
+	var attempts int
+	detail := "no attempt made yet"
+	lastDetail = &detail
+	onAttempt = func(elapsed time.Duration, d string) {
+		attempts++
+		*lastDetail = d
+		if attempts == 1 || attempts%30 == 0 {
+			log.Printf("%s: still waiting after %s (%s)", label, elapsed.Round(time.Second), d)
+		}
+	}
+	return onAttempt, lastDetail
 }
 
 // spaCSP mirrors the <meta> policy in web/index.html. The meta tag is what
@@ -246,6 +302,33 @@ type statusRecorder struct {
 func (rec *statusRecorder) WriteHeader(status int) {
 	rec.status = status
 	rec.ResponseWriter.WriteHeader(status)
+}
+
+// Hijack lets a WebSocket upgrade through. httputil.ReverseProxy takes over
+// the raw connection to switch protocols, and a wrapper that only satisfies
+// http.ResponseWriter turns every upgrade into "can't switch protocols using
+// non-Hijacker ResponseWriter type" — a 502 the browser reports as a failed
+// handshake. Recording 101 here also keeps the access log honest: the
+// upgrade response is written straight to the connection, never through
+// WriteHeader.
+func (rec *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := rec.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter %T is not an http.Hijacker", rec.ResponseWriter)
+	}
+	conn, brw, err := hj.Hijack()
+	if err == nil {
+		rec.status = http.StatusSwitchingProtocols
+	}
+	return conn, brw, err
+}
+
+// Unwrap exposes the underlying ResponseWriter to http.ResponseController,
+// so the capabilities this wrapper doesn't implement itself — flushing above
+// all, which is what keeps Frigate's live MJPEG/event streams moving instead
+// of sitting in a buffer — keep working through the middleware.
+func (rec *statusRecorder) Unwrap() http.ResponseWriter {
+	return rec.ResponseWriter
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

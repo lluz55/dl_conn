@@ -35,6 +35,7 @@ import { startScan } from './js/qr_scanner.js';
     hostNpubSection: $("host-npub-section"),
     hostNpubInput: $("host-npub-input"),
     saveHostNpub: $("save-host-npub"),
+    btnToggleRelays: $("btn-toggle-relays"),
     relayPanel: $("relay-panel"),
     relaySummary: $("relay-summary"),
     btnTestAllRelays: $("btn-test-all-relays"),
@@ -218,6 +219,7 @@ import { startScan } from './js/qr_scanner.js';
     el.btnSkipVault.addEventListener("click", dismissSavePrompt);
     el.saveHostNpub.addEventListener("click", onSaveHostNpub);
     el.hostNpubInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onSaveHostNpub(); });
+    el.btnToggleRelays.addEventListener("click", onToggleRelays);
     el.btnTestAllRelays.addEventListener("click", onTestAllRelays);
     el.btnAddRelay.addEventListener("click", onAddRelay);
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
@@ -243,6 +245,7 @@ import { startScan } from './js/qr_scanner.js';
       // hiding it would take the PIN fields with it (see showSavePrompt).
       if (!state.pendingIdentity) el.vaultSection.classList.add("hidden");
       el.btnLockSession.classList.remove("hidden");
+      el.autoLockSection.classList.remove("hidden");
       setSessionStatus("Em espera", "dim");
       // Reveal the Live column on authentication so the user sees connection
       // feedback (status rail) while the tunnel is discovered, instead of a
@@ -257,6 +260,7 @@ import { startScan } from './js/qr_scanner.js';
       state.pendingIdentity = null;
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
+      el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
@@ -268,6 +272,7 @@ import { startScan } from './js/qr_scanner.js';
     } else if (event === "wiped") {
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
+      el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
       clearLiveTimers();
       setSessionStatus("Bloqueada", "dim");
@@ -729,6 +734,204 @@ import { startScan } from './js/qr_scanner.js';
       '" data-status="' + status + '"></span>';
   }
 
+  function serviceIcon(icon) {
+    if (!icon) {
+      return '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-package"></use></svg></span>';
+    }
+    const clean = String(icon).trim();
+    const normalized = clean.toLowerCase().replace(/^#?i-/, "");
+    const aliases = {
+      home: "home",
+      hass: "home",
+      "home-assistant": "home",
+      homeassistant: "home",
+      video: "video",
+      frigate: "video",
+      cctv: "video",
+      stream: "video",
+      streaming: "video",
+      camera: "camera",
+      cam: "camera",
+      webcam: "camera",
+      router: "router",
+      zigbee: "router",
+      zigbee2mqtt: "router",
+      z2m: "router",
+      mqtt: "router",
+      wifi: "wifi",
+      wireless: "wifi",
+      wlan: "wifi",
+      network: "globe",
+      server: "server",
+      nas: "server",
+      proxmox: "server",
+      truenas: "server",
+      unraid: "server",
+      homelab: "server",
+      database: "database",
+      db: "database",
+      sql: "database",
+      postgres: "database",
+      postgresql: "database",
+      mysql: "database",
+      mariadb: "database",
+      redis: "database",
+      mongo: "database",
+      mongodb: "database",
+      dashboard: "dashboard",
+      dash: "dashboard",
+      grafana: "dashboard",
+      homepage: "dashboard",
+      dashy: "dashboard",
+      activity: "activity",
+      pulse: "activity",
+      monitoring: "activity",
+      uptime: "activity",
+      uptimekuma: "activity",
+      status: "activity",
+      terminal: "terminal",
+      cli: "terminal",
+      shell: "terminal",
+      console: "terminal",
+      bash: "terminal",
+      ssh: "terminal",
+      code: "code",
+      git: "code",
+      gitea: "code",
+      forgejo: "code",
+      github: "code",
+      gitlab: "code",
+      dev: "code",
+      shield: "shield",
+      security: "shield",
+      vpn: "shield",
+      wireguard: "shield",
+      tailscale: "shield",
+      vaultwarden: "shield",
+      bitwarden: "shield",
+      auth: "shield",
+      authelia: "shield",
+      authentik: "shield",
+      lock: "lock",
+      unlock: "unlock",
+      cloud: "cloud",
+      nextcloud: "cloud",
+      owncloud: "cloud",
+      sync: "cloud",
+      globe: "globe",
+      web: "globe",
+      site: "globe",
+      website: "globe",
+      internet: "globe",
+      domain: "globe",
+      music: "music",
+      audio: "music",
+      sound: "music",
+      navidrome: "music",
+      spotify: "music",
+      film: "film",
+      movie: "film",
+      media: "film",
+      plex: "film",
+      jellyfin: "film",
+      emby: "film",
+      tv: "tv",
+      television: "tv",
+      monitor: "tv",
+      display: "tv",
+      screen: "tv",
+      "hard-drive": "hard-drive",
+      harddrive: "hard-drive",
+      hdd: "hard-drive",
+      ssd: "hard-drive",
+      disk: "hard-drive",
+      storage: "hard-drive",
+      drive: "hard-drive",
+      cpu: "cpu",
+      chip: "cpu",
+      processor: "cpu",
+      hardware: "cpu",
+      esphome: "cpu",
+      microcontroller: "cpu",
+      zap: "zap",
+      bolt: "zap",
+      power: "zap",
+      energy: "zap",
+      wled: "zap",
+      automation: "zap",
+      electricity: "zap",
+      sliders: "sliders",
+      settings: "sliders",
+      control: "sliders",
+      tuning: "sliders",
+      config: "sliders",
+      options: "sliders",
+      bell: "bell",
+      notification: "bell",
+      notifications: "bell",
+      alarm: "bell",
+      alerts: "bell",
+      alert: "alert",
+      warning: "alert",
+      thermometer: "thermometer",
+      temp: "thermometer",
+      temperature: "thermometer",
+      climate: "thermometer",
+      weather: "thermometer",
+      sensor: "thermometer",
+      sensors: "thermometer",
+      printer: "printer",
+      "3dprinter": "printer",
+      "3d-printer": "printer",
+      octoprint: "printer",
+      klipper: "printer",
+      mainsail: "printer",
+      fluidd: "printer",
+      download: "download",
+      downloads: "download",
+      torrent: "download",
+      torrents: "download",
+      transmission: "download",
+      qbittorrent: "download",
+      deluge: "download",
+      aria2: "download",
+      lightbulb: "lightbulb",
+      light: "lightbulb",
+      lights: "lightbulb",
+      lamp: "lightbulb",
+      bulb: "lightbulb",
+      hue: "lightbulb",
+      docker: "docker",
+      container: "docker",
+      containers: "docker",
+      portainer: "docker",
+      podman: "docker",
+      eye: "eye",
+      vision: "eye",
+      detection: "eye",
+      detect: "eye",
+      folder: "folder",
+      folders: "folder",
+      files: "folder",
+      filebrowser: "folder",
+      explorer: "folder",
+      timer: "timer",
+      time: "timer",
+      clock: "timer",
+      package: "package",
+      box: "package",
+      key: "key",
+      qr: "qr",
+      fingerprint: "fingerprint",
+    };
+    const target = aliases[normalized] || normalized;
+    if (document.getElementById("i-" + target)) {
+      return '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-' + escapeHtml(target) + '"></use></svg></span>';
+    }
+    // Fallback: render as text/emoji if it is a unicode character or non-sprite icon
+    return '<span class="service-icon" aria-hidden="true">' + escapeHtml(clean) + '</span>';
+  }
+
   function renderServices() {
     el.servicesList.innerHTML = "";
     if (!state.tunnelURL) return;
@@ -740,15 +943,21 @@ import { startScan } from './js/qr_scanner.js';
     state.services.forEach((svc) => {
       const card = document.createElement("div");
       card.className = "service-card";
+      // A trailing slash matters here: proxied SPAs (Frigate's is the known
+      // case) fetch some of their own assets via relative URLs resolved
+      // against the current document's path. Land the browser on
+      // ".../frigate" (no slash) and the resolver drops "frigate" itself
+      // when resolving "locales/en/x.json", sending it to the origin root
+      // instead of under the service's own prefix. ".../frigate/" resolves
+      // it correctly.
+      const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
       // Percent-encode both values: they land inside an href attribute, and
       // the prefix arrives over the wire from the host's DM.
       const href = state.tunnelURL + "/auth?token=" +
         encodeURIComponent(state.authToken || "") +
-        "&redirect=" + encodeURIComponent(svc.prefix || "/");
+        "&redirect=" + encodeURIComponent(redirectPath);
       card.innerHTML =
-        (svc.icon
-          ? '<span class="service-icon" aria-hidden="true">' + escapeHtml(svc.icon) + "</span>"
-          : '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-package"></use></svg></span>') +
+        serviceIcon(svc.icon) +
         statusDot(svc) +
         '<div class="service-meta">' +
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
@@ -758,6 +967,12 @@ import { startScan } from './js/qr_scanner.js';
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
       el.servicesList.appendChild(card);
     });
+  }
+
+  function onToggleRelays() {
+    const willShow = el.relayPanel.classList.contains("hidden");
+    el.relayPanel.classList.toggle("hidden", !willShow);
+    el.btnToggleRelays.setAttribute("aria-expanded", String(willShow));
   }
 
   async function onTestAllRelays() {

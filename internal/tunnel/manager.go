@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,6 +15,98 @@ import (
 )
 
 var tunnelURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
+
+// DefaultReadyTimeout bounds how long WaitReady waits for a freshly minted
+// ephemeral URL to actually route traffic before giving up.
+//
+// Measured directly (dig @1.1.1.1 against a live quick-tunnel hostname,
+// bypassing any local resolver): the record was still NXDOMAIN at Cloudflare's
+// own authoritative resolver several minutes in, then resolved. This is
+// Cloudflare's own DNS propagation for a brand-new *.trycloudflare.com
+// hostname — not anything dl_conn controls, and not a local network/adblock
+// issue (ruled out: curl and dig both fail identically to the Go client,
+// and 1.1.1.1 itself doesn't have the record yet). Quick Tunnels are an
+// unsupported, best-effort Cloudflare feature with no propagation-time SLA,
+// so this errs generous rather than giving up on one that's merely slow.
+const DefaultReadyTimeout = 5 * time.Minute
+
+// readyPollInterval is how often WaitReady retries while waiting.
+const readyPollInterval = 1 * time.Second
+
+// quickTunnelResolver bypasses the OS/system resolver and asks Cloudflare's
+// own 1.1.1.1 directly. A brand-new *.trycloudflare.com hostname is
+// NXDOMAIN for the first few minutes after cloudflared prints it (see
+// DefaultReadyTimeout) — a caching resolver sitting in front of the OS
+// (e.g. a router or local dnsmasq) that happens to query during that window
+// can cache the negative answer for its own negative-TTL and keep serving
+// it long after the record goes live everywhere else. Observed in
+// practice: a local dnsmasq held a stale NXDOMAIN for several minutes while
+// 1.1.1.1 itself already had the A records. Resolving straight against
+// 1.1.1.1 sidesteps any such local cache entirely.
+var quickTunnelResolver = &net.Resolver{
+	PreferGo: true,
+	Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		d := net.Dialer{Timeout: 5 * time.Second}
+		return d.DialContext(ctx, network, "1.1.1.1:53")
+	},
+}
+
+// WaitReady polls url until it gets a response with status below 500 (proof
+// Cloudflare's edge is routing to the origin — even a 404 counts, this
+// isn't checking the origin's own correctness) or ctx is done / timeout
+// elapses. cloudflared printing the ephemeral hostname does not mean the
+// edge has finished provisioning it: requests in that window fail outright
+// (DNS not yet resolvable) or come back as Cloudflare's own error page, not
+// anything the origin would ever send.
+//
+// onAttempt, if non-nil, is called after every attempt with the elapsed
+// time and a short description of what happened (a network error, an HTTP
+// status, ...) — without it, a long wait is silent and a failure carries no
+// clue why, which is exactly what made the first version of this hard to
+// debug.
+func WaitReady(ctx context.Context, url string, timeout time.Duration, onAttempt func(elapsed time.Duration, detail string)) bool {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Resolver: quickTunnelResolver}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+	start := time.Now()
+	deadline := start.Add(timeout)
+	for {
+		ready, detail := probeOnce(ctx, client, url)
+		if onAttempt != nil {
+			onAttempt(time.Since(start), detail)
+		}
+		if ready {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(readyPollInterval):
+		}
+	}
+}
+
+// probeOnce performs a single reachability check. detail describes the
+// outcome either way (a network error, or the HTTP status received) so
+// callers can log it for diagnostics.
+func probeOnce(ctx context.Context, client *http.Client, url string) (ready bool, detail string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Sprintf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	detail = fmt.Sprintf("status %d", resp.StatusCode)
+	return resp.StatusCode < 500, detail
+}
 
 // Status represents the state of the tunnel process.
 type Status struct {

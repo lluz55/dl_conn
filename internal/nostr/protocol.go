@@ -15,6 +15,7 @@ type ServiceInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Icon        string `json:"icon"`
+	Description string `json:"description,omitempty"`
 	Prefix      string `json:"prefix"`
 	Websocket   bool   `json:"websocket"`
 	// Status is "up", "down" or "unknown". The frontend only paints a service

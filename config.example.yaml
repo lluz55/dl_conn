@@ -1,0 +1,158 @@
+# dl_conn — Example Configuration
+# Copy this file to config.yaml and adjust according to your environment.
+# Note: Never commit your actual config.yaml containing private keys (nsec).
+
+nostr:
+  # Nostr private key (nsec) of the daemon.
+  # Can be specified directly here or via nsecFile (recommended with SOPS/secrets).
+  # nsec: "nsec1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  nsecFile: "/run/secrets/nostr/dl-conn-key"
+
+  # Relays used for decentralized signaling and DMs.
+  relays:
+    - "wss://relay.damus.io"
+    - "wss://nos.lol"
+    - "wss://relay.nostr.band"
+    - "wss://relay.primal.net"
+    - "wss://nostr.mom"
+
+  # Public keys (npub) authorized to request and receive tunnel access.
+  authorizedNpubs:
+    - "npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  # Fallback to NIP-04 if client does not support NIP-44 (default: false)
+  fallbackNip04: false
+
+tunnel:
+  # Local port where dl_conn's reverse proxy will listen.
+  listenPort: 9099
+
+  # Path to the cloudflared executable (default: "cloudflared").
+  cloudflaredPath: "cloudflared"
+
+  # Automatically start cloudflared tunnel on daemon startup (default: true).
+  autoStart: true
+
+  # Idle timeout before stopping ephemeral tunnel if no activity occurs.
+  inactivityTimeout: "10m"
+
+auth:
+  # Time-to-live for single-use authentication tokens.
+  tokenTTL: "120s"
+
+  # Time-to-live for authenticated browser sessions.
+  sessionTTL: "4h"
+
+# Local services exposed through the reverse proxy.
+#
+# Per-service keys:
+#   id           identifier used in the Nostr protocol and in the frontend.
+#   name/icon    what the dashboard shows.
+#   description  optional text shown under the name on the dashboard card.
+#   prefix       public path this service is mounted under, e.g. "/hass".
+#   target       local URL of the backend.
+#   stripPrefix  remove the prefix before forwarding (a backend that isn't
+#                subpath-aware expects to be at the root of its own paths).
+#   websocket    the service uses WebSockets (informational; upgrades are
+#                proxied for every service either way).
+#   hidden       proxy it, but keep it out of discovery and health status —
+#                for extra root-level routes another service's frontend
+#                needs, not something the user clicks into.
+#   rootPaths    directories the backend serves from its own root but whose
+#                frontend asks for at the wrong depth (see the Frigate entry).
+#   forwardedFor send X-Forwarded-For to this backend (default: true).
+#
+# About forwardedFor: by default dl_conn forwards the visitor's real IP down
+# the chain (cloudflared → dl_conn → backend), which is what a reverse proxy
+# should do. Some backends refuse the header unless the proxy is on an
+# allowlist they keep, and fail every request rather than ignoring it — Home
+# Assistant answers "400: Bad Request" to everything when
+# "use_x_forwarded_for" is on and dl_conn's address isn't in its
+# "trusted_proxies". The proper fix is on the backend, e.g. in Home
+# Assistant's configuration.yaml:
+#
+#   http:
+#     use_x_forwarded_for: true
+#     trusted_proxies:
+#       - 10.0.66.1        # the address the backend sees dl_conn coming from
+#
+# When that config is out of reach, "forwardedFor: false" makes dl_conn omit
+# the header (and drop any the client sent). The cost is that the backend
+# sees every request as coming from dl_conn itself, so its logs, rate limits,
+# and IP bans all act on that single address instead of on the real visitor.
+#
+# Backends that don't support a subpath at all (Home Assistant is the case
+# here) serve their whole frontend from the origin root — "/static/…",
+# "/frontend_latest/…", "/onboarding.html", "/api/websocket" — and send
+# Referrer-Policy: no-referrer, so neither the prefix nor the Referer can say
+# who those requests belong to. The proxy tracks which service each browser is
+# currently looking at (a "dl_conn_svc" cookie, written when it serves a page
+# under a service's prefix) and attributes unmatched root paths to it. That is
+# also what settles "/api/…" between Home Assistant and Frigate's hidden route
+# below: it follows whichever of the two the browser is in. Files dl_conn's own
+# frontend has always win, and an explicit prefix always wins over the cookie,
+# so opening /frigate/ in another tab keeps working.
+#
+# Available icon names: home, video, camera, router, wifi, server, database,
+# dashboard, activity, terminal, code, shield, cloud, globe, music, film, tv,
+# hard-drive, cpu, zap, sliders, bell, thermometer, printer, download, lightbulb,
+# docker, eye, folder, package (or custom emojis like 🏠, 📹, 💡).
+services:
+  - id: "hass"
+    name: "Home Assistant"
+    icon: "home"
+    description: "Automação e controle da casa"
+    prefix: "/hass"
+    target: "http://10.0.66.1:8123"
+    stripPrefix: true
+    websocket: true
+    # Home Assistant rejects X-Forwarded-For from a proxy it doesn't trust
+    # (400 on every request). Either list dl_conn in its trusted_proxies, or
+    # uncomment this to stop sending the header.
+    # forwardedFor: false
+
+  - id: "frigate"
+    name: "Frigate"
+    icon: "video"
+    prefix: "/frigate"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: true
+    websocket: false
+    # Frigate's i18next loadPath is document-relative ("locales/{{lng}}/…"), so
+    # the browser resolves it against the current SPA route and asks for the
+    # locales directory at the wrong depth (or at the origin root, with no
+    # Referer to fall back on). Declaring it routes those requests here and
+    # rewrites them back to "/locales/…" whatever the route depth.
+    rootPaths:
+      - "/locales/"
+
+  # Frigate's own frontend calls its API/WebSocket at the origin root (it
+  # doesn't know it's mounted under /frigate) — proxy those root paths
+  # straight through to the same backend. "hidden" keeps them out of the
+  # discovery list and health status: they aren't a thing to click into,
+  # just plumbing the /frigate entry above depends on.
+  - id: "frigate-api"
+    name: "Frigate API"
+    icon: "video"
+    prefix: "/api"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: false
+    websocket: false
+    hidden: true
+
+  - id: "frigate-ws"
+    name: "Frigate WebSocket"
+    icon: "video"
+    prefix: "/ws"
+    target: "http://10.0.66.1:5000"
+    stripPrefix: false
+    websocket: true
+    hidden: true
+
+  - id: "zigbee2mqtt"
+    name: "Zigbee2MQTT"
+    icon: "router"
+    prefix: "/zigbee2mqtt"
+    target: "http://10.1.1.10:8080"
+    stripPrefix: true
+    websocket: true

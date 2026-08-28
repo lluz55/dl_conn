@@ -521,3 +521,4 @@ func TestHandler_ServicesWithStatus(t *testing.T) {
 		t.Fatalf("handler slice mutated: %q", h.services[0].Status)
 	}
 }
+
