@@ -17,6 +17,11 @@ nostr:
     - "wss://nostr.mom"
 
   # Public keys (npub) authorized to request and receive tunnel access.
+  # To add one while the daemon is running, without a restart, use:
+  #   dl_conn npubs add npub1... --config /path/to/this/file.yaml
+  # (see docs/runbook.md). Under NixOS with `services.dl-conn.settings`,
+  # this file lives in /nix/store (read-only) — set `configFile` to a
+  # writable path under /var/lib/dl-conn instead.
   authorizedNpubs:
     - "npub1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 

@@ -161,3 +161,45 @@ Para utilizar o `dl_conn` como serviço em outro flake (ex: `nixos-config`):
 }
 ```
 
+### 3. Autorizar npubs em runtime (`dl_conn npubs add`)
+
+Com a Opção A (`settings`) o YAML é gerado no `/nix/store`, que é somente
+leitura — `dl_conn npubs add` falha em voz alta com uma dica apontando pra
+isso. Autorizar um novo dispositivo exige então editar `authorizedNpubs` no
+Nix e rodar `nixos-rebuild switch`, o que reinicia o serviço e derruba o
+túnel Cloudflare efêmero (e a URL `trycloudflare.com` já distribuída).
+
+Para autorizar sem restart, use `configFile` apontando para um caminho
+gravável dentro do `StateDirectory` do serviço (`/var/lib/dl-conn`, já tem
+`ReadWritePaths` configurado):
+
+```nix
+services.dl-conn = {
+  enable = true;
+  secretFile = "/run/secrets/nostr/nsec";
+  configFile = "/var/lib/dl-conn/config.yaml";
+};
+```
+
+O módulo **não** popula esse arquivo sozinho — na primeira vez, instale um
+YAML inicial manualmente (dono/grupo do `DynamicUser`, resolvido via
+`nss-systemd` depois que o serviço já rodou pelo menos uma vez):
+
+```bash
+sudo install -o dl-conn -g dl-conn -m 0640 \
+  meu-config-inicial.yaml /var/lib/dl-conn/config.yaml
+sudo systemctl restart dl-conn
+```
+
+Daí em diante:
+
+```bash
+sudo dl_conn npubs add npub1... --config /var/lib/dl-conn/config.yaml
+```
+
+Valida e normaliza o npub (bech32 ou hex), edita o YAML in-place preservando
+comentários, escreve atomicamente (temp → fsync → rename, só depois de
+revalidar o resultado) e envia `SIGHUP` ao processo do daemon — a allowlist
+recarrega sem derrubar o túnel. É idempotente: rodar de novo com o mesmo
+npub não duplica nem reescreve o arquivo.
+
