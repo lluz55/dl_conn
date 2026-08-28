@@ -65,22 +65,110 @@ func TestTokenManager_Cleanup(t *testing.T) {
 
 func TestSessionManager_CreateAndValidate(t *testing.T) {
 	sm := NewSessionManager(4 * time.Hour)
-	id := sm.CreateSession()
+	req := httptest.NewRequest("GET", "/", nil)
+	id := sm.CreateSession(req)
 	if id == "" {
 		t.Fatal("session ID should not be empty")
 	}
-	if !sm.ValidateSession(id) {
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if !sm.ValidateSession(req) {
 		t.Error("session should be valid")
 	}
 }
 
 func TestSessionManager_InvalidSession(t *testing.T) {
 	sm := NewSessionManager(4 * time.Hour)
-	if sm.ValidateSession("") {
+	if sm.ValidateSession(httptest.NewRequest("GET", "/", nil)) {
 		t.Error("empty session should be invalid")
 	}
-	if sm.ValidateSession("nonexistent") {
+	reqBogus := httptest.NewRequest("GET", "/", nil)
+	reqBogus.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: "nonexistent"})
+	if sm.ValidateSession(reqBogus) {
 		t.Error("nonexistent session should be invalid")
+	}
+}
+
+func TestSessionManager_IPMismatchDenied(t *testing.T) {
+	sm := NewSessionManager(4 * time.Hour)
+	createReq := httptest.NewRequest("GET", "/", nil)
+	createReq.RemoteAddr = "203.0.113.10:5555"
+	id := sm.CreateSession(createReq)
+
+	sameIP := httptest.NewRequest("GET", "/", nil)
+	sameIP.RemoteAddr = "203.0.113.10:9999" // port differs, host doesn't
+	sameIP.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if !sm.ValidateSession(sameIP) {
+		t.Error("session should validate from the same client address")
+	}
+
+	otherIP := httptest.NewRequest("GET", "/", nil)
+	otherIP.RemoteAddr = "198.51.100.20:5555"
+	otherIP.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if sm.ValidateSession(otherIP) {
+		t.Error("session should be denied from a different client address")
+	}
+}
+
+func TestSessionManager_Invalidate(t *testing.T) {
+	sm := NewSessionManager(4 * time.Hour)
+	req := httptest.NewRequest("GET", "/", nil)
+	id := sm.CreateSession(req)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if !sm.ValidateSession(req) {
+		t.Fatal("session should be valid before logout")
+	}
+
+	sm.Invalidate(id)
+
+	if sm.ValidateSession(req) {
+		t.Error("session should be invalid after logout")
+	}
+}
+
+func TestClientIP_PrefersCfConnectingIP(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:4321" // cloudflared, not the real visitor
+	req.Header.Set("X-Forwarded-For", "10.0.0.1")
+	req.Header.Set("Cf-Connecting-Ip", "203.0.113.55")
+
+	if got := ClientIP(req); got != "203.0.113.55" {
+		t.Errorf("ClientIP = %q, want Cf-Connecting-Ip value", got)
+	}
+}
+
+func TestAuthHandler_Logout(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(4 * time.Hour)
+	ah := NewAuthHandler(tm, sm)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	id := sm.CreateSession(req)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+
+	logoutReq := httptest.NewRequest("POST", "/auth/logout", nil)
+	logoutReq.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	w := httptest.NewRecorder()
+	ah.HandleLogout(w, logoutReq)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if sm.ValidateSession(req) {
+		t.Error("session should be revoked after logout")
+	}
+}
+
+func TestAuthHandler_LogoutRequiresPost(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(4 * time.Hour)
+	ah := NewAuthHandler(tm, sm)
+
+	req := httptest.NewRequest("GET", "/auth/logout", nil)
+	w := httptest.NewRecorder()
+	ah.HandleLogout(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 	}
 }
 

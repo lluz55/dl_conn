@@ -46,7 +46,7 @@ func TestRouter_WithValidSession(t *testing.T) {
 	rt := NewRouter(services, sm)
 
 	// Create a session
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	req := httptest.NewRequest("GET", "/hass/api/states", nil)
 	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
@@ -131,7 +131,7 @@ func TestRouter_StaticPathBypass(t *testing.T) {
 func TestRequireAuth_AllowsValidSession(t *testing.T) {
 	sm := auth.NewSessionManager(4 * time.Hour)
 	rt := NewRouter(testServices(), sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	called := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +231,7 @@ func TestRouter_RewritesAssetPathsInProxiedHTML(t *testing.T) {
 		{ID: "frigate", Name: "Frigate", Prefix: "/frigate", Target: backend.URL, StripPrefix: true, Websocket: false},
 	}
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	// The HTML entrypoint should come back with the asset path rewritten
 	// under the service's prefix.
@@ -276,7 +276,7 @@ func TestRouter_SetsXIngressPathHeader(t *testing.T) {
 		}
 	}
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	req := httptest.NewRequest("GET", "/frigate/", nil)
 	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
@@ -344,7 +344,7 @@ func TestRouter_RoutesRootPathsAtAnyDepth(t *testing.T) {
 		}
 	}
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	tests := []struct {
 		name    string
@@ -400,7 +400,7 @@ func TestRootFallback(t *testing.T) {
 	// dl_conn's own frontend has files the bypass list doesn't name.
 	spaFiles := http.FS(fstest.MapFS{"js/qr_scanner.js": &fstest.MapFile{Data: []byte("spa module")}})
 	h := RootFallback(rt, static, spaFiles)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	tests := []struct {
 		name    string
@@ -475,7 +475,7 @@ func TestRouter_RedirectsBarePrefixForDocuments(t *testing.T) {
 		ID: "frigate-ws", Prefix: "/ws", Target: backend.URL, Hidden: true, Websocket: true,
 	})
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	tests := []struct {
 		name         string
@@ -544,7 +544,9 @@ func TestRouter_ForwardedForHasNoPort(t *testing.T) {
 		services[i].Target = backend.URL
 	}
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	createReq := httptest.NewRequest("GET", "/", nil)
+	createReq.RemoteAddr = "192.0.2.10:50586"
+	sessionID := sm.CreateSession(createReq)
 
 	tests := []struct {
 		name    string
@@ -601,7 +603,9 @@ func TestRouter_ForwardedForCanBeDisabled(t *testing.T) {
 			}
 		}
 		rt := NewRouter(services, sm)
-		sessionID := sm.CreateSession()
+		createReq := httptest.NewRequest("GET", "/", nil)
+		createReq.RemoteAddr = "192.0.2.10:50586"
+		sessionID := sm.CreateSession(createReq)
 
 		present, value = false, ""
 		req := httptest.NewRequest("GET", "/hass/api/states", nil)
@@ -686,7 +690,7 @@ func TestRouter_SetsServiceCookieOnNavigation(t *testing.T) {
 		{ID: "frigate-ws", Prefix: "/ws", Target: backend.URL, Hidden: true},
 	}
 	rt := NewRouter(services, sm)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	tests := []struct {
 		name   string
@@ -735,7 +739,7 @@ func TestRootFallback_SPAFilesBeatTheServiceCookie(t *testing.T) {
 		"config.json":      &fstest.MapFile{Data: []byte("{}")},
 	})
 	h := RootFallback(rt, static, files)
-	sessionID := sm.CreateSession()
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
 
 	tests := []struct {
 		name string

@@ -200,8 +200,9 @@ func run(cmd *cobra.Command, _ []string) error {
 	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
 	mux.Handle("/", proxy.RootFallback(router, fs, http.Dir(webDir)))
 
-	// Auth endpoint
+	// Auth endpoints
 	mux.HandleFunc("/auth", authHandler.HandleAuth)
+	mux.HandleFunc("/auth/logout", authHandler.HandleLogout)
 	mux.Handle("/_static/", http.StripPrefix("/_static/", fs))
 
 	// Service routes through the proxy (Zero-Trust). Each prefix is

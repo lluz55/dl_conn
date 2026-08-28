@@ -25,7 +25,7 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	// Already authenticated in this browser (e.g. a second service link reusing
 	// the same one-time token after the first one consumed it): honor the
 	// existing session instead of failing on token replay.
-	if h.sessions.ValidateSession(h.sessions.GetSessionID(r)) {
+	if h.sessions.ValidateSession(r) {
 		h.redirect(w, r)
 		return
 	}
@@ -44,10 +44,26 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := h.sessions.CreateSession()
+	sessionID := h.sessions.CreateSession(r)
 	h.sessions.SetSessionCookie(w, sessionID)
 
 	h.redirect(w, r)
+}
+
+// HandleLogout processes POST /auth/logout: revokes the caller's session
+// server-side and clears its cookie, so a device can end its own tunnel
+// access on demand instead of relying on the idle timeout to eventually
+// expire it. Idempotent — a missing or already-invalid session still
+// returns success, since the end state (no session) is the same either way.
+func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.sessions.Invalidate(h.sessions.GetSessionID(r))
+	h.sessions.ClearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *AuthHandler) redirect(w http.ResponseWriter, r *http.Request) {

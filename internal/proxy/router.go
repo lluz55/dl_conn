@@ -178,7 +178,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// reaches this request; a manifest only carries public metadata (icon,
 	// name, theme color), so exempting it is safe.
 	if !strings.HasSuffix(r.URL.Path, ".webmanifest") &&
-		(rt.sessions == nil || !rt.sessions.ValidateSession(rt.sessions.GetSessionID(r))) {
+		(rt.sessions == nil || !rt.sessions.ValidateSession(r)) {
 		log.Printf("auth denied: path=%q remote=%s reason=missing or invalid session",
 			r.URL.Path, r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
@@ -410,7 +410,7 @@ func (rt *Router) matchPrefix(path string, hidden bool) *config.ServiceConfig {
 // RequireAuth middleware for protected routes.
 func (rt *Router) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !rt.sessions.ValidateSession(rt.sessions.GetSessionID(r)) {
+		if !rt.sessions.ValidateSession(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":"forbidden"}`))
