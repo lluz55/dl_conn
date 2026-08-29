@@ -241,6 +241,22 @@
 
         <div class="col col-live">
 
+      <!-- Host Telemetry -->
+      <section id="host-telemetry-section" class="card hidden">
+        <div class="card-head">
+          <h2>Saúde do host</h2>
+          <svg class="icon" aria-hidden="true"><use href="#i-thermometer"></use></svg>
+        </div>
+        <div class="telemetry-grid">
+          <div class="telemetry-item"><span class="status-label">CPU</span><span class="status-value" id="tel-cpu">—</span></div>
+          <div class="telemetry-item"><span class="status-label">RAM</span><span class="status-value" id="tel-ram">—</span></div>
+          <div class="telemetry-item"><span class="status-label">Disco</span><span class="status-value" id="tel-disk">—</span></div>
+          <div class="telemetry-item"><span class="status-label">GPU</span><span class="status-value" id="tel-gpu">—</span></div>
+          <div class="telemetry-item"><span class="status-label">Bateria</span><span class="status-value" id="tel-batt">—</span></div>
+          <div class="telemetry-item"><span class="status-label">Uptime</span><span class="status-value" id="tel-uptime">—</span></div>
+        </div>
+      </section>
+
       <!-- Services -->
       <section id="services-section" class="card hidden">
         <div class="card-head">

@@ -65,10 +65,18 @@ import { startScan } from './js/qr_scanner.js';
     biometricEnroll: $("biometric-enroll"),
     biometricPin: $("biometric-pin"),
     btnEnableBiometricLater: $("btn-enable-biometric-later"),
+    hostTelemetrySection: $("host-telemetry-section"),
+    telCpu: $("tel-cpu"),
+    telRam: $("tel-ram"),
+    telDisk: $("tel-disk"),
+    telGpu: $("tel-gpu"),
+    telBatt: $("tel-batt"),
+    telUptime: $("tel-uptime"),
   };
 
   let expiryTimer = null;
   let discoveryTimer = null;
+  let telemetryTimer = null;
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
 
@@ -85,6 +93,83 @@ import { startScan } from './js/qr_scanner.js';
   function clearLiveTimers() {
     if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
+    if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+  }
+
+  function formatUptime(total) {
+    if (total == null || isNaN(total)) return "—";
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    if (h > 0) return h + "h " + m + "m";
+    return m + "m";
+  }
+
+  function renderTelemetry(snap) {
+    if (!snap) return;
+    if (el.hostTelemetrySection) el.hostTelemetrySection.classList.remove("hidden");
+    if (el.telCpu) {
+      const parts = [];
+      const tempC = snap.cpu ? snap.cpu.temp_c : snap.cpu_temp_c;
+      const load1 = snap.cpu ? snap.cpu.load1 : snap.cpu_load1;
+      const freqMHz = snap.cpu ? snap.cpu.freq_mhz : snap.cpu_freq_mhz;
+      if (tempC != null) parts.push(tempC.toFixed(1) + "°C");
+      if (load1 != null) parts.push("load " + load1.toFixed(2));
+      if (freqMHz != null) parts.push(freqMHz.toFixed(0) + " MHz");
+      el.telCpu.textContent = parts.length ? parts.join(" · ") : "—";
+    }
+    if (el.telRam) {
+      if (snap.memory) {
+        el.telRam.textContent = snap.memory.used_pct.toFixed(1) + "% (" + snap.memory.used_mb + "/" + snap.memory.total_mb + " MB)";
+      } else if (snap.ram_used_pct != null) {
+        el.telRam.textContent = snap.ram_used_pct.toFixed(1) + "% (" + (snap.ram_used_mb || 0) + "/" + (snap.ram_total_mb || 0) + " MB)";
+      } else el.telRam.textContent = "—";
+    }
+    if (el.telDisk) {
+      if (snap.disks && snap.disks.length) {
+        const d = snap.disks[0];
+        el.telDisk.textContent = d.used_pct.toFixed(1) + "% (" + d.used_mb + "/" + d.total_mb + " MB) " + d.mountpoint;
+      } else if (snap.disk_used_pct != null) {
+        el.telDisk.textContent = snap.disk_used_pct.toFixed(1) + "% (" + (snap.disk_used_mb || 0) + "/" + (snap.disk_total_mb || 0) + " MB) " + (snap.mountpoint || "");
+      } else el.telDisk.textContent = "—";
+    }
+    if (el.telGpu) {
+      if (snap.gpu && (snap.gpu.temp_c != null || snap.gpu.util_pct != null)) {
+        const g = [];
+        if (snap.gpu.temp_c != null) g.push(snap.gpu.temp_c.toFixed(1) + "°C");
+        if (snap.gpu.util_pct != null) g.push(snap.gpu.util_pct.toFixed(0) + "%");
+        el.telGpu.textContent = g.join(" · ");
+      } else if (snap.gpu_temp_c != null || snap.gpu_util_pct != null) {
+        const g = [];
+        if (snap.gpu_temp_c != null) g.push(snap.gpu_temp_c.toFixed(1) + "°C");
+        if (snap.gpu_util_pct != null) g.push(snap.gpu_util_pct.toFixed(0) + "%");
+        el.telGpu.textContent = g.join(" · ") || "—";
+      } else el.telGpu.textContent = "—";
+    }
+    if (el.telBatt) {
+      if (snap.battery && snap.battery.available) el.telBatt.textContent = snap.battery.capacity_pct + "% " + (snap.battery.status || "");
+      else if (snap.batt_capacity_pct != null) el.telBatt.textContent = snap.batt_capacity_pct + "% " + (snap.batt_status || "");
+      else el.telBatt.textContent = "—";
+    }
+    if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
+  }
+
+  async function fetchTelemetry() {
+    try {
+      const r = await fetch("/api/host/telemetry", { credentials: "include" });
+      if (!r.ok) return;
+      const snap = await r.json();
+      renderTelemetry(snap);
+    } catch (_) { /* ignore */ }
+  }
+
+  function startTelemetryPolling() {
+    if (telemetryTimer) clearInterval(telemetryTimer);
+    fetchTelemetry();
+    telemetryTimer = setInterval(fetchTelemetry, 10000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; } }
+      else if (!telemetryTimer) { fetchTelemetry(); telemetryTimer = setInterval(fetchTelemetry, 10000); }
+    });
   }
 
   /**
@@ -288,6 +373,7 @@ import { startScan } from './js/qr_scanner.js';
       setSessionStatus("Em espera", "dim");
     } else if (event === "active") {
       setSessionStatus("Ativa", "ok");
+      startTelemetryPolling();
     } else if (event === "locked") {
       revokeServerSession();
       state.pendingIdentity = null;
@@ -295,6 +381,7 @@ import { startScan } from './js/qr_scanner.js';
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
+      if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
       clearLiveTimers();
@@ -311,6 +398,7 @@ import { startScan } from './js/qr_scanner.js';
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
       el.servicesSection.classList.add("hidden");
+      if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       clearLiveTimers();
       setSessionStatus("Bloqueada", "dim");
       showLoginScreen();
@@ -663,6 +751,7 @@ import { startScan } from './js/qr_scanner.js';
     startExpiryCountdown(data.expires_in_seconds || 0);
     renderServices();
     el.servicesSection.classList.remove("hidden");
+    if (data.host_telemetry) renderTelemetry(data.host_telemetry);
     el.app.setAttribute("data-phase", "live");
     // Transition session from "pending" to "active" on first successful
     // backend contact.
