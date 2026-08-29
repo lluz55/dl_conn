@@ -30,6 +30,7 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 11 | Autorizar npubs com o daemon em execução | [11-runtime-npub-authorization.md](11-runtime-npub-authorization.md) | ✅ concluída | 7/7 |
 | 12 | Serviço verde só após confirmação de atividade | [12-service-health-status.md](12-service-health-status.md) | ✅ concluída | 6/6 |
 | 13 | `keygen files`: npub e nsec em arquivos separados | [13-keygen-files.md](13-keygen-files.md) | ✅ concluída | 9/9 |
+| 14 | Telemetria completa do host no dashboard | [14-host-telemetry.md](14-host-telemetry.md) | ✅ concluída | 9/9 |
 
 ---
 

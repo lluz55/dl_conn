@@ -30,6 +30,7 @@ Para a especificação-fonte completa, ver [SPEC.md](/SPEC.md).
 | [i18n.md](concepts/i18n.md) | `architecture-decision` | i18n desde a fundação (pt/en), `.arb`, nunca string hardcoded |
 | [performance.md](concepts/performance.md) | `architecture-decision` | Orçamentos de performance e como os scripts de checagem os aplicam |
 | [testing.md](concepts/testing.md) | `testing` | Onde cada camada de teste vive, convenção de nomes, armadilha `pumpAndSettle()` × spinner indeterminado |
+| [host-telemetry.md](concepts/host-telemetry.md) | `architecture-decision` | Telemetria do host: coleta via /sys /proc, persistência SQLite, exposição via /api/host/telemetry e opcionalmente via Nostr |
 | [tasks.md](concepts/tasks.md) | `process` | Rastreamento de trabalho pendente em dois níveis: `TODO(fase-N)`/`"Fase N"` no código + arquivos por fase em [`tasks/`](tasks/index.md) |
 | [scaffolding.md](concepts/scaffolding.md) | `process` | Automação orientada a agente: geradores determinísticos (tela, feature de dados, conceito OKF, chave i18n) + `verify.sh` (gate de conclusão que espelha o CI) — caminho preferencial em vez de escrever/checar à mão |
 
