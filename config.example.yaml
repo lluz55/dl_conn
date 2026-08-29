@@ -160,4 +160,14 @@ services:
     prefix: "/zigbee2mqtt"
     target: "http://10.1.1.10:8080"
     stripPrefix: true
+
+# Host telemetry (CPU/RAM/disk/GPU/battery). Disabled by default.
+telemetry:
+  enabled: false
+  intervalSeconds: 10
+  retentionDays: 7
+  # Include the latest snapshot in Nostr discovery responses so the SPA can
+  # render it (required for the host-telemetry card to show any data at all,
+  # including on a GitHub Pages copy which has no session to hit /api/host/telemetry).
+  exposeViaNostr: false
     websocket: true
