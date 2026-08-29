@@ -228,6 +228,8 @@ import { startScan } from './js/qr_scanner.js';
       el.autoLockStatus.textContent = "Bloqueio automático desativado";
     } else if (minutes === 60) {
       el.autoLockStatus.textContent = "Bloqueio automático: 1 hora";
+    } else if (minutes === 1) {
+      el.autoLockStatus.textContent = "Bloqueio automático: 1 minuto";
     } else {
       el.autoLockStatus.textContent = "Bloqueio automático: " + minutes + " minutos";
     }

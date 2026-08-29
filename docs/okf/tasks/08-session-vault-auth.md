@@ -58,7 +58,7 @@ flowchart TD
 
 - [x] **Controlador de Ciclo de Vida de Sessão (`web/js/session_manager.js`):**
   - **Isolamento de Memória:** Chave privada reside apenas em escopo fechado, nunca em `sessionStorage`/`localStorage`/variáveis globais.
-  - **Auto-Lock:** Timer configurável (15 min padrão), escuta de eventos `visibilitychange`/`pointerdown`/`keydown`.
+  - **Auto-Lock:** Timer configurável (15 min padrão, opções 0/1/3/5/10/15/30/60 min), escuta de eventos `visibilitychange`/`pointerdown`/`keydown`.
   - **Proteção contra Força-Bruta:** Contador de tentativas, delay exponencial, wipe após 10 falhas.
   - **Wipe de Emergência:** Remoção atômica do `localStorage` + recarga limpa.
   - **Máquina de Estados da Sessão:** Estados `locked → pending → active → locked`. Após desbloqueio ou criação de cofre, a sessão fica `pending` ("Em espera") até o primeiro contato bem-sucedado com o backend Nostr; em seguida (`setBackendActive()`) passa para `active` ("Ativa"). Eventos `pending` e `active` expostos aos listeners.
