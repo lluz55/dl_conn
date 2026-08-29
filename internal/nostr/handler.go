@@ -15,6 +15,7 @@ type Handler struct {
 	services     []ServiceInfo
 	statusFn     func(id string) string
 	probeAllFn   func(context.Context)
+	telemetryFn  func() *HostTelemetry
 }
 
 // TokenIssuer generates one-time auth tokens.
@@ -44,6 +45,12 @@ func (h *Handler) SetStatusFunc(fn func(id string) string) {
 // caller gets current availability rather than the last cached 30s snapshot.
 func (h *Handler) SetProbeAll(fn func(context.Context)) {
 	h.probeAllFn = fn
+}
+
+// SetTelemetryFunc installs a function that returns the latest host telemetry
+// snapshot. When set, discovery responses include host_telemetry.
+func (h *Handler) SetTelemetryFunc(fn func() *HostTelemetry) {
+	h.telemetryFn = fn
 }
 
 // servicesWithStatus copies the advertised services with their current health
@@ -111,6 +118,9 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 	}
 
 	resp := NewResponse(h.tunnelURL, token, ttl, h.servicesWithStatus())
+	if h.telemetryFn != nil {
+		resp.HostTelemetry = h.telemetryFn()
+	}
 	respJSON, err := MarshalResponse(resp)
 	if err != nil {
 		return

@@ -86,12 +86,21 @@ type AuthConfig struct {
 	SessionTTL  time.Duration `mapstructure:"sessionTTL"`
 }
 
+// TelemetryConfig holds host telemetry collection settings.
+type TelemetryConfig struct {
+	Enabled         bool          `mapstructure:"enabled"`
+	IntervalSeconds int           `mapstructure:"intervalSeconds"`
+	RetentionDays   int           `mapstructure:"retentionDays"`
+	ExposeViaNostr  bool          `mapstructure:"exposeViaNostr"`
+}
+
 // Config is the top-level configuration.
 type Config struct {
-	Nostr   NostrConfig    `mapstructure:"nostr"`
-	Tunnel  TunnelConfig   `mapstructure:"tunnel"`
-	Services []ServiceConfig `mapstructure:"services"`
-	Auth    AuthConfig     `mapstructure:"auth"`
+	Nostr     NostrConfig     `mapstructure:"nostr"`
+	Tunnel    TunnelConfig    `mapstructure:"tunnel"`
+	Services  []ServiceConfig `mapstructure:"services"`
+	Auth      AuthConfig      `mapstructure:"auth"`
+	Telemetry TelemetryConfig `mapstructure:"telemetry"`
 }
 
 // DefaultRelays contains public Nostr relays used when none are explicitly configured.
@@ -134,6 +143,10 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("tunnel.inactivityTimeout", "10m")
 	v.SetDefault("auth.tokenTTL", "120s")
 	v.SetDefault("auth.sessionTTL", "4h")
+	v.SetDefault("telemetry.enabled", true)
+	v.SetDefault("telemetry.intervalSeconds", 10)
+	v.SetDefault("telemetry.retentionDays", 7)
+	v.SetDefault("telemetry.exposeViaNostr", false)
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
@@ -168,6 +181,12 @@ func parseDurations(cfg *Config) error {
 	}
 	if cfg.Auth.SessionTTL == 0 {
 		cfg.Auth.SessionTTL = 4 * time.Hour
+	}
+	if cfg.Telemetry.IntervalSeconds == 0 {
+		cfg.Telemetry.IntervalSeconds = 10
+	}
+	if cfg.Telemetry.RetentionDays == 0 {
+		cfg.Telemetry.RetentionDays = 7
 	}
 	return nil
 }

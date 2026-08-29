@@ -19,6 +19,9 @@ import (
 	"dl_conn/internal/health"
 	"dl_conn/internal/nostr"
 	"dl_conn/internal/proxy"
+	"dl_conn/internal/sensors"
+	"dl_conn/internal/store"
+	"dl_conn/internal/telemetry"
 	"dl_conn/internal/tunnel"
 
 	"github.com/spf13/cobra"
@@ -163,9 +166,82 @@ func run(cmd *cobra.Command, _ []string) error {
 	monitor := health.New(visibleServices)
 	go monitor.Run(ctx)
 
+	// Host telemetry collector (opt-in via config, default enabled).
+	var telCollector *sensors.Collector
+	var telStore *store.Store
+	if cfg.Telemetry.Enabled {
+		interval := time.Duration(cfg.Telemetry.IntervalSeconds) * time.Second
+		telCollector = sensors.NewCollector(interval)
+		// Persist to SQLite (without SQLCipher).
+		dbPath := filepath.Join(filepath.Dir(configPath), "telemetry.db")
+		if s, err := store.New(dbPath); err == nil {
+			telStore = s
+			defer s.Close()
+			telCollector.WithPersist(func(snap sensors.Snapshot) {
+				_ = s.Insert(snap)
+			})
+			// Prune old samples hourly.
+			go func() {
+				ticker := time.NewTicker(time.Hour)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						_ = s.Prune(time.Duration(cfg.Telemetry.RetentionDays) * 24 * time.Hour)
+					}
+				}
+			}()
+		} else {
+			log.Printf("telemetry store init failed: %v", err)
+		}
+		go telCollector.Run(ctx)
+	}
+
 	handler := nostr.NewHandler(client, tokenMgr, tunnelURL, serviceInfos)
 	handler.SetStatusFunc(monitor.Status)
 	handler.SetProbeAll(monitor.ProbeAll)
+	if telCollector != nil && cfg.Telemetry.ExposeViaNostr {
+		handler.SetTelemetryFunc(func() *nostr.HostTelemetry {
+			snap := telCollector.Latest()
+			if snap == nil {
+				return nil
+			}
+			ht := &nostr.HostTelemetry{
+				SampledAt: snap.SampledAt.Format(time.RFC3339),
+				UptimeSec: snap.UptimeSec,
+			}
+			if snap.CPU != nil {
+				ht.CpuTempC = snap.CPU.TempC
+				ht.CpuLoad1 = snap.CPU.Load1
+				ht.CpuLoad5 = snap.CPU.Load5
+				ht.CpuLoad15 = snap.CPU.Load15
+				ht.CpuFreqMHz = snap.CPU.FreqMHz
+			}
+			if snap.Memory != nil {
+				ht.RamUsedPct = snap.Memory.UsedPct
+				ht.RamUsedMB = snap.Memory.UsedMB
+				ht.RamTotalMB = snap.Memory.TotalMB
+			}
+			if len(snap.Disks) > 0 {
+				ht.DiskUsedPct = snap.Disks[0].UsedPct
+				ht.DiskUsedMB = snap.Disks[0].UsedMB
+				ht.DiskTotalMB = snap.Disks[0].TotalMB
+				ht.Mountpoint = snap.Disks[0].Mountpoint
+			}
+			if snap.GPU != nil {
+				ht.GpuTempC = snap.GPU.TempC
+				ht.GpuUtilPct = snap.GPU.UtilPct
+			}
+			if snap.Battery != nil && snap.Battery.Available {
+				ht.BattCapacityPct = snap.Battery.CapacityPct
+				ht.BattStatus = snap.Battery.Status
+			}
+			return ht
+		})
+	}
+	_ = telStore
 	// Don't answer discovery DMs until the tunnel is confirmed reachable —
 	// cloudflared printing the ephemeral hostname doesn't mean Cloudflare's
 	// edge has finished routing to it yet. Until then, requests just go
@@ -213,6 +289,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	for _, svc := range cfg.Services {
 		mux.Handle(svc.Prefix, router)
 		mux.Handle(svc.Prefix+"/", router)
+	}
+
+	// Host telemetry (requires session)
+	if telCollector != nil {
+		mux.Handle("/api/host/telemetry", telemetry.NewHandler(telCollector, sessionMgr))
 	}
 
 	// Health check

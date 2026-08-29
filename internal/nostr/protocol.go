@@ -23,13 +23,37 @@ type ServiceInfo struct {
 	Status      string `json:"status"`
 }
 
+// HostTelemetry is an optional snapshot of the host's health included in the
+// discovery response when telemetry.exposeViaNostr is true.
+type HostTelemetry struct {
+	SampledAt string  `json:"sampled_at"`
+	CpuTempC  *float64 `json:"cpu_temp_c,omitempty"`
+	CpuLoad1  float64 `json:"cpu_load1,omitempty"`
+	CpuLoad5  float64 `json:"cpu_load5,omitempty"`
+	CpuLoad15 float64 `json:"cpu_load15,omitempty"`
+	CpuFreqMHz *float64 `json:"cpu_freq_mhz,omitempty"`
+	RamUsedPct float64 `json:"ram_used_pct,omitempty"`
+	RamUsedMB  int64   `json:"ram_used_mb,omitempty"`
+	RamTotalMB int64   `json:"ram_total_mb,omitempty"`
+	DiskUsedPct float64 `json:"disk_used_pct,omitempty"`
+	DiskUsedMB  int64   `json:"disk_used_mb,omitempty"`
+	DiskTotalMB int64   `json:"disk_total_mb,omitempty"`
+	Mountpoint  string  `json:"mountpoint,omitempty"`
+	GpuTempC   *float64 `json:"gpu_temp_c,omitempty"`
+	GpuUtilPct *float64 `json:"gpu_util_pct,omitempty"`
+	BattCapacityPct *int   `json:"batt_capacity_pct,omitempty"`
+	BattStatus      string `json:"batt_status,omitempty"`
+	UptimeSec  int64 `json:"uptime_s,omitempty"`
+}
+
 // ResponsePayload is the JSON encrypted with NIP-44 and sent back.
 type ResponsePayload struct {
-	Status          string        `json:"status"`
-	TunnelURL       string        `json:"tunnel_url"`
-	AuthToken       string        `json:"auth_token"`
-	ExpiresInSeconds int          `json:"expires_in_seconds"`
-	Services        []ServiceInfo `json:"services"`
+	Status           string         `json:"status"`
+	TunnelURL        string         `json:"tunnel_url"`
+	AuthToken        string         `json:"auth_token"`
+	ExpiresInSeconds int            `json:"expires_in_seconds"`
+	Services         []ServiceInfo  `json:"services"`
+	HostTelemetry    *HostTelemetry `json:"host_telemetry,omitempty"`
 }
 
 // DiscoverRequest is the expected payload for the discover_services action.

@@ -522,3 +522,74 @@ func TestHandler_ServicesWithStatus(t *testing.T) {
 	}
 }
 
+func TestResponsePayload_OmitsHostTelemetry(t *testing.T) {
+	resp := NewResponse("https://x.trycloudflare.com", "tok", 120*time.Second, []ServiceInfo{
+		{ID: "hass", Name: "HA", Prefix: "/hass"},
+	})
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "" && (indexBytes(got, []byte("host_telemetry")) >= 0) {
+		t.Errorf("response should omit host_telemetry when nil, got: %s", got)
+	}
+}
+
+func TestResponsePayload_IncludesHostTelemetry(t *testing.T) {
+	temp := 65.0
+	cap := 80
+	resp := NewResponse("https://x.trycloudflare.com", "tok", 120*time.Second, nil)
+	resp.HostTelemetry = &HostTelemetry{
+		SampledAt:       "2026-01-01T00:00:00Z",
+		CpuTempC:        &temp,
+		CpuLoad1:        0.5,
+		RamUsedPct:      42.0,
+		RamUsedMB:       4000,
+		RamTotalMB:      10000,
+		BattCapacityPct: &cap,
+		BattStatus:      "Discharging",
+		UptimeSec:       3600,
+	}
+	data, err := MarshalResponse(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexBytes(string(data), []byte(`"host_telemetry"`)) < 0 {
+		t.Fatalf("host_telemetry missing from JSON: %s", data)
+	}
+	if indexBytes(string(data), []byte(`"cpu_temp_c":65`)) < 0 {
+		t.Errorf("cpu_temp_c missing or wrong: %s", data)
+	}
+
+	// Round trip.
+	got, err := UnmarshalResponse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostTelemetry == nil || got.HostTelemetry.CpuTempC == nil || *got.HostTelemetry.CpuTempC != 65.0 {
+		t.Errorf("round-trip cpu_temp_c wrong: %+v", got.HostTelemetry)
+	}
+	if got.HostTelemetry.BattCapacityPct == nil || *got.HostTelemetry.BattCapacityPct != 80 {
+		t.Errorf("round-trip batt capacity wrong")
+	}
+}
+
+func indexBytes(s string, sub []byte) int {
+	if len(sub) == 0 {
+		return 0
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		match := true
+		for j := 0; j < len(sub); j++ {
+			if s[i+j] != sub[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
