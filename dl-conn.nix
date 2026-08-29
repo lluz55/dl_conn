@@ -6,7 +6,7 @@ buildGoModule {
 
   src = ./.;
   subPackages = [ "cmd/dl_conn" ];
-  vendorHash = "sha256-FlPP7Lj7f5/9BwzQrEWWYdBHeWc5PPEEc4CAkWp7hJI=";
+  vendorHash = "sha256-EKLSvjbV7ZDQjTb7KWsZ/Ywx/5GXyZVIKuQwyzjnKwo=";
 
   nativeBuildInputs = [ cloudflared makeWrapper ];
 
