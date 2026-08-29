@@ -57,15 +57,19 @@ function extractFunction(src, name) {
 }
 
 const formatUptimeBody = extractFunction(appJs, 'formatUptime');
+const formatCapacityBody = extractFunction(appJs, 'formatCapacity');
 const renderTelemetryBody = extractFunction(appJs, 'renderTelemetry');
 
 // renderTelemetry calls formatUptime internally. Since function declarations
 // inside a new Function body don't get hoisted to the wrapped scope, we
 // inline the formatUptime body as a const at the top.
 const formatUptime = new Function('total', formatUptimeBody);
+const formatCapacity = new Function('mb', formatCapacityBody);
 const renderTelemetry = new Function(
   'snap', 'el',
-  'const formatUptime = ' + formatUptime + ';\n' + renderTelemetryBody
+  'const formatUptime = ' + formatUptime + ';\n' +
+  'const formatCapacity = ' + formatCapacity + ';\n' +
+  renderTelemetryBody
 );
 
 console.log("\n=== Telemetry formatUptime Tests ===");
@@ -78,6 +82,19 @@ assert(formatUptime(90061) === "25h 1m", "90061s → 25h 1m");
 assert(formatUptime(null) === "—", "null → em dash");
 assert(formatUptime(undefined) === "—", "undefined → em dash");
 assert(formatUptime(NaN) === "—", "NaN → em dash");
+
+console.log("\n=== formatCapacity Tests (adaptive MB/GB/TB, base 1024) ===");
+assert(formatCapacity(null) === "—", "null → em dash");
+assert(formatCapacity(undefined) === "—", "undefined → em dash");
+assert(formatCapacity(NaN) === "—", "NaN → em dash");
+assert(formatCapacity(-5) === "—", "negative → em dash");
+assert(formatCapacity(0) === "0 MB", "0 → 0 MB");
+assert(formatCapacity(512) === "512 MB", "512 MB stays MB");
+assert(formatCapacity(1024) === "1 GB", "1024 MB → 1 GB");
+assert(formatCapacity(8000) === "7.8 GB", "8000 MB → 7.8 GB");
+assert(formatCapacity(33000) === "32.2 GB", "33000 MB → 32.2 GB");
+assert(formatCapacity(1048576) === "1 TB", "1048576 MB → 1 TB");
+assert(formatCapacity(5 * 1048576) === "5 TB", "5 TB");
 
 console.log("\n=== renderTelemetry Tests ===");
 
@@ -106,9 +123,12 @@ renderTelemetry({
 assert(el.telCpu.textContent.includes("65.5°C"), "CPU shows temp: " + el.telCpu.textContent);
 assert(el.telCpu.textContent.includes("load"), "CPU shows load: " + el.telCpu.textContent);
 assert(el.telRam.textContent.includes("55.0%"), "RAM shows pct: " + el.telRam.textContent);
-assert(el.telRam.textContent.includes("4400"), "RAM shows used_mb: " + el.telRam.textContent);
+assert(el.telRam.textContent.includes("4.3 GB"), "RAM shows used capacity: " + el.telRam.textContent);
+assert(el.telRam.textContent.includes("7.8 GB"), "RAM shows total capacity: " + el.telRam.textContent);
 assert(el.telDisk.textContent.includes("30.0%"), "Disk shows pct: " + el.telDisk.textContent);
 assert(el.telDisk.textContent.includes("/"), "Disk shows mountpoint: " + el.telDisk.textContent);
+assert(el.telDisk.textContent.includes("9.8 GB"), "Disk shows used capacity: " + el.telDisk.textContent);
+assert(el.telDisk.textContent.includes("32.2 GB"), "Disk shows total capacity: " + el.telDisk.textContent);
 assert(el.telGpu.textContent.includes("70.0°C"), "GPU shows temp: " + el.telGpu.textContent);
 assert(el.telGpu.textContent.includes("25%"), "GPU shows util: " + el.telGpu.textContent);
 assert(el.telBatt.textContent.includes("80%"), "Battery shows pct: " + el.telBatt.textContent);
@@ -149,6 +169,20 @@ assert(el.telGpu.textContent.includes("10%"), "compact GPU util");
 assert(el.telBatt.textContent.includes("75%"), "compact batt");
 assert(el.telBatt.textContent.includes("Charging"), "compact batt status");
 assert(el.telUptime.textContent === "20m", "compact uptime");
+
+// Multiple disks: every mountpoint is listed, each with adaptive units.
+renderTelemetry({
+  memory: { used_pct: 50.0, used_mb: 16000, total_mb: 32000 },
+  disks: [
+    { mountpoint: "/", used_pct: 40.0, used_mb: 200000, total_mb: 500000 },
+    { mountpoint: "/data", used_pct: 12.0, used_mb: 120000, total_mb: 1000000 },
+  ],
+  cpu: null, gpu: null, battery: { available: false }, uptime_s: 0,
+}, el);
+assert(el.telDisk.textContent.includes("/"), "multi-disk: root shown");
+assert(el.telDisk.textContent.includes("/data"), "multi-disk: data mount shown");
+assert(el.telDisk.textContent.includes("195.3 GB"), "multi-disk: / used 200000 MB → 195.3 GB");
+assert(el.telDisk.textContent.includes("976.6 GB"), "multi-disk: /data total 1000000 MB → 976.6 GB");
 
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");
 if (failed > 0) process.exit(1);

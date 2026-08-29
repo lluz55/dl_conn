@@ -72,11 +72,16 @@ import { startScan } from './js/qr_scanner.js';
     telGpu: $("tel-gpu"),
     telBatt: $("tel-batt"),
     telUptime: $("tel-uptime"),
+    telLive: $("tel-live"),
+    telUpdated: $("tel-updated"),
   };
 
   let expiryTimer = null;
   let discoveryTimer = null;
   let telemetryTimer = null;
+  let liveTicker = null;
+  let lastTelemetryAt = 0;
+  let visibilityListenerAdded = false;
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
 
@@ -94,6 +99,7 @@ import { startScan } from './js/qr_scanner.js';
     if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; }
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
     if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+    if (liveTicker) { clearInterval(liveTicker); liveTicker = null; }
   }
 
   function formatUptime(total) {
@@ -103,6 +109,24 @@ import { startScan } from './js/qr_scanner.js';
     if (h > 0) return h + "h " + m + "m";
     return m + "m";
   }
+
+  /**
+   * Render a capacity given in mebibytes (the unit the Go daemon emits) using
+   * the most readable binary unit (base 1024): MB -> GB -> TB -> PB.
+   * Input is always an integer count of 1 MiB blocks, so 1024 MiB = 1 GiB and
+   * we label it "GB" to match the user-facing expectation. Invalid input
+   * (null/NaN/negative) yields an em dash.
+   */
+  function formatCapacity(mb) {
+    if (mb == null || isNaN(mb) || mb < 0) return "—";
+    const units = ["MB", "GB", "TB", "PB"];
+    let v = mb;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    const s = (Math.round(v * 10) / 10).toString();
+    return s.replace(/\.0$/, "") + " " + units[i];
+  }
+
 
   function renderTelemetry(snap) {
     if (!snap) return;
@@ -119,17 +143,21 @@ import { startScan } from './js/qr_scanner.js';
     }
     if (el.telRam) {
       if (snap.memory) {
-        el.telRam.textContent = snap.memory.used_pct.toFixed(1) + "% (" + snap.memory.used_mb + "/" + snap.memory.total_mb + " MB)";
+        el.telRam.textContent = snap.memory.used_pct.toFixed(1) + "% (" + formatCapacity(snap.memory.used_mb) + " / " + formatCapacity(snap.memory.total_mb) + ")";
       } else if (snap.ram_used_pct != null) {
-        el.telRam.textContent = snap.ram_used_pct.toFixed(1) + "% (" + (snap.ram_used_mb || 0) + "/" + (snap.ram_total_mb || 0) + " MB)";
+        el.telRam.textContent = snap.ram_used_pct.toFixed(1) + "% (" + formatCapacity(snap.ram_used_mb || 0) + " / " + formatCapacity(snap.ram_total_mb || 0) + ")";
       } else el.telRam.textContent = "—";
     }
     if (el.telDisk) {
       if (snap.disks && snap.disks.length) {
-        const d = snap.disks[0];
-        el.telDisk.textContent = d.used_pct.toFixed(1) + "% (" + d.used_mb + "/" + d.total_mb + " MB) " + d.mountpoint;
+        // Show every mountpoint, each with its capacity in the most readable
+        // unit (MB/GB/TB). Joined with a middot so the single status-value
+        // span reads as a compact list.
+        el.telDisk.textContent = snap.disks.map(function (d) {
+          return d.used_pct.toFixed(1) + "% (" + formatCapacity(d.used_mb) + " / " + formatCapacity(d.total_mb) + ") " + d.mountpoint;
+        }).join(" · ");
       } else if (snap.disk_used_pct != null) {
-        el.telDisk.textContent = snap.disk_used_pct.toFixed(1) + "% (" + (snap.disk_used_mb || 0) + "/" + (snap.disk_total_mb || 0) + " MB) " + (snap.mountpoint || "");
+        el.telDisk.textContent = snap.disk_used_pct.toFixed(1) + "% (" + formatCapacity(snap.disk_used_mb || 0) + " / " + formatCapacity(snap.disk_total_mb || 0) + ") " + (snap.mountpoint || "");
       } else el.telDisk.textContent = "—";
     }
     if (el.telGpu) {
@@ -153,23 +181,66 @@ import { startScan } from './js/qr_scanner.js';
     if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
   }
 
+  /**
+   * Update the "ao vivo / ha Xs" badge. 'ok' reflects whether the last fetch
+   * succeeded; on failure we keep the last good snapshot on screen but flag
+   * the badge as stale so the user sees telemetry is no longer refreshing
+   * instead of a frozen value that looks live.
+   */
+  function updateLiveBadge(ok) {
+    if (!el.telUpdated) return;
+    if (!ok) {
+      el.telUpdated.textContent = "indisponivel";
+      if (el.telLive) el.telLive.classList.add("is-stale");
+      return;
+    }
+    if (el.telLive) el.telLive.classList.remove("is-stale");
+    const secs = lastTelemetryAt ? Math.floor((Date.now() - lastTelemetryAt) / 1000) : 0;
+    el.telUpdated.textContent = secs < 5 ? "ao vivo" : "ha " + secs + "s";
+  }
+
+  /** 1s ticker so the "ha Xs" label counts up between 10s fetches. */
+  function startLiveTicker() {
+    if (liveTicker) clearInterval(liveTicker);
+    liveTicker = setInterval(function () {
+      if (lastTelemetryAt) updateLiveBadge(true);
+    }, 1000);
+  }
+
   async function fetchTelemetry() {
     try {
       const r = await fetch("/api/host/telemetry", { credentials: "include" });
-      if (!r.ok) return;
+      if (!r.ok) { updateLiveBadge(false); return; }
       const snap = await r.json();
       renderTelemetry(snap);
-    } catch (_) { /* ignore */ }
+      lastTelemetryAt = Date.now();
+      updateLiveBadge(true);
+    } catch (_) { updateLiveBadge(false); }
   }
 
   function startTelemetryPolling() {
     if (telemetryTimer) clearInterval(telemetryTimer);
+    // Reveal the card immediately so the user sees the dashboard is loading,
+    // rather than a blank Live column that looks broken until the first
+    // successful fetch lands.
+    if (el.hostTelemetrySection) el.hostTelemetrySection.classList.remove("hidden");
     fetchTelemetry();
     telemetryTimer = setInterval(fetchTelemetry, 10000);
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) { if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; } }
-      else if (!telemetryTimer) { fetchTelemetry(); telemetryTimer = setInterval(fetchTelemetry, 10000); }
-    });
+    startLiveTicker();
+    // The visibility handler must be registered exactly once: the previous code
+    // added a new listener on every (re-)activation, which could leak and even
+    // spawn duplicate intervals after a hide/show cycle.
+    if (!visibilityListenerAdded) {
+      visibilityListenerAdded = true;
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+          if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+        } else if (!telemetryTimer) {
+          fetchTelemetry();
+          telemetryTimer = setInterval(fetchTelemetry, 10000);
+        }
+      });
+    }
   }
 
   /**

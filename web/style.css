@@ -276,6 +276,34 @@ body {
   gap: var(--gap-sm);
 }
 .card-head h2 { margin: 0; }
+
+/* ── Live telemetry badge (host health card) ──────────────────── */
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--color-on-surface-dim);
+  letter-spacing: 0.02em;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-success, #2e9e5b);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success, #2e9e5b) 60%, transparent);
+  animation: live-pulse 2s ease-out infinite;
+}
+.live-badge.is-stale .live-dot {
+  background-color: var(--color-warning, #d98a00);
+  animation: none;
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success, #2e9e5b) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-success, #2e9e5b) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success, #2e9e5b) 0%, transparent); }
+}
 .card-head-actions {
   display: inline-flex;
   align-items: center;
