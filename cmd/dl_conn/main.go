@@ -242,6 +242,11 @@ func run(cmd *cobra.Command, _ []string) error {
 		})
 	}
 	_ = telStore
+
+	// Loopback-only diagnostics (see startDiagnostics). Derived from the
+	// listen port so it needs no configuration of its own.
+	startDiagnostics(ctx, fmt.Sprintf("127.0.0.1:%d", cfg.Tunnel.ListenPort+1), tm, client, handler)
+
 	// Don't answer discovery DMs until the tunnel is confirmed reachable —
 	// cloudflared printing the ephemeral hostname doesn't mean Cloudflare's
 	// edge has finished routing to it yet. Until then, requests just go
