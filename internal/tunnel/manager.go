@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -91,6 +92,18 @@ func WaitReady(ctx context.Context, url string, timeout time.Duration, onAttempt
 	}
 }
 
+// Probe performs one reachability check of url through Cloudflare's edge,
+// returning whether it routed and a short description of the outcome either
+// way. Same check WaitReady polls with, exposed for on-demand diagnostics.
+func Probe(ctx context.Context, url string) (bool, string) {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Resolver: quickTunnelResolver}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+	return probeOnce(ctx, client, url)
+}
+
 // probeOnce performs a single reachability check. detail describes the
 // outcome either way (a network error, or the HTTP status received) so
 // callers can log it for diagnostics.
@@ -113,6 +126,14 @@ type Status struct {
 	Running bool
 	URL     string
 	PID     int
+	// LatestURL is the most recent hostname cloudflared printed, which is
+	// not necessarily URL: only the first one ever seen is published to
+	// clients, so an auto-restart mints a new hostname while the daemon
+	// keeps advertising the old, now-dead one.
+	LatestURL   string
+	Starts      int
+	StartedAt   time.Time
+	LastExitErr string
 }
 
 // Manager orchestrates the cloudflared subprocess lifecycle:
@@ -123,11 +144,15 @@ type Manager struct {
 	port      int
 	notifyURL chan string
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	procURL string
-	running bool
-	pid     int
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	procURL     string
+	latestURL   string
+	running     bool
+	pid         int
+	starts      int
+	startedAt   time.Time
+	lastExitErr string
 }
 
 // NewManager creates a tunnel manager that runs cloudflared to proxy
@@ -177,6 +202,8 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.mu.Lock()
 	m.pid = cmd.Process.Pid
+	m.starts++
+	m.startedAt = time.Now()
 	m.mu.Unlock()
 
 	go m.scanOutput(ctx, stdout)
@@ -195,12 +222,17 @@ func (m *Manager) scanOutput(ctx context.Context, r io.Reader) {
 		line := scanner.Text()
 		if match := tunnelURLRegex.FindString(line); match != "" {
 			m.mu.Lock()
+			m.latestURL = match
 			if m.procURL == "" {
 				m.procURL = match
 				m.mu.Unlock()
 				m.notifyURL <- match
 			} else {
+				advertised := m.procURL
 				m.mu.Unlock()
+				if match != advertised {
+					log.Printf("tunnel: cloudflared now serving %s, but clients are still being told %s", match, advertised)
+				}
 			}
 		}
 	}
@@ -224,10 +256,15 @@ func (m *Manager) watchRestart(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		return
-	case <-waitDone:
+	case err := <-waitDone:
 		m.mu.Lock()
 		m.running = false
+		m.lastExitErr = "exited cleanly"
+		if err != nil {
+			m.lastExitErr = err.Error()
+		}
 		m.mu.Unlock()
+		log.Printf("tunnel: cloudflared exited (%v) — restarting", err)
 
 		// Only auto-restart if context not cancelled
 		select {
@@ -305,9 +342,13 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return Status{
-		Running: m.running,
-		URL:     m.procURL,
-		PID:     m.pid,
+		Running:     m.running,
+		URL:         m.procURL,
+		PID:         m.pid,
+		LatestURL:   m.latestURL,
+		Starts:      m.starts,
+		StartedAt:   m.startedAt,
+		LastExitErr: m.lastExitErr,
 	}
 }
 

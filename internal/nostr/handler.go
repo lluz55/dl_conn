@@ -2,6 +2,8 @@ package nostr
 
 import (
 	"context"
+	"log"
+	"sync"
 	"time"
 
 	nostr "github.com/nbd-wtf/go-nostr"
@@ -16,6 +18,48 @@ type Handler struct {
 	statusFn     func(id string) string
 	probeAllFn   func(context.Context)
 	telemetryFn  func() *HostTelemetry
+
+	statsMu sync.Mutex
+	stats   HandlerStats
+}
+
+// HandlerStats records the outcome of every discovery request seen, so a
+// request that arrived and was dropped can be told apart from one that never
+// arrived at all.
+type HandlerStats struct {
+	Received          int    `json:"received"`
+	Rejected          int    `json:"rejected"`
+	Answered          int    `json:"answered"`
+	PublishFailed     int    `json:"publish_failed"`
+	LastReceivedAt    string `json:"last_received_at,omitempty"`
+	LastAnsweredAt    string `json:"last_answered_at,omitempty"`
+	LastRejection     string `json:"last_rejection,omitempty"`
+	LastAdvertisedURL string `json:"last_advertised_url,omitempty"`
+}
+
+// Stats returns a snapshot of the request outcomes seen so far.
+func (h *Handler) Stats() HandlerStats {
+	h.statsMu.Lock()
+	defer h.statsMu.Unlock()
+	return h.stats
+}
+
+func (h *Handler) recordStats(fn func(*HandlerStats)) {
+	h.statsMu.Lock()
+	defer h.statsMu.Unlock()
+	fn(&h.stats)
+}
+
+// reject logs and counts a dropped request. The daemon answers nothing on
+// rejection by design (an unauthorized sender learns nothing), which used to
+// make every failure mode look identical from the outside: the request simply
+// vanished.
+func (h *Handler) reject(reason string) {
+	h.recordStats(func(s *HandlerStats) {
+		s.Rejected++
+		s.LastRejection = reason
+	})
+	log.Printf("nostr: request dropped: %s", reason)
 }
 
 // TokenIssuer generates one-time auth tokens.
@@ -85,19 +129,26 @@ func (h *Handler) Serve(ctx context.Context) {
 
 // processEvent handles a single Nostr DM event.
 func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
+	h.recordStats(func(s *HandlerStats) {
+		s.Received++
+		s.LastReceivedAt = time.Now().Format(time.RFC3339)
+	})
+
 	senderPubHex, plaintext, err := h.client.ParseEvent(evt)
 	if err != nil {
-		// Unauthorized sender → silently ignore (no response, no error leaked)
+		// Unauthorized sender → no response, no error leaked to the caller.
+		h.reject(err.Error())
 		return
 	}
 
 	req, err := UnmarshalRequest([]byte(plaintext))
 	if err != nil {
+		h.reject("malformed request from " + senderPubHex + ": " + err.Error())
 		return
 	}
 
 	if req.Action != ActionDiscoverServices {
-		// unknown action — silently ignore
+		h.reject("unknown action " + req.Action + " from " + senderPubHex)
 		return
 	}
 
@@ -114,6 +165,7 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 
 	token, ttl, err := h.tokenIssuer.Issue()
 	if err != nil {
+		h.reject("issuing token: " + err.Error())
 		return
 	}
 
@@ -123,10 +175,20 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 	}
 	respJSON, err := MarshalResponse(resp)
 	if err != nil {
+		h.reject("marshalling response: " + err.Error())
 		return
 	}
 
 	if err := h.client.PublishResponse(ctx, senderPubHex, string(respJSON)); err != nil {
-		// best-effort, log in real deployment
+		h.recordStats(func(s *HandlerStats) { s.PublishFailed++ })
+		log.Printf("nostr: publishing response to %s failed: %v", senderPubHex, err)
+		return
 	}
+
+	h.recordStats(func(s *HandlerStats) {
+		s.Answered++
+		s.LastAnsweredAt = time.Now().Format(time.RFC3339)
+		s.LastAdvertisedURL = h.tunnelURL
+	})
+	log.Printf("nostr: answered discovery from %s with url=%s", senderPubHex, h.tunnelURL)
 }

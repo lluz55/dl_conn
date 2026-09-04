@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -30,6 +31,24 @@ type Client struct {
 	authorized    map[string]bool
 	authMu        sync.RWMutex // guards authorized reads/writes
 	fallbackNip04 bool
+
+	statsMu sync.Mutex
+	stats   map[string]*RelayStats
+}
+
+// RelayStats records what a single relay subscription has been doing, so a
+// daemon that went silently deaf (subscription dropped and never truly
+// re-established) can be told apart from one that is connected but simply
+// isn't being sent anything.
+type RelayStats struct {
+	URL             string `json:"url"`
+	Subscribed      bool   `json:"subscribed"`
+	SubscribeCount  int    `json:"subscribe_count"`
+	FailureCount    int    `json:"failure_count"`
+	EventCount      int    `json:"event_count"`
+	LastError       string `json:"last_error,omitempty"`
+	SubscribedSince string `json:"subscribed_since,omitempty"`
+	LastEventAt     string `json:"last_event_at,omitempty"`
 }
 
 // NewClient creates a new Nostr client.
@@ -52,13 +71,44 @@ func NewClient(sk string, relays []string, authorizedNpubs []string, fallbackNip
 		authorized[pub] = true
 	}
 
+	stats := make(map[string]*RelayStats, len(relays))
+	for _, url := range relays {
+		stats[url] = &RelayStats{URL: url}
+	}
+
 	return &Client{
 		sk:            sk,
 		pool:          nostr.NewSimplePool(context.Background()),
 		relays:        relays,
 		authorized:    authorized,
 		fallbackNip04: fallbackNip04,
+		stats:         stats,
 	}, nil
+}
+
+// RelayStats returns a snapshot of every relay's subscription state, in the
+// configured order.
+func (c *Client) RelayStats() []RelayStats {
+	c.statsMu.Lock()
+	defer c.statsMu.Unlock()
+	out := make([]RelayStats, 0, len(c.relays))
+	for _, url := range c.relays {
+		if s, ok := c.stats[url]; ok {
+			out = append(out, *s)
+		}
+	}
+	return out
+}
+
+func (c *Client) withStats(url string, fn func(*RelayStats)) {
+	c.statsMu.Lock()
+	defer c.statsMu.Unlock()
+	s, ok := c.stats[url]
+	if !ok {
+		s = &RelayStats{URL: url}
+		c.stats[url] = s
+	}
+	fn(s)
 }
 
 // IsAuthorized checks if the given pubkey hex is in the whitelist.
@@ -152,6 +202,12 @@ func (c *Client) subscribeRelays(ctx context.Context, out chan<- *nostr.Event) {
 func (c *Client) subscribeOnce(ctx context.Context, url, pub string, out chan<- *nostr.Event) bool {
 	relay, err := c.pool.EnsureRelay(url)
 	if err != nil {
+		c.withStats(url, func(s *RelayStats) {
+			s.Subscribed = false
+			s.FailureCount++
+			s.LastError = "ensure relay: " + err.Error()
+		})
+		log.Printf("nostr: relay %s unreachable: %v", url, err)
 		return false
 	}
 	sub, err := relay.Subscribe(ctx, []nostr.Filter{
@@ -161,9 +217,26 @@ func (c *Client) subscribeOnce(ctx context.Context, url, pub string, out chan<- 
 		},
 	})
 	if err != nil {
+		c.withStats(url, func(s *RelayStats) {
+			s.Subscribed = false
+			s.FailureCount++
+			s.LastError = "subscribe: " + err.Error()
+		})
+		log.Printf("nostr: subscribe to %s failed: %v", url, err)
 		return false
 	}
-	defer sub.Unsub()
+	c.withStats(url, func(s *RelayStats) {
+		s.Subscribed = true
+		s.SubscribeCount++
+		s.LastError = ""
+		s.SubscribedSince = time.Now().Format(time.RFC3339)
+	})
+	log.Printf("nostr: subscribed to %s", url)
+	defer func() {
+		sub.Unsub()
+		c.withStats(url, func(s *RelayStats) { s.Subscribed = false })
+		log.Printf("nostr: subscription to %s ended", url)
+	}()
 	for {
 		select {
 		case evt, ok := <-sub.Events:
@@ -171,6 +244,10 @@ func (c *Client) subscribeOnce(ctx context.Context, url, pub string, out chan<- 
 				return true
 			}
 			if evt != nil {
+				c.withStats(url, func(s *RelayStats) {
+					s.EventCount++
+					s.LastEventAt = time.Now().Format(time.RFC3339)
+				})
 				select {
 				case out <- evt:
 				case <-ctx.Done():

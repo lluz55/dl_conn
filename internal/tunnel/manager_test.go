@@ -201,3 +201,29 @@ func TestShutdownNilCmd(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// A restarted cloudflared prints a different hostname. The advertised URL
+// stays the first one seen (clients were already told it), so Status has to
+// surface the divergence rather than hide it.
+func TestScannerRecordsLatestURLSeparatelyFromAdvertised(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		w.Write([]byte(fakeTunnelOutput))
+		w.Write([]byte("2024-01-01T01:00:00Z TUNNEL: https://efgh-9999-0000.trycloudflare.com\n"))
+		w.Close()
+	}()
+
+	m := &Manager{binary: "cloudflared", port: 9099, notifyURL: make(chan string, 1)}
+	m.scanOutput(nil, r)
+
+	st := m.Status()
+	if st.URL != "https://abcd-1234-5678.trycloudflare.com" {
+		t.Fatalf("advertised URL = %q, want the first one seen", st.URL)
+	}
+	if st.LatestURL != "https://efgh-9999-0000.trycloudflare.com" {
+		t.Fatalf("latest URL = %q, want the most recent one", st.LatestURL)
+	}
+}
