@@ -85,6 +85,18 @@ import { startScan } from './js/qr_scanner.js';
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
 
+  /**
+   * Discovery requests are numbered so a reply that beats its own publish
+   * confirmation can be recognised as already answered. The host often
+   * replies within a second, while sendDiscoverRequest only resolves once
+   * the relays acknowledge the publish — which a flapping relay can drag out
+   * for far longer. Without this, the late-resolving send overwrote the
+   * "Túnel: ..." line and armed a timeout that then reported the host as
+   * silent, for a request it had already answered.
+   */
+  let discoveryGeneration = 0;
+  let answeredGeneration = -1;
+
   /** How long to wait for the host's discovery reply before saying so. */
   const DISCOVERY_TIMEOUT_MS = 30000;
 
@@ -765,9 +777,11 @@ import { startScan } from './js/qr_scanner.js';
       );
       responseChannel.addEventListener("response", (e) => handleNostrResponse(e.detail));
       el.tunnelStatus.textContent = "Solicitando descoberta de serviços...";
+      const generation = ++discoveryGeneration;
       const result = await state.nostr.sendDiscoverRequest(
         state.session.npub, state.session.sk
       );
+      if (answeredGeneration >= generation) return;
       // The publish result used to be discarded, which made a rejected or
       // timed-out request indistinguishable from a host that simply had not
       // answered yet.
@@ -810,6 +824,7 @@ import { startScan } from './js/qr_scanner.js';
 
   function handleNostrResponse(data) {
     awaitingDiscovery = false;
+    answeredGeneration = discoveryGeneration;
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
     // Stamp the time: two consecutive refreshes with identical statuses are
     // otherwise indistinguishable from a refresh that never landed.
@@ -929,10 +944,12 @@ import { startScan } from './js/qr_scanner.js';
     el.btnRefreshServices.disabled = true;
     el.btnRefreshServices.setAttribute("aria-busy", "true");
     el.tunnelStatus.textContent = "Atualizando status…";
+    const generation = ++discoveryGeneration;
     try {
       const result = await state.nostr.sendDiscoverRequest(
         state.session.npub, state.session.sk
       );
+      if (answeredGeneration >= generation) return;
       if (result && result.status === "timeout") {
         el.tunnelStatus.textContent = "Sem resposta do host ao atualizar.";
         return;
