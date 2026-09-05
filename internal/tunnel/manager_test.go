@@ -202,10 +202,10 @@ func TestShutdownNilCmd(t *testing.T) {
 	}
 }
 
-// A restarted cloudflared prints a different hostname. The advertised URL
-// stays the first one seen (clients were already told it), so Status has to
-// surface the divergence rather than hide it.
-func TestScannerRecordsLatestURLSeparatelyFromAdvertised(t *testing.T) {
+// A restarted cloudflared prints a different hostname and the previous one
+// stops routing, so the newest URL must reach the consumer and become the
+// one Status reports.
+func TestScannerPublishesEveryNewURL(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +220,44 @@ func TestScannerRecordsLatestURLSeparatelyFromAdvertised(t *testing.T) {
 	m.scanOutput(nil, r)
 
 	st := m.Status()
-	if st.URL != "https://abcd-1234-5678.trycloudflare.com" {
-		t.Fatalf("advertised URL = %q, want the first one seen", st.URL)
+	if st.URL != "https://efgh-9999-0000.trycloudflare.com" {
+		t.Fatalf("advertised URL = %q, want the most recent one", st.URL)
 	}
 	if st.LatestURL != "https://efgh-9999-0000.trycloudflare.com" {
 		t.Fatalf("latest URL = %q, want the most recent one", st.LatestURL)
+	}
+
+	// Latest-wins: a nobody-read older URL must not shadow the current one.
+	select {
+	case u := <-m.notifyURL:
+		if u != "https://efgh-9999-0000.trycloudflare.com" {
+			t.Fatalf("notified URL = %q, want the most recent one", u)
+		}
+	default:
+		t.Fatal("expected a URL to have been published")
+	}
+}
+
+// The same hostname printed twice (cloudflared repeats it in its banner)
+// must not enqueue a redundant rotation.
+func TestScannerIgnoresRepeatedURL(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		w.Write([]byte(fakeTunnelOutput))
+		w.Write([]byte("2024-01-01T01:00:00Z TUNNEL: https://abcd-1234-5678.trycloudflare.com\n"))
+		w.Close()
+	}()
+
+	m := &Manager{binary: "cloudflared", port: 9099, notifyURL: make(chan string, 1)}
+	m.scanOutput(nil, r)
+
+	<-m.notifyURL
+	select {
+	case u := <-m.notifyURL:
+		t.Fatalf("republished the same URL %q", u)
+	default:
 	}
 }

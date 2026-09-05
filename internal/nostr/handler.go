@@ -11,13 +11,16 @@ import (
 
 // Handler processes incoming Nostr DM requests and dispatches responses.
 type Handler struct {
-	client       *Client
-	tokenIssuer  TokenIssuer
-	tunnelURL    string
-	services     []ServiceInfo
-	statusFn     func(id string) string
-	probeAllFn   func(context.Context)
-	telemetryFn  func() *HostTelemetry
+	client      *Client
+	tokenIssuer TokenIssuer
+	services    []ServiceInfo
+
+	urlMu     sync.RWMutex
+	tunnelURL string
+
+	statusFn    func(id string) string
+	probeAllFn  func(context.Context)
+	telemetryFn func() *HostTelemetry
 
 	statsMu sync.Mutex
 	stats   HandlerStats
@@ -75,6 +78,23 @@ func NewHandler(client *Client, issuer TokenIssuer, tunnelURL string, services [
 		tunnelURL:   tunnelURL,
 		services:    services,
 	}
+}
+
+// SetTunnelURL replaces the hostname advertised in discovery responses.
+// cloudflared mints a new ephemeral hostname on every restart and the
+// previous one stops routing immediately, so the URL cannot be frozen at
+// construction time.
+func (h *Handler) SetTunnelURL(url string) {
+	h.urlMu.Lock()
+	h.tunnelURL = url
+	h.urlMu.Unlock()
+}
+
+// TunnelURL returns the hostname currently being advertised.
+func (h *Handler) TunnelURL() string {
+	h.urlMu.RLock()
+	defer h.urlMu.RUnlock()
+	return h.tunnelURL
 }
 
 // SetStatusFunc installs a health lookup consulted at response time, so every
@@ -169,7 +189,8 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 		return
 	}
 
-	resp := NewResponse(h.tunnelURL, token, ttl, h.servicesWithStatus())
+	tunnelURL := h.TunnelURL()
+	resp := NewResponse(tunnelURL, token, ttl, h.servicesWithStatus())
 	if h.telemetryFn != nil {
 		resp.HostTelemetry = h.telemetryFn()
 	}
@@ -188,7 +209,7 @@ func (h *Handler) processEvent(ctx context.Context, evt *nostr.Event) {
 	h.recordStats(func(s *HandlerStats) {
 		s.Answered++
 		s.LastAnsweredAt = time.Now().Format(time.RFC3339)
-		s.LastAdvertisedURL = h.tunnelURL
+		s.LastAdvertisedURL = tunnelURL
 	})
-	log.Printf("nostr: answered discovery from %s with url=%s", senderPubHex, h.tunnelURL)
+	log.Printf("nostr: answered discovery from %s with url=%s", senderPubHex, tunnelURL)
 }

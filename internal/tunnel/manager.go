@@ -126,10 +126,9 @@ type Status struct {
 	Running bool
 	URL     string
 	PID     int
-	// LatestURL is the most recent hostname cloudflared printed, which is
-	// not necessarily URL: only the first one ever seen is published to
-	// clients, so an auto-restart mints a new hostname while the daemon
-	// keeps advertising the old, now-dead one.
+	// LatestURL is the most recent hostname cloudflared printed. Compare it
+	// against what the daemon actually advertises to clients to detect a
+	// rotation that has not propagated yet.
 	LatestURL   string
 	Starts      int
 	StartedAt   time.Time
@@ -214,26 +213,48 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// scanOutput reads lines from r and scans for the ephemeral URL.
-// When found, it emits the URL on the notifyURL channel once.
+// scanOutput reads lines from r and scans for the ephemeral URL. Every
+// distinct hostname is emitted on notifyURL, not just the first: an
+// auto-restart mints a brand-new hostname and the old one stops routing, so
+// a consumer that only ever hears about the first URL advertises a dead one
+// for the rest of the daemon's life.
 func (m *Manager) scanOutput(ctx context.Context, r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if match := tunnelURLRegex.FindString(line); match != "" {
-			m.mu.Lock()
-			m.latestURL = match
-			if m.procURL == "" {
-				m.procURL = match
-				m.mu.Unlock()
-				m.notifyURL <- match
-			} else {
-				advertised := m.procURL
-				m.mu.Unlock()
-				if match != advertised {
-					log.Printf("tunnel: cloudflared now serving %s, but clients are still being told %s", match, advertised)
-				}
-			}
+		match := tunnelURLRegex.FindString(line)
+		if match == "" {
+			continue
+		}
+		m.mu.Lock()
+		previous := m.latestURL
+		m.latestURL = match
+		m.procURL = match
+		m.mu.Unlock()
+		if match == previous {
+			continue
+		}
+		if previous != "" {
+			log.Printf("tunnel: cloudflared now serving %s (was %s)", match, previous)
+		}
+		m.publishURL(match)
+	}
+}
+
+// publishURL hands url to the consumer without ever blocking the scanner:
+// stalling here would stop draining cloudflared's stdout pipe and eventually
+// wedge the subprocess. The single-slot channel is latest-wins — a pending
+// URL that nobody has read yet is already obsolete once a newer one exists.
+func (m *Manager) publishURL(url string) {
+	for {
+		select {
+		case m.notifyURL <- url:
+			return
+		default:
+		}
+		select {
+		case <-m.notifyURL:
+		default:
 		}
 	}
 }

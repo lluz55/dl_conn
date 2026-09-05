@@ -258,15 +258,29 @@ func run(cmd *cobra.Command, _ []string) error {
 		if tunnelURL == "" {
 			log.Println("No tunnel URL available — enabling discovery responses without a readiness check")
 		} else {
-			log.Println("Waiting for the tunnel to become reachable through Cloudflare's edge...")
-			onAttempt, lastDetail := readinessLogger("main tunnel")
-			if tunnel.WaitReady(ctx, tunnelURL+"/_healthz", tunnel.DefaultReadyTimeout, onAttempt) {
-				log.Println("Tunnel is reachable — discovery responses enabled")
-			} else {
-				log.Printf("WARNING: tunnel readiness check timed out after %s (last: %s) — enabling discovery responses anyway", tunnel.DefaultReadyTimeout, *lastDetail)
-			}
+			awaitTunnelReady(ctx, "main tunnel", tunnelURL)
 		}
 		handler.Serve(ctx)
+	}()
+
+	// cloudflared restarting mints a new ephemeral hostname and the previous
+	// one stops routing at once, so keep consuming the channel: without this
+	// the daemon would answer discovery with the first URL forever.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case newURL := <-urlCh:
+				if newURL == "" || newURL == handler.TunnelURL() {
+					continue
+				}
+				log.Printf("Tunnel URL rotated to %s — verifying reachability before advertising it", newURL)
+				awaitTunnelReady(ctx, "rotated tunnel", newURL)
+				handler.SetTunnelURL(newURL)
+				log.Printf("Now advertising %s to clients", newURL)
+			}
+		}
 	}()
 
 	// HTTP server: serve web + proxy + auth + tunnel target
@@ -327,6 +341,20 @@ func run(cmd *cobra.Command, _ []string) error {
 	log.Println("Shutting down...")
 	_ = server.Shutdown(context.Background())
 	return nil
+}
+
+// awaitTunnelReady blocks until Cloudflare's edge routes url to the origin,
+// or the readiness budget runs out. Timing out is not fatal: advertising a
+// URL that is merely slow to propagate beats advertising one that is
+// certainly dead.
+func awaitTunnelReady(ctx context.Context, label, url string) {
+	log.Printf("%s: waiting for the tunnel to become reachable through Cloudflare's edge...", label)
+	onAttempt, lastDetail := readinessLogger(label)
+	if tunnel.WaitReady(ctx, url+"/_healthz", tunnel.DefaultReadyTimeout, onAttempt) {
+		log.Printf("%s: reachable", label)
+		return
+	}
+	log.Printf("WARNING: %s readiness check timed out after %s (last: %s) — advertising it anyway", label, tunnel.DefaultReadyTimeout, *lastDetail)
 }
 
 // readinessLogger builds a tunnel.WaitReady progress callback for label:

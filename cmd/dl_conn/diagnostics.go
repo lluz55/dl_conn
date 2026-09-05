@@ -48,12 +48,16 @@ func startDiagnostics(ctx context.Context, addr string, tm *tunnel.Manager, clie
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
 		st := tm.Status()
+		// The advertised URL is the handler's, not the manager's: the
+		// manager knows what cloudflared last printed, while only the
+		// handler knows what clients are actually being told.
+		advertised := handler.TunnelURL()
 
 		probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		reachable, detail := false, "no advertised url"
-		if st.URL != "" {
-			reachable, detail = tunnel.Probe(probeCtx, st.URL+"/_healthz")
+		if advertised != "" {
+			reachable, detail = tunnel.Probe(probeCtx, advertised+"/_healthz")
 		}
 
 		report := diagnosticsReport{
@@ -64,9 +68,9 @@ func startDiagnostics(ctx context.Context, addr string, tm *tunnel.Manager, clie
 				PID:           st.PID,
 				Starts:        st.Starts,
 				LastExitErr:   st.LastExitErr,
-				AdvertisedURL: st.URL,
+				AdvertisedURL: advertised,
 				LatestURL:     st.LatestURL,
-				URLStale:      st.LatestURL != "" && st.LatestURL != st.URL,
+				URLStale:      st.LatestURL != "" && st.LatestURL != advertised,
 				Reachable:     reachable,
 				ProbeDetail:   detail,
 			},
