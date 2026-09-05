@@ -18,6 +18,12 @@ function toHexPubKey(value) {
   return String(d).toLowerCase();
 }
 
+/**
+ * How far back a subscription still accepts events, absorbing host/client
+ * clock disagreement without pulling in genuinely old backscroll.
+ */
+const CLOCK_SKEW_TOLERANCE_SEC = 300;
+
 export class NostrClient {
   constructor(relays, hostNpub) {
     this.nostrTools = nostrTools;
@@ -115,6 +121,13 @@ export class NostrClient {
     const responseChannel = new EventTarget();
     const hostPubHex = toHexPubKey(this.hostNpub);
     const ourPubHex = toHexPubKey(receiverNpub);
+    // Relays replay stored DMs on subscribe, and every past discovery reply
+    // carries the tunnel URL that was current when it was sent. cloudflared
+    // mints a new hostname on each restart, so that backscroll is a stream of
+    // dead URLs that would land after the fresh answer and overwrite it.
+    // The skew allowance keeps a host whose clock runs slightly ahead or
+    // behind from having its genuine reply filtered out.
+    const since = Math.floor(Date.now() / 1000) - CLOCK_SKEW_TOLERANCE_SEC;
 
     // nostr-tools v2: use SimplePool.subscribeMany(relays, filters, params).
     // `filters` is an array; each verified, filter-matched event is delivered
@@ -123,7 +136,7 @@ export class NostrClient {
     // DM replies that arrive after the initial backscroll.
     this.sub = this.pool.subscribeMany(
       Array.from(this.connectedRelays),
-      [{ kinds: [4, 1059], "#p": [ourPubHex] }],
+      [{ kinds: [4, 1059], "#p": [ourPubHex], since }],
       {
         eoseTimeout: 30000,
         onevent: (incomingEvent) => {
@@ -144,8 +157,13 @@ export class NostrClient {
             .then((plaintext) => {
               try {
                 const data = JSON.parse(plaintext);
+                // createdAt travels with the payload so the consumer can
+                // discard a reply older than one it already applied: relays
+                // deliver independently and give no ordering guarantee.
                 responseChannel.dispatchEvent(
-                  new CustomEvent("response", { detail: data })
+                  new CustomEvent("response", {
+                    detail: { data, createdAt: incomingEvent.created_at || 0 },
+                  })
                 );
               } catch (err) {
                 console.warn("[nostr] resposta do host não é JSON válido:", err);

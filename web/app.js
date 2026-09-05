@@ -97,6 +97,15 @@ import { startScan } from './js/qr_scanner.js';
   let discoveryGeneration = 0;
   let answeredGeneration = -1;
 
+  /**
+   * `created_at` of the newest discovery reply already applied. Relays deliver
+   * the same conversation independently and out of order, so a reply from an
+   * earlier tunnel incarnation can arrive after the current one. Applying it
+   * would point every service link at a hostname cloudflared has already
+   * retired, which is indistinguishable from the host being down.
+   */
+  let lastResponseAt = 0;
+
   /** How long to wait for the host's discovery reply before saying so. */
   const DISCOVERY_TIMEOUT_MS = 30000;
 
@@ -775,7 +784,7 @@ import { startScan } from './js/qr_scanner.js';
       const responseChannel = state.nostr.subscribeToResponses(
         state.session.npub, state.session.sk
       );
-      responseChannel.addEventListener("response", (e) => handleNostrResponse(e.detail));
+      responseChannel.addEventListener("response", (e) => onDiscoveryResponse(e.detail));
       el.tunnelStatus.textContent = "Solicitando descoberta de serviços...";
       const generation = ++discoveryGeneration;
       const result = await state.nostr.sendDiscoverRequest(
@@ -820,6 +829,18 @@ import { startScan } from './js/qr_scanner.js';
         "O host não respondeu. Verifique se o daemon está rodando e se seu npub " +
         "está em authorizedNpubs.";
     }, DISCOVERY_TIMEOUT_MS);
+  }
+
+  /**
+   * Drops a reply older than the one already applied, so a late-arriving
+   * stale tunnel URL cannot overwrite the current one.
+   */
+  function onDiscoveryResponse(detail) {
+    const { data, createdAt } = detail || {};
+    if (!data) return;
+    if (createdAt && createdAt < lastResponseAt) return;
+    lastResponseAt = createdAt || lastResponseAt;
+    handleNostrResponse(data);
   }
 
   function handleNostrResponse(data) {
