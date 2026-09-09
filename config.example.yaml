@@ -66,6 +66,9 @@ auth:
 #   rootPaths    directories the backend serves from its own root but whose
 #                frontend asks for at the wrong depth (see the Frigate entry).
 #   forwardedFor send X-Forwarded-For to this backend (default: true).
+#   originHost   present the request to this backend as if it had arrived
+#                directly at it: replaces Host with this authority and drops
+#                the browser's Origin/Sec-Fetch-Site (see below).
 #
 # About forwardedFor: by default dl_conn forwards the visitor's real IP down
 # the chain (cloudflared → dl_conn → backend), which is what a reverse proxy
@@ -161,6 +164,45 @@ services:
     target: "http://10.1.1.10:8080"
     stripPrefix: true
 
+  - id: "pi-web"
+    name: "Pi Web"
+    icon: "code"
+    description: "Interface web do agente Pi"
+    prefix: "/pi-web"
+    target: "http://127.0.0.1:8584"
+    stripPrefix: true
+    websocket: true
+
+  # About originHost: some backends fence their API on the Host header to
+  # defend against DNS rebinding, accepting only their own loopback authority
+  # and refusing any request whose Origin names a different origin. The
+  # DeepSeek Harness (`dsh web`) is the known case. Behind this proxy the
+  # browser sends the public tunnel hostname in both headers, so the HTML
+  # loads but every API call and the WebSocket upgrade get 403.
+  #
+  # Naming the backend's own authority satisfies that fence without pinning
+  # the tunnel hostname anywhere, which is what makes it work with the
+  # ephemeral trycloudflare.com URLs that change on every restart (the
+  # alternative, the backend's own --trusted-host flag, would have to be
+  # resynced and the backend restarted on every rotation).
+  #
+  # Dropping Origin is safe for the same reason the backend accepts its
+  # absence: reaching this proxy at all requires the dl_conn session cookie,
+  # which is SameSite and never rides along on a cross-site request. The
+  # public hostname still reaches the backend in X-Forwarded-Host.
+  #
+  # A backend mounted under a prefix may also redirect to its own root
+  # (`dsh` answers the token exchange with 303 Location: /); the proxy
+  # rewrites such root-absolute Location headers back into the prefix.
+  - id: "dsh"
+    name: "DeepSeek Harness"
+    icon: "terminal"
+    prefix: "/dsh"
+    target: "http://127.0.0.1:3080"
+    stripPrefix: true
+    websocket: true
+    originHost: "127.0.0.1:3080"
+
 # Host telemetry (CPU/RAM/disk/GPU/battery). Disabled by default.
 telemetry:
   enabled: false
@@ -170,4 +212,3 @@ telemetry:
   # render it (required for the host-telemetry card to show any data at all,
   # including on a GitHub Pages copy which has no session to hit /api/host/telemetry).
   exposeViaNostr: false
-    websocket: true
