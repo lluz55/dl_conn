@@ -769,3 +769,103 @@ func TestRootFallback_SPAFilesBeatTheServiceCookie(t *testing.T) {
 		}
 	}
 }
+
+// A Host-fenced backend (see ServiceConfig.OriginHost) must see its own
+// authority and none of the browser's cross-origin markers, or it refuses
+// every API call made through the tunnel.
+func TestRouter_OriginHostRewritesHostAndDropsBrowserMarkers(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotHost, gotOrigin, gotFetchSite, gotForwardedHost string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		gotOrigin = r.Header.Get("Origin")
+		gotFetchSite = r.Header.Get("Sec-Fetch-Site")
+		gotForwardedHost = r.Header.Get("X-Forwarded-Host")
+	}))
+	defer backend.Close()
+
+	services := []config.ServiceConfig{
+		{ID: "dsh", Prefix: "/dsh", Target: backend.URL, StripPrefix: true, OriginHost: "127.0.0.1:3080"},
+	}
+	rt := NewRouter(services, sm)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	req := httptest.NewRequest("POST", "/dsh/api", nil)
+	req.Host = "louisville-mesa.trycloudflare.com"
+	req.Header.Set("Origin", "https://louisville-mesa.trycloudflare.com")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	rt.ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotHost != "127.0.0.1:3080" {
+		t.Errorf("backend saw Host = %q, want %q", gotHost, "127.0.0.1:3080")
+	}
+	if gotOrigin != "" {
+		t.Errorf("backend saw Origin = %q, want it absent", gotOrigin)
+	}
+	if gotFetchSite != "" {
+		t.Errorf("backend saw Sec-Fetch-Site = %q, want it absent", gotFetchSite)
+	}
+	// The public hostname must survive somewhere: this is the only place left.
+	if gotForwardedHost != "louisville-mesa.trycloudflare.com" {
+		t.Errorf("X-Forwarded-Host = %q, want the public hostname", gotForwardedHost)
+	}
+}
+
+// Every ordinary backend must keep seeing the browser's own Host: the
+// rewrite is strictly opt-in.
+func TestRouter_WithoutOriginHostPassesHostThrough(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotHost, gotOrigin string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost, gotOrigin = r.Host, r.Header.Get("Origin")
+	}))
+	defer backend.Close()
+
+	services := []config.ServiceConfig{
+		{ID: "hass", Prefix: "/hass", Target: backend.URL, StripPrefix: true},
+	}
+	rt := NewRouter(services, sm)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	req := httptest.NewRequest("GET", "/hass/states", nil)
+	req.Host = "tunnel.example.com"
+	req.Header.Set("Origin", "https://tunnel.example.com")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	rt.ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotHost != "tunnel.example.com" {
+		t.Errorf("backend saw Host = %q, want the browser's own", gotHost)
+	}
+	if gotOrigin != "https://tunnel.example.com" {
+		t.Errorf("backend saw Origin = %q, want it preserved", gotOrigin)
+	}
+}
+
+func TestRelocateRedirect(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		loc    string
+		want   string
+	}{
+		{"root goes back into the prefix", 303, "/", "/dsh/"},
+		{"root-absolute path is prefixed", 302, "/login", "/dsh/login"},
+		{"already prefixed is left alone", 303, "/dsh/x", "/dsh/x"},
+		{"bare prefix is left alone", 303, "/dsh", "/dsh"},
+		{"absolute URL is left alone", 302, "https://other.example/x", "https://other.example/x"},
+		{"protocol-relative is left alone", 302, "//other.example/x", "//other.example/x"},
+		{"relative target is left alone", 302, "sub/page", "sub/page"},
+		{"non-redirect status is left alone", 200, "/", "/"},
+	}
+	for _, tt := range tests {
+		resp := &http.Response{StatusCode: tt.status, Header: http.Header{}}
+		resp.Header.Set("Location", tt.loc)
+		relocateRedirect(resp, "/dsh")
+		if got := resp.Header.Get("Location"); got != tt.want {
+			t.Errorf("%s: Location = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

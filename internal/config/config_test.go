@@ -325,3 +325,24 @@ services:
 		}
 	}
 }
+
+func TestServiceConfig_ValidateOriginHost(t *testing.T) {
+	tests := []struct {
+		name       string
+		originHost string
+		wantErr    bool
+	}{
+		{"empty is the ordinary default", "", false},
+		{"host:port authority", "127.0.0.1:3080", false},
+		{"bare host", "harness.internal", false},
+		{"a URL is refused", "http://127.0.0.1:3080", true},
+		{"an authority with a path is refused", "127.0.0.1:3080/api", true},
+	}
+	for _, tt := range tests {
+		s := ServiceConfig{ID: "dsh", Prefix: "/dsh", Target: "http://127.0.0.1:3080", OriginHost: tt.originHost}
+		err := s.Validate()
+		if (err != nil) != tt.wantErr {
+			t.Errorf("%s: Validate() error = %v, wantErr = %v", tt.name, err, tt.wantErr)
+		}
+	}
+}

@@ -45,8 +45,11 @@ func (rt *Router) buildProxy(i int) {
 	stripPrefix := svc.StripPrefix
 	rootPaths := svc.RootPaths
 	forwardedFor := svc.SendsForwardedFor()
+	originHost := svc.OriginHost
 	svcID := svc.ID
 	proxy.Director = func(req *http.Request) {
+		// Captured before origDir, which is free to rewrite req.Host.
+		publicHost := req.Host
 		origDir(req)
 		// X-Forwarded-For is deliberately not set here: ReverseProxy
 		// appends the client IP itself after the Director runs, and doing
@@ -62,7 +65,23 @@ func (rt *Router) buildProxy(i int) {
 			req.Header["X-Forwarded-For"] = nil
 		}
 		req.Header.Set("X-Forwarded-Proto", "https")
-		req.Header.Set("X-Forwarded-Host", req.Host)
+		// Always the authority the browser actually asked for, even when
+		// originHost replaces the Host header below: this is the only place
+		// the public hostname survives, and an app-aware backend builds its
+		// absolute URLs from it.
+		req.Header.Set("X-Forwarded-Host", publicHost)
+		// See ServiceConfig.OriginHost: present the request as if it had
+		// arrived directly at the backend, so a Host-fenced API stops
+		// answering 403 through the tunnel. Origin and Sec-Fetch-Site go
+		// with it — left behind they'd name the public origin and
+		// contradict the Host we just wrote, which such a fence reads as a
+		// cross-origin request and refuses.
+		if originHost != "" {
+			req.Host = originHost
+			req.Header.Set("Host", originHost)
+			req.Header.Del("Origin")
+			req.Header.Del("Sec-Fetch-Site")
+		}
 		// De-facto standard header (used by Frigate, Home Assistant
 		// ingress, etc.) telling an app-aware backend what public
 		// prefix it's mounted under, so it can generate correct
@@ -84,6 +103,9 @@ func (rt *Router) buildProxy(i int) {
 		req.Header.Del("Accept-Encoding")
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if prefix != "" {
+			relocateRedirect(resp, prefix)
+		}
 		if prefix == "" || !isRewritableContentType(resp.Header.Get("Content-Type")) {
 			return nil
 		}
@@ -394,6 +416,37 @@ func rewriteAssetPaths(body []byte, prefix string) []byte {
 		}
 	}
 	return body
+}
+
+// relocateRedirect rewrites a backend's root-absolute Location header back
+// into the service's mount prefix: "/" -> "/dsh/", "/foo" -> "/dsh/foo".
+//
+// A backend that doesn't know it's mounted under a prefix redirects within
+// its own root, which through this proxy lands the browser on the dl_conn
+// dashboard instead of back in the app. The DeepSeek Harness token exchange
+// is the known case: it answers GET /dsh/?token=... with 303 Location: /,
+// so the browser gets the session cookie and then leaves the app.
+//
+// Only root-absolute targets are touched. An absolute URL naming another
+// origin is an intentional off-site redirect, and a relative target already
+// resolves against the current directory.
+func relocateRedirect(resp *http.Response, prefix string) {
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return
+	}
+	loc := resp.Header.Get("Location")
+	// "//host/path" is protocol-relative: another origin, not our root.
+	if !strings.HasPrefix(loc, "/") || strings.HasPrefix(loc, "//") {
+		return
+	}
+	if strings.HasPrefix(loc, prefix+"/") || loc == prefix {
+		return
+	}
+	if loc == "/" {
+		resp.Header.Set("Location", prefix+"/")
+		return
+	}
+	resp.Header.Set("Location", prefix+loc)
 }
 
 // matchPrefix finds the first service whose Prefix the path starts with,

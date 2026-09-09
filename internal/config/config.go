@@ -72,6 +72,31 @@ type ServiceConfig struct {
 	// backend's own config is out of reach; the backend then sees every
 	// request as coming from dl_conn itself.
 	ForwardedFor *bool `mapstructure:"forwardedFor"`
+	// OriginHost makes the proxy present this request to the backend as if it
+	// had arrived directly at the backend's own address: the Host header is
+	// replaced with this authority, and the browser's Origin and
+	// Sec-Fetch-Site headers are dropped.
+	//
+	// This exists for a backend that fences its API on the Host header to
+	// defend against DNS rebinding — the DeepSeek Harness (`dsh web`) is the
+	// known case: it accepts /api only when Host is loopback (or one of its
+	// --trusted-host authorities) and refuses anything whose Origin names a
+	// different origin. Behind this proxy the browser sends the public tunnel
+	// hostname in both, so every API call and the WebSocket upgrade get 403
+	// while the HTML itself loads fine.
+	//
+	// Naming the backend's own authority here satisfies that fence without
+	// pinning the tunnel hostname anywhere, which is what makes it work with
+	// the ephemeral trycloudflare.com URLs that change on every restart.
+	// Dropping Origin is safe for the same reason the backend accepts its
+	// absence: a cross-site request from a malicious page still fails, because
+	// reaching this proxy at all requires the dl_conn session cookie, which is
+	// SameSite and never attached to such a request.
+	//
+	// Use "host:port" (or bare "host"); the value must match what the backend
+	// considers its own authority. Empty means pass the browser's Host through
+	// unchanged, which is the correct default for every ordinary backend.
+	OriginHost string `mapstructure:"originHost"`
 }
 
 // SendsForwardedFor reports whether X-Forwarded-For should be passed to this
@@ -245,6 +270,14 @@ func (s *ServiceConfig) Validate() error {
 	for _, rp := range s.RootPaths {
 		if !strings.HasPrefix(rp, "/") || !strings.HasSuffix(rp, "/") || rp == "/" {
 			return fmt.Errorf("rootPath must be a directory path like /locales/: %s", rp)
+		}
+	}
+	if s.OriginHost != "" {
+		// A bare authority only: anything carrying a scheme or a path would
+		// silently produce a Host header the backend never matches, which
+		// surfaces later as an opaque 403 instead of a config error here.
+		if strings.Contains(s.OriginHost, "/") || strings.Contains(s.OriginHost, " ") {
+			return fmt.Errorf("originHost must be a bare host[:port] authority, not a URL: %s", s.OriginHost)
 		}
 	}
 	return nil
