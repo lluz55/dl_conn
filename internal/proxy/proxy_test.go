@@ -3,6 +3,7 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -63,10 +64,10 @@ func TestRouter_ServiceMatching(t *testing.T) {
 	rt := NewRouter(testServices(), nil)
 
 	tests := []struct {
-		name     string
-		path     string
-		referer  string
-		wantID   string
+		name      string
+		path      string
+		referer   string
+		wantID    string
 		wantMatch bool
 	}{
 		{"direct hass prefix", "/hass/api/websocket", "", "hass", true},
@@ -841,6 +842,105 @@ func TestRouter_WithoutOriginHostPassesHostThrough(t *testing.T) {
 	}
 	if gotOrigin != "https://tunnel.example.com" {
 		t.Errorf("backend saw Origin = %q, want it preserved", gotOrigin)
+	}
+}
+
+func TestRouter_BootstrapsLaunchSessionWithoutExposingToken(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	const token = "secret-launch-token"
+	var requests int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/" || r.URL.Query().Get("token") != token {
+			t.Errorf("redeem request = %q, want root with launch token", r.URL.String())
+		}
+		http.SetCookie(w, &http.Cookie{Name: "dsh-auth-test", Value: "signed", Path: "/", HttpOnly: true})
+		w.Header().Set("Location", "/")
+		w.WriteHeader(http.StatusSeeOther)
+	}))
+	defer backend.Close()
+
+	file := t.TempDir() + "/web-url"
+	if err := os.WriteFile(file, []byte(backend.URL+"/?token="+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	services := []config.ServiceConfig{{
+		ID: "dsh", Prefix: "/dsh", Target: backend.URL, StripPrefix: true,
+		LaunchTokenFile: file,
+	}}
+	rt := NewRouter(services, sm)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/dsh/", nil)
+	req.Header.Set("Accept", "text/html")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/dsh/" {
+		t.Fatalf("response = %d Location %q", w.Code, w.Header().Get("Location"))
+	}
+	if strings.Contains(w.Header().Get("Location"), token) || strings.Contains(w.Body.String(), token) {
+		t.Fatal("launch token leaked in public response")
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 2 { // dl_conn_svc plus the upstream browser-session cookie.
+		t.Fatalf("cookies = %d, want 2", len(cookies))
+	}
+	var got *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Name == "dsh-auth-test" {
+			got = cookie
+		}
+	}
+	if got == nil || got.Path != "/dsh/" || !got.Secure || !got.HttpOnly || got.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("sanitized dsh cookie = %#v", got)
+	}
+	if requests != 1 {
+		t.Fatalf("upstream requests = %d, want 1", requests)
+	}
+}
+
+func TestRouter_DoesNotBootstrapExistingLaunchSession(t *testing.T) {
+	sm := auth.NewSessionManager(time.Hour)
+	var requests int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	file := t.TempDir() + "/web-url"
+	if err := os.WriteFile(file, []byte(backend.URL+"/?token=secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRouter([]config.ServiceConfig{{
+		ID: "dsh", Prefix: "/dsh", Target: backend.URL, StripPrefix: true, LaunchTokenFile: file,
+	}}, sm)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/dsh/", nil)
+	req.Header.Set("Accept", "text/html")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	req.AddCookie(&http.Cookie{Name: "dsh-auth-existing", Value: "signed"})
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || requests != 1 {
+		t.Fatalf("response = %d, upstream requests = %d; want ordinary proxy request", w.Code, requests)
+	}
+}
+
+func TestRouter_LaunchBootstrapRequiresDLConnSession(t *testing.T) {
+	file := t.TempDir() + "/web-url"
+	if err := os.WriteFile(file, []byte("http://127.0.0.1:1/?token=secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRouter([]config.ServiceConfig{{
+		ID: "dsh", Prefix: "/dsh", Target: "http://127.0.0.1:1", LaunchTokenFile: file,
+	}}, auth.NewSessionManager(time.Hour))
+	req := httptest.NewRequest("GET", "/dsh/", nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }
 

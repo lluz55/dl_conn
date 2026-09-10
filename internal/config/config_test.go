@@ -326,6 +326,18 @@ services:
 	}
 }
 
+func TestServiceConfig_ValidateLaunchTokenFile(t *testing.T) {
+	base := ServiceConfig{ID: "dsh", Prefix: "/dsh", Target: "http://127.0.0.1:3080"}
+	base.LaunchTokenFile = "/run/dsh/web-url"
+	if err := base.Validate(); err != nil {
+		t.Fatalf("absolute launchTokenFile rejected: %v", err)
+	}
+	base.LaunchTokenFile = "run/dsh/web-url"
+	if err := base.Validate(); err == nil {
+		t.Fatal("relative launchTokenFile accepted")
+	}
+}
+
 func TestServiceConfig_ValidateOriginHost(t *testing.T) {
 	tests := []struct {
 		name       string

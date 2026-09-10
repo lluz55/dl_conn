@@ -6,6 +6,17 @@ type: log
 
 ## 2026-09-10
 
+- **Bootstrap automático e privado da sessão web do `dsh`.**
+  - `ServiceConfig.launchTokenFile` permite que o proxy leia a URL local de
+    lançamento somente após autenticar a sessão `dl_conn`, valide origem/path
+    contra o `target`, resgate o token no loopback e encaminhe apenas o cookie
+    assinado com escopo no prefixo do serviço.
+  - O token não passa pela Cloudflare nem aparece no navegador; a integração
+    falha fechada e não registra credenciais. A unidade systemd do `dsh` captura
+    sua linha de startup atomicamente em `/run/dsh/web-url` com modo restrito.
+  - Motivo: eliminar a cópia manual sem desativar a autenticação nativa de uma
+    interface capaz de executar comandos no host.
+
 - **Ferramentas de depuração no frontend SPA + recuperação de socket morto.**
   - Sintoma reportado: em alguns navegadores rígidos (qutebrowser), após um tempo
     de uso o backend "some" — nsec/npub válidos, sem erro no console. Firefox

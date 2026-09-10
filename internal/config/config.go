@@ -20,24 +20,24 @@ import (
 type NostrConfig struct {
 	Nsec            string   `mapstructure:"nsec"`
 	NsecFile        string   `mapstructure:"nsecFile"`
-	Relays            []string `mapstructure:"relays"`
-	AuthorizedNpubs   []string `mapstructure:"authorizedNpubs"`
-	FallbackNip04     bool      `mapstructure:"fallbackNip04"`
+	Relays          []string `mapstructure:"relays"`
+	AuthorizedNpubs []string `mapstructure:"authorizedNpubs"`
+	FallbackNip04   bool     `mapstructure:"fallbackNip04"`
 }
 
 // TunnelConfig holds Cloudflare Tunnel settings.
 type TunnelConfig struct {
-	ListenPort      int    `mapstructure:"listenPort"`
-	CloudflaredPath string `mapstructure:"cloudflaredPath"`
-	AutoStart       bool   `mapstructure:"autoStart"`
+	ListenPort        int           `mapstructure:"listenPort"`
+	CloudflaredPath   string        `mapstructure:"cloudflaredPath"`
+	AutoStart         bool          `mapstructure:"autoStart"`
 	InactivityTimeout time.Duration `mapstructure:"inactivityTimeout"`
 }
 
 // ServiceConfig describes a single proxied service.
 type ServiceConfig struct {
-	ID          string `mapstructure:"id"`
-	Name        string `mapstructure:"name"`
-	Icon        string `mapstructure:"icon"`
+	ID   string `mapstructure:"id"`
+	Name string `mapstructure:"name"`
+	Icon string `mapstructure:"icon"`
 	// Description is optional, free-form text shown under the service's name
 	// on the dashboard. Purely cosmetic — never used for routing.
 	Description string `mapstructure:"description"`
@@ -97,6 +97,12 @@ type ServiceConfig struct {
 	// considers its own authority. Empty means pass the browser's Host through
 	// unchanged, which is the correct default for every ordinary backend.
 	OriginHost string `mapstructure:"originHost"`
+	// LaunchTokenFile enables an authenticated, server-side browser-session
+	// bootstrap for services such as dsh. The file contains the local launch
+	// URL printed by the service (including its token). dl_conn reads and
+	// redeems it only after its own Zero-Trust session has been validated, so
+	// the token never crosses the public tunnel.
+	LaunchTokenFile string `mapstructure:"launchTokenFile"`
 }
 
 // SendsForwardedFor reports whether X-Forwarded-For should be passed to this
@@ -107,16 +113,16 @@ func (s *ServiceConfig) SendsForwardedFor() bool {
 
 // AuthConfig holds token and session TTLs.
 type AuthConfig struct {
-	TokenTTL    time.Duration `mapstructure:"tokenTTL"`
-	SessionTTL  time.Duration `mapstructure:"sessionTTL"`
+	TokenTTL   time.Duration `mapstructure:"tokenTTL"`
+	SessionTTL time.Duration `mapstructure:"sessionTTL"`
 }
 
 // TelemetryConfig holds host telemetry collection settings.
 type TelemetryConfig struct {
-	Enabled         bool          `mapstructure:"enabled"`
-	IntervalSeconds int           `mapstructure:"intervalSeconds"`
-	RetentionDays   int           `mapstructure:"retentionDays"`
-	ExposeViaNostr  bool          `mapstructure:"exposeViaNostr"`
+	Enabled         bool `mapstructure:"enabled"`
+	IntervalSeconds int  `mapstructure:"intervalSeconds"`
+	RetentionDays   int  `mapstructure:"retentionDays"`
+	ExposeViaNostr  bool `mapstructure:"exposeViaNostr"`
 }
 
 // Config is the top-level configuration.
@@ -194,7 +200,6 @@ func Load(configPath string) (*Config, error) {
 
 	return &cfg, nil
 }
-
 
 func parseDurations(cfg *Config) error {
 	// viper may store durations as raw strings; re-parse if needed
@@ -279,6 +284,9 @@ func (s *ServiceConfig) Validate() error {
 		if strings.Contains(s.OriginHost, "/") || strings.Contains(s.OriginHost, " ") {
 			return fmt.Errorf("originHost must be a bare host[:port] authority, not a URL: %s", s.OriginHost)
 		}
+	}
+	if s.LaunchTokenFile != "" && !filepath.IsAbs(s.LaunchTokenFile) {
+		return fmt.Errorf("launchTokenFile must be an absolute path: %s", s.LaunchTokenFile)
 	}
 	return nil
 }
@@ -385,8 +393,6 @@ func AddAuthorizedNpub(path, npub string) (bool, error) {
 
 	return true, nil
 }
-
-
 
 // findMapKey searches a YAML mapping node for a key with the given name and
 // returns both the key node and the value node. Returns (nil, nil) if not found.

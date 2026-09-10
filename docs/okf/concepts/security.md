@@ -61,5 +61,16 @@ completo em [SPEC.md §10.5](/SPEC.md#105-checklist-de-segurança).
 No daemon Go: `internal/nostr/client.go` (allowlist, verificação de assinatura,
 janela anti-replay) e `internal/config/config.go` (`authorizedNpubs`).
 
+## Bootstrap de sessão de serviços internos
+
+Serviços com uma segunda autenticação de lançamento, como `dsh web`, podem
+configurar `launchTokenFile`. O arquivo contém a URL local impressa pelo
+processo. Somente depois de validar a sessão Zero-Trust do `dl_conn`, o proxy
+confere que a URL pertence exatamente ao `target`, resgata o token via loopback
+e devolve apenas o cookie assinado, restrito ao prefixo do serviço e reforçado
+com `Secure`, `HttpOnly` e `SameSite=Strict`. O token não atravessa o túnel,
+não entra no histórico do navegador e nunca é registrado pelo `dl_conn`.
+Falhas de leitura, validação, resgate ou cookie fecham o acesso (`502`/`503`).
+
 Relacionado: [sync.md](sync.md), [environment.md](environment.md)
 (reprodutibilidade de build como parte da cadeia de suprimentos).

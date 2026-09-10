@@ -194,6 +194,11 @@ services:
   # A backend mounted under a prefix may also redirect to its own root
   # (`dsh` answers the token exchange with 303 Location: /); the proxy
   # rewrites such root-absolute Location headers back into the prefix.
+  #
+  # launchTokenFile optionally contains the local launch URL printed by the
+  # backend. After dl_conn authenticates the caller, it redeems that URL over
+  # loopback and forwards only a path-scoped secure cookie. The launch token
+  # therefore never appears in the public tunnel URL or browser history.
   - id: "dsh"
     name: "DeepSeek Harness"
     icon: "terminal"
@@ -202,6 +207,7 @@ services:
     stripPrefix: true
     websocket: true
     originHost: "127.0.0.1:3080"
+    launchTokenFile: "/run/dsh/web-url"
 
 # Host telemetry (CPU/RAM/disk/GPU/battery). Disabled by default.
 telemetry:

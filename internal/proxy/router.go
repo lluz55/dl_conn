@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"dl_conn/internal/auth"
 	"dl_conn/internal/config"
@@ -17,9 +19,9 @@ import (
 
 // Router multiplexes requests to configured services with Zero-Trust auth.
 type Router struct {
-	services  []config.ServiceConfig
-	sessions  *auth.SessionManager
-	proxies   map[string]*httputil.ReverseProxy
+	services []config.ServiceConfig
+	sessions *auth.SessionManager
+	proxies  map[string]*httputil.ReverseProxy
 }
 
 // NewRouter creates a new reverse proxy router.
@@ -224,6 +226,10 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.setServiceCookie(w, svc.ID)
 	}
 
+	if rt.bootstrapLaunchSession(w, r, svc) {
+		return
+	}
+
 	if target := trailingSlashRedirect(r, svc); target != "" {
 		http.Redirect(w, r, target, http.StatusFound)
 		return
@@ -238,6 +244,89 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+const maxLaunchURLBytes = 4096
+
+// bootstrapLaunchSession exchanges a service's process-launch token locally
+// and returns only its signed browser cookie to the authenticated caller.
+// Keeping the token on loopback prevents disclosure in Cloudflare and browser
+// URL logs. true means the response has been written.
+func (rt *Router) bootstrapLaunchSession(w http.ResponseWriter, r *http.Request, svc *config.ServiceConfig) bool {
+	if svc.LaunchTokenFile == "" || r.Method != http.MethodGet ||
+		(r.URL.Path != svc.Prefix && r.URL.Path != svc.Prefix+"/") ||
+		r.URL.RawQuery != "" || !isDocumentNavigation(r) || hasUpstreamAuthCookie(r) {
+		return false
+	}
+
+	data, err := os.ReadFile(svc.LaunchTokenFile)
+	if err != nil || len(data) == 0 || len(data) > maxLaunchURLBytes {
+		log.Printf("launch bootstrap failed: service=%s stage=read", svc.ID)
+		http.Error(w, "upstream authentication unavailable", http.StatusServiceUnavailable)
+		return true
+	}
+	launchURL, err := url.Parse(strings.TrimSpace(string(data)))
+	target, targetErr := url.Parse(svc.Target)
+	if err != nil || targetErr != nil || launchURL.Scheme != target.Scheme ||
+		launchURL.Host != target.Host || launchURL.Path != "/" || launchURL.Fragment != "" ||
+		len(launchURL.Query()["token"]) != 1 || launchURL.Query().Get("token") == "" {
+		log.Printf("launch bootstrap failed: service=%s stage=validate", svc.ID)
+		http.Error(w, "upstream authentication unavailable", http.StatusServiceUnavailable)
+		return true
+	}
+
+	client := &http.Client{
+		Timeout:       5 * time.Second,
+		Transport:     &http.Transport{Proxy: nil},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, launchURL.String(), nil)
+	if err != nil {
+		http.Error(w, "upstream authentication unavailable", http.StatusServiceUnavailable)
+		return true
+	}
+	if svc.OriginHost != "" {
+		req.Host = svc.OriginHost
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("launch bootstrap failed: service=%s stage=redeem", svc.ID)
+		http.Error(w, "upstream authentication unavailable", http.StatusBadGateway)
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		log.Printf("launch bootstrap failed: service=%s stage=redeem status=%d", svc.ID, resp.StatusCode)
+		http.Error(w, "upstream authentication unavailable", http.StatusBadGateway)
+		return true
+	}
+
+	cookies := resp.Cookies()
+	if len(cookies) != 1 || cookies[0].Domain != "" || !cookies[0].HttpOnly {
+		log.Printf("launch bootstrap failed: service=%s stage=cookie", svc.ID)
+		http.Error(w, "upstream authentication unavailable", http.StatusBadGateway)
+		return true
+	}
+	cookie := cookies[0]
+	cookie.Path = svc.Prefix + "/"
+	cookie.Secure = true
+	cookie.HttpOnly = true
+	cookie.SameSite = http.SameSiteStrictMode
+	http.SetCookie(w, cookie)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Location", svc.Prefix+"/")
+	w.WriteHeader(http.StatusSeeOther)
+	return true
+}
+
+func hasUpstreamAuthCookie(r *http.Request) bool {
+	for _, cookie := range r.Cookies() {
+		if strings.HasPrefix(cookie.Name, "dsh-auth-") && cookie.Value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // matchService decides which service a request belongs to. A request under a
