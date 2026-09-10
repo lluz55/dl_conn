@@ -16,7 +16,11 @@ export class NostrAuth {
     if (!window.nostr) {
       throw new Error("NIP-07 extension not found. Install Alby, nos2x, or Amber.");
     }
-    const pub = await window.nostr.getPublicKey();
+    // window.nostr.getPublicKey() returns raw hex per NIP-07; encode to
+    // bech32 npub so what we store/display matches what a daemon's
+    // authorizedNpubs list and the debug console both expect.
+    const pubHex = await window.nostr.getPublicKey();
+    const pub = this.nostrTools.nip19.npubEncode(pubHex);
     this.npub = pub;
     sessionStorage.setItem("dl_conn_npub", pub);
     return pub;
@@ -56,7 +60,11 @@ export class NostrAuth {
       throw new Error("nsec deve decodificar para 32 bytes");
     }
     this.sk = skHex;
-    const pub = this.nostrTools.getPublicKey(skHex);
+    const pubHex = this.nostrTools.getPublicKey(skHex);
+    // Store/display in bech32 (npub1...), not raw hex: it's what shows up in
+    // the debug console next to the daemon's authorizedNpubs entries, and a
+    // raw hex string there is easy to mistake for a broken/invalid identity.
+    const pub = this.nostrTools.nip19.npubEncode(pubHex);
     this.npub = pub;
     sessionStorage.setItem("dl_conn_npub", pub);
     return pub;
