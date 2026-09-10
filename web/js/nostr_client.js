@@ -32,6 +32,40 @@ export class NostrClient {
     this.pool = null;
     this.connectedRelays = new Set();
     this.sub = null;
+    /** url → relay object, so we can detach our hooks on teardown. */
+    this._relayObjects = new Map();
+    /** url → { connected, lastCloseReason?, lastConnectError? } for diagnostics. */
+    this.relayStates = new Map();
+    /** (level, area, message, detail?) sink, wired by the SPA debug console. */
+    this.debugListener = null;
+    /** Most recent publish() allSettled outcome, for the diagnostics panel. */
+    this.lastPublishResult = null;
+  }
+
+  /** @param {(level:string, area:string, message:string, detail?:string)=>void} fn */
+  setDebugListener(fn) {
+    this.debugListener = fn;
+  }
+
+  _debug(level, area, message, detail) {
+    if (typeof this.debugListener === "function") {
+      try { this.debugListener(level, area, message, detail); } catch { /* ignore */ }
+    }
+    // Last-resort textual trail even when no UI listener is attached.
+    if (level === "error") console.warn("[nostr:" + area + "] " + message, detail || "");
+  }
+
+  /** Per-relay liveness snapshot for the diagnostics panel. */
+  getRelayDiagnostics() {
+    return this.relays.map((url) => {
+      const st = this.relayStates.get(url) || {};
+      return { url, connected: this.connectedRelays.has(url), ...st };
+    });
+  }
+
+  /** True when at least one relay socket is still usable. */
+  isAlive() {
+    return this.connectedRelays.size > 0;
   }
 
   async connect() {
@@ -45,8 +79,26 @@ export class NostrClient {
           // ensureRelay(url, opts) connects the relay internally (await it)
           // and honors `connectionTimeout`; do NOT call relay.connect() after.
           const relay = await this.pool.ensureRelay(url, { connectionTimeout: 5000 });
+          this._relayObjects.set(url, relay);
+          // Surface a relay dropping its socket later. Idle/background-tab
+          // throttling (common in strict browsers) kills the WebSocket without
+          // the UI noticing, so the subscription silently stops delivering host
+          // replies. Catching it here is what turns "backend vanished, no
+          // error" into an actionable, visible signal.
+          relay.onclose = (reason) => {
+            this._debug("warn", "relay", "Relay fechou: " + url, String(reason || "sem motivo"));
+            const prev = this.relayStates.get(url) || {};
+            this.relayStates.set(url, { ...prev, connected: false, lastCloseReason: String(reason || "close") });
+            this.connectedRelays.delete(url);
+          };
+          relay.onnotice = (msg) => {
+            this._debug("info", "relay", "NOTICE de " + url + ": " + msg);
+          };
           return { url, relay };
-        } catch {
+        } catch (err) {
+          this._debug("error", "relay", "Falha ao conectar: " + url, err && err.message);
+          const prev = this.relayStates.get(url) || {};
+          this.relayStates.set(url, { ...prev, connected: false, lastConnectError: err && err.message });
           return null;
         }
       })
@@ -54,10 +106,14 @@ export class NostrClient {
 
     connResults.forEach((result) => {
       if (result.status === "fulfilled" && result.value) {
-        this.connectedRelays.add(result.value.url);
+        const { url } = result.value;
+        this.connectedRelays.add(url);
+        const prev = this.relayStates.get(url) || {};
+        this.relayStates.set(url, { ...prev, connected: true, lastConnectError: undefined });
       }
     });
 
+    this._debug("info", "relay", this.connectedRelays.size + "/" + this.relays.length + " relays conectados");
     return this.connectedRelays.size;
   }
 
@@ -88,13 +144,20 @@ export class NostrClient {
     // nostr-tools v2: SimplePool.publish(relays, event) returns an array of
     // Promises (one per relay), each resolving with the OK reason on success
     // and rejecting on failure. There is no `.subscribe()` on the result.
-    const pubPromises = this.pool.publish(Array.from(this.connectedRelays), event);
+    const targets = Array.from(this.connectedRelays);
+    if (targets.length === 0) {
+      this._debug("error", "publish", "Nenhum relay conectado para publicar o pedido de descoberta");
+    } else {
+      this._debug("info", "publish", "Publicando pedido de descoberta em " + targets.length + " relay(s)");
+    }
+    const pubPromises = this.pool.publish(targets, event);
 
     return new Promise((resolve) => {
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
+          this._debug("warn", "publish", "Timeout publicando o pedido (sem confirmação dos relays em 10s)");
           resolve({ status: "timeout" });
         }
       }, 10000);
@@ -103,6 +166,17 @@ export class NostrClient {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeout);
+        // Emit per-relay outcome so a single dead relay isn't lost in an
+        // aggregate "some succeeded" that still leaves the host unreachable.
+        results.forEach((r, i) => {
+          const url = targets[i];
+          if (r.status === "fulfilled") {
+            this._debug("ok", "publish", "Pedido aceito por " + url + " (reason: " + String(r.value || "ok") + ")");
+          } else {
+            this._debug("error", "publish", "Relay rejeitou o pedido: " + url, String(r.reason?.message || r.reason));
+          }
+        });
+        this.lastPublishResult = { targets, results };
         if (results.some((r) => r.status === "fulfilled")) {
           resolve({ status: "ok" });
         } else {
@@ -139,12 +213,22 @@ export class NostrClient {
       [{ kinds: [4, 1059], "#p": [ourPubHex], since }],
       {
         eoseTimeout: 30000,
+        oneose: () => {
+          this._debug("info", "sub", "EOSE recebido — backscroll inicial completo");
+        },
+        onclose: (reasons) => {
+          this._debug(
+            "warn", "sub", "Assinatura fechada pelo(s) relay(s)",
+            Array.isArray(reasons) ? reasons.filter(Boolean).join("; ") : String(reasons || "")
+          );
+        },
         onevent: (incomingEvent) => {
           if (incomingEvent.kind !== 4 && incomingEvent.kind !== 1059) return;
           // A DM reply is authored by the responder (host), with `#p` = our pub.
           if (incomingEvent.pubkey !== hostPubHex) {
             // Almost always a host_npub misconfiguration: the DM is addressed
             // to us but authored by someone other than the host we expect.
+            this._debug("warn", "sub", "DM ignorado: autor " + incomingEvent.pubkey + " != host " + hostPubHex);
             console.warn(
               "[nostr] DM ignorado: autor", incomingEvent.pubkey,
               "!= host esperado", hostPubHex
@@ -160,16 +244,19 @@ export class NostrClient {
                 // createdAt travels with the payload so the consumer can
                 // discard a reply older than one it already applied: relays
                 // deliver independently and give no ordering guarantee.
+                this._debug("ok", "sub", "Resposta do host decriptada (created_at " + (incomingEvent.created_at || 0) + ")");
                 responseChannel.dispatchEvent(
                   new CustomEvent("response", {
                     detail: { data, createdAt: incomingEvent.created_at || 0 },
                   })
                 );
               } catch (err) {
+                this._debug("error", "sub", "Resposta do host não é JSON válido", String(err && err.message || err));
                 console.warn("[nostr] resposta do host não é JSON válido:", err);
               }
             })
             .catch((err) => {
+              this._debug("error", "sub", "Falha ao decriptar DM do host (NIP-44)", String(err && err.message || err));
               console.warn("[nostr] falha ao decriptar DM do host (NIP-44):", err);
             });
         },
@@ -198,6 +285,12 @@ export class NostrClient {
   }
 
   disconnect() {
+    // Drop our onclose/onnotice hooks so the intentional teardown doesn't read
+    // as a spontaneous relay death in the debug log.
+    this._relayObjects.forEach((relay) => {
+      try { relay.onclose = null; relay.onnotice = null; } catch { /* ignore */ }
+    });
+    this._relayObjects.clear();
     if (this.pool) {
       // v2: destroy() closes every relay in the pool. close(relays) requires
       // an array of URLs — passing a string (as the old code did) throws.
@@ -208,5 +301,6 @@ export class NostrClient {
       this.sub.close();
       this.sub = null;
     }
+    this.connectedRelays.clear();
   }
 }

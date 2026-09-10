@@ -4,6 +4,42 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-10
+
+- **Ferramentas de depuração no frontend SPA + recuperação de socket morto.**
+  - Sintoma reportado: em alguns navegadores rígidos (qutebrowser), após um tempo
+    de uso o backend "some" — nsec/npub válidos, sem erro no console. Firefox
+    funciona. Causa raiz: `nostr-tools` `SimplePool` **não reconecta** relés
+    automaticamente; se o WebSocket de um relay morre (aba em segundo plano /
+    throttling de rede, comum em navegadores rígidos), a assinatura para de
+    entregar as respostas do host **silenciosamente**, enquanto a UI ainda acha
+    que o relay está conectado — não há exceção, não há `onclose` visível.
+  - Adicionado em `web/js/nostr_client.js`: `setDebugListener`/`_debug`, estado
+    por relay (`relayStates`), hooks `relay.onclose`/`relay.onnotice` que
+    registram o fechamento espontâneo e podam `connectedRelays`, resultado de
+    `publish()` **por relay** (não só agregado), `oneose`/`onclose` da
+    assinatura, e `getRelayDiagnostics()`/`isAlive()`.
+  - Adicionado em `web/app.js`: console de depuração (`#debug-section`, botão
+    `#btn-toggle-debug`), `pushDebug`/`renderDebug`, `logIdentity` (npub do
+    cliente vs host, dica de `authorizedNpubs`), `reconnectNostr()` (hard
+    reconnect: desconecta e re-roda `startNostr`), `runDiagnostics()`
+    (self-test manual: reprova relés, reporta liveness, recupera) e
+    `startNostrWatchdog()` que **detecta a transição todos-os-relés-mortos e
+    reconecta automaticamente** — convertendo o "backend sumiu sem erro" em um
+    evento visível + recuperação. Sem telemetry/tráfego extra: o watchdog só
+    inspeciona `connectedRelays` em memória e re-assina aos relés já
+    configurados.
+  - `web/index.html` + `web/style.css`: painel tokenizado (sem inline style, sem
+    gradiente, light/dark), botão no header, log monoespaçado colorido por nível.
+  - `web/tests/debug_tools_tests.js`: 43 asserções (lê `app.js`/`nostr_client.js`
+    como texto e grepa a instrumentação), seguindo o padrão de
+    `tunnel_rotation_tests.js`. `node web/tests/*`: 157/157 verde.
+  - Motivo de registrar: a causa raiz é um comportamento do
+    `SimplePool` (sem auto-reconnect) que afeta só navegadores que matam sockets
+    ociosos — não é bug de cripto nem de validação de chave, e é
+    indetectável sem o log. A recuperação automática é a correção, não só o log.
+
+
 Histórico de mudanças relevantes no bundle OKF (`docs/okf/`). Cada entrada:
 data, o que mudou, por quê.
 

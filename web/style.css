@@ -996,3 +996,37 @@ body {
   *, ::before, ::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .spinner { animation: none; }
 }
+
+/* ── Debug console ──────────────────────────────────────────── */
+.debug-log {
+  margin-top: var(--gap-sm);
+  max-height: 280px;
+  overflow-y: auto;
+  background-color: var(--color-surface-strong);
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-input);
+  padding: var(--gap-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.debug-row {
+  display: flex;
+  gap: var(--gap-xs);
+  flex-wrap: wrap;
+  padding: 1px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 50%, transparent);
+}
+.debug-row:last-child { border-bottom: none; }
+.debug-ts { flex: 0 0 auto; color: var(--color-on-surface-dim); }
+.debug-area {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+.debug-msg { flex: 1 1 auto; color: var(--color-on-surface); }
+.debug-detail { flex: 1 1 100%; color: var(--color-on-surface-dim); }
+.debug-error .debug-msg { color: var(--color-error); }
+.debug-warn .debug-msg { color: var(--color-warning); }
+.debug-ok .debug-msg { color: var(--color-success); }

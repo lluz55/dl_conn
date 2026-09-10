@@ -74,6 +74,11 @@ import { startScan } from './js/qr_scanner.js';
     telUptime: $("tel-uptime"),
     telLive: $("tel-live"),
     telUpdated: $("tel-updated"),
+    btnToggleDebug: $("btn-toggle-debug"),
+    debugSection: $("debug-section"),
+    debugLog: $("debug-log"),
+    btnRunDiagnostics: $("btn-run-diagnostics"),
+    btnClearDebug: $("btn-clear-debug"),
   };
 
   let expiryTimer = null;
@@ -82,6 +87,11 @@ import { startScan } from './js/qr_scanner.js';
   let liveTicker = null;
   let lastTelemetryAt = 0;
   let visibilityListenerAdded = false;
+  /** Debug console: capped ring buffer of structured log entries. */
+  const debugLog = [];
+  const DEBUG_MAX = 250;
+  let debugWatchdog = null;
+  let lastWatchdogAlive = true;
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
 
@@ -121,6 +131,7 @@ import { startScan } from './js/qr_scanner.js';
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
     if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
     if (liveTicker) { clearInterval(liveTicker); liveTicker = null; }
+    if (debugWatchdog) { clearInterval(debugWatchdog); debugWatchdog = null; }
   }
 
   function formatUptime(total) {
@@ -439,6 +450,9 @@ import { startScan } from './js/qr_scanner.js';
     el.autoLockTimeout.addEventListener("change", onAutoLockChange);
     el.btnEnableBiometricLater.addEventListener("click", onEnableBiometricLater);
     el.biometricPin.addEventListener("keypress", (e) => { if (e.key === "Enter") onEnableBiometricLater(); });
+    el.btnToggleDebug.addEventListener("click", onToggleDebug);
+    el.btnRunDiagnostics.addEventListener("click", runDiagnostics);
+    el.btnClearDebug.addEventListener("click", onClearDebug);
   }
 
   function setSessionStatus(text, tone) {
@@ -774,13 +788,17 @@ import { startScan } from './js/qr_scanner.js';
     // Disconnect previous session if any
     if (state.nostr) state.nostr.disconnect();
     state.nostr = new NostrClient(relayUrls, state.config.hostNpub);
+    // Route every client-side diagnostic through the debug console.
+    state.nostr.setDebugListener(pushDebug);
     try {
       const connected = await state.nostr.connect();
       if (connected === 0) {
         el.relayStatus.textContent = "Nenhum relay conectado. Verifique sua conexão.";
+        pushDebug("error", "nostr", "Nenhum relay conectado em startNostr");
         return;
       }
       el.relayStatus.textContent = connected + "/" + relayUrls.length + " relays conectados";
+      logIdentity();
       const responseChannel = state.nostr.subscribeToResponses(
         state.session.npub, state.session.sk
       );
@@ -796,18 +814,23 @@ import { startScan } from './js/qr_scanner.js';
       // answered yet.
       if (result && result.status === "timeout") {
         el.tunnelStatus.textContent = "Sem confirmação dos relays ao publicar o pedido.";
+        pushDebug("warn", "nostr", "Publicação do pedido expirou sem confirmação");
         return;
       }
       if (result && result.status === "failed") {
         el.tunnelStatus.textContent =
           "Falha ao publicar o pedido: " + (result.errors || []).join("; ");
+        pushDebug("error", "nostr", "Falha ao publicar pedido: " + (result.errors || []).join("; "));
         return;
       }
       el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
       startDiscoveryTimeout();
     } catch (err) {
       el.relayStatus.textContent = "Erro: " + err.message;
+      pushDebug("error", "nostr", "Exceção em startNostr: " + err.message, String(err));
     }
+    // Keep the liveness watchdog running as long as a connection is intended.
+    startNostrWatchdog();
   }
 
   /**
@@ -838,7 +861,10 @@ import { startScan } from './js/qr_scanner.js';
   function onDiscoveryResponse(detail) {
     const { data, createdAt } = detail || {};
     if (!data) return;
-    if (createdAt && createdAt < lastResponseAt) return;
+    if (createdAt && createdAt < lastResponseAt) {
+      pushDebug("warn", "sub", "Resposta ignorada por ser mais antiga que a já aplicada (created_at " + createdAt + " < " + lastResponseAt + ")");
+      return;
+    }
     lastResponseAt = createdAt || lastResponseAt;
     handleNostrResponse(data);
   }
@@ -956,6 +982,149 @@ import { startScan } from './js/qr_scanner.js';
     renderServices();
   }
 
+  /* ── Debug console ─────────────────────────────────────────── */
+
+  /**
+   * Append a structured entry to the debug ring buffer and, when the debug
+   * panel is open, re-render it. Levels: info | ok | warn | error. The buffer
+   * itself is always kept so a manual diagnosis can be triggered after the
+   * fact, even with the panel closed.
+   */
+  function pushDebug(level, area, msg, detail) {
+    const entry = { t: new Date(), level, area, msg, detail: detail || "" };
+    debugLog.push(entry);
+    if (debugLog.length > DEBUG_MAX) debugLog.shift();
+    if (el.debugSection && !el.debugSection.classList.contains("hidden")) renderDebug();
+  }
+
+  /** Rebuild the debug log DOM from the ring buffer (terminal-like). */
+  function renderDebug() {
+    if (!el.debugLog) return;
+    const frag = document.createDocumentFragment();
+    for (const e of debugLog) {
+      const row = elem("div", { class: "debug-row debug-" + e.level });
+      row.appendChild(elem("span", { class: "debug-ts" }, e.t.toLocaleTimeString()));
+      row.appendChild(elem("span", { class: "debug-area" }, e.area));
+      row.appendChild(elem("span", { class: "debug-msg" }, e.msg));
+      if (e.detail) row.appendChild(elem("span", { class: "debug-detail" }, " — " + e.detail));
+      frag.appendChild(row);
+    }
+    el.debugLog.replaceChildren(frag);
+    el.debugLog.scrollTop = el.debugLog.scrollHeight;
+  }
+
+  function onToggleDebug() {
+    const willShow = el.debugSection.classList.contains("hidden");
+    el.debugSection.classList.toggle("hidden", !willShow);
+    el.btnToggleDebug.setAttribute("aria-expanded", String(willShow));
+    if (willShow) renderDebug();
+  }
+
+  function onClearDebug() {
+    debugLog.length = 0;
+    if (el.debugLog) el.debugLog.replaceChildren();
+  }
+
+  /** Surface the active identity/host so a vanished backend is easy to triage. */
+  function logIdentity() {
+    const npub = state.session && state.session.npub;
+    const host = state.config.hostNpub;
+    pushDebug("info", "ident", "npub do cliente: " + (npub || "(indisponível)"));
+    pushDebug("info", "ident", "host npub configurado: " + (host || "(nenhum)"));
+    if (npub && host && npub === host) {
+      pushDebug("warn", "ident", "npub do cliente == host npub: a descoberta exige chaves distintas.");
+    }
+    pushDebug("info", "ident", "Sem resposta do host? Confirme que este npub está em authorizedNpubs do daemon.");
+  }
+
+  /**
+   * Hard-reconnect: tear down the current client and run startNostr again. This
+   * is the recovery path for a dead relay socket (the usual cause of the
+   * backend silently disappearing on strict browsers that throttle background
+   * tabs) — nostr-tools does not auto-reconnect, so we do it explicitly.
+   */
+  async function reconnectNostr() {
+    pushDebug("info", "nostr", "Reconexão solicitada: encerrando cliente e reiniciando Nostr");
+    if (state.nostr) {
+      try { state.nostr.disconnect(); } catch { /* ignore */ }
+    }
+    state.nostr = null;
+    // Accept a fresh reply from a new session instead of suppressing it as stale.
+    answeredGeneration = -1;
+    lastResponseAt = 0;
+    awaitingDiscovery = false;
+    if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null; }
+    try {
+      await startNostr();
+      pushDebug("ok", "nostr", "Reconexão concluída");
+    } catch (err) {
+      pushDebug("error", "nostr", "Reconexão falhou: " + (err && err.message), String(err));
+    }
+  }
+
+  /**
+   * Manual self-test reachable from the debug panel. Re-probes relays, reports
+   * per-relay liveness from the client, and recovers (reconnect or re-send) so
+   * the user gets a concrete verdict instead of a blank screen.
+   */
+  async function runDiagnostics() {
+    pushDebug("info", "diag", "Iniciando diagnóstico manual…");
+    try {
+      const results = await state.relayManager.testAll();
+      results.forEach((r) => pushDebug(
+        r.ok ? "ok" : "error", "relay",
+        (r.ok ? "OK " : "FALHA ") + r.url + (r.ok ? (" (" + r.rttMs + "ms)") : (" — " + (r.error || "sem detalhe")))
+      ));
+    } catch (e) {
+      pushDebug("error", "relay", "testAll falhou: " + (e && e.message), String(e));
+    }
+
+    if (state.nostr) {
+      const diag = state.nostr.getRelayDiagnostics();
+      pushDebug("info", "nostr", "Estado dos relays no cliente: " + diag.length + " monitorado(s)");
+      diag.forEach((d) => pushDebug(
+        d.connected ? "ok" : "warn", "nostr",
+        d.url + (d.connected ? " conectado" : " DESCONECTADO") +
+        (d.lastCloseReason ? (" — fechou: " + d.lastCloseReason) : "")
+      ));
+      if (!state.nostr.isAlive()) {
+        pushDebug("error", "nostr", "Nenhum relay vivo. Reconectando…");
+        await reconnectNostr();
+      } else {
+        pushDebug("ok", "nostr", "Ao menos um relay vivo. Reenviando pedido de descoberta…");
+        onRefreshServices();
+      }
+    } else {
+      pushDebug("warn", "nostr", "Cliente Nostr não inicializado. Reconectando…");
+      await reconnectNostr();
+    }
+    pushDebug("info", "diag", "Diagnóstico concluído.");
+  }
+
+  /**
+   * Background liveness watchdog. nostr-tools will not reconnect a dead relay
+   * socket, so after a while (background tab, suspend, flaky network) every
+   * relay can be gone while the UI still thinks it is connected — the backend
+   * "vanishes" with no console error. Detect the transition and auto-recover.
+   * Registered exactly once.
+   */
+  function startNostrWatchdog() {
+    if (debugWatchdog) return;
+    debugWatchdog = setInterval(() => {
+      if (!state.nostr || state.session.isLocked) {
+        if (!state.nostr) lastWatchdogAlive = true;
+        return;
+      }
+      const alive = state.nostr.isAlive();
+      if (!alive && lastWatchdogAlive) {
+        pushDebug("error", "watchdog",
+          "Todos os relays desconectados sem aviso (provável socket morto por aba em segundo plano). Reconectando automaticamente…");
+        reconnectNostr();
+      }
+      lastWatchdogAlive = alive;
+    }, 15000);
+  }
+
   /**
    * Re-send the discover request to the host so the service list and
    * health statuses are refreshed without reloading the whole page.
@@ -973,11 +1142,13 @@ import { startScan } from './js/qr_scanner.js';
       if (answeredGeneration >= generation) return;
       if (result && result.status === "timeout") {
         el.tunnelStatus.textContent = "Sem resposta do host ao atualizar.";
+        pushDebug("warn", "nostr", "Atualização expirou sem confirmação");
         return;
       }
       if (result && result.status === "failed") {
         el.tunnelStatus.textContent =
           "Falha ao atualizar: " + (result.errors || []).join("; ");
+        pushDebug("error", "nostr", "Falha ao atualizar: " + (result.errors || []).join("; "));
         return;
       }
       el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
