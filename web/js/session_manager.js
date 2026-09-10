@@ -1,5 +1,6 @@
 /* session_manager.js — In-memory session, auto-lock, brute-force protection */
 
+import * as nostrTools from '../vendor/nostr-tools-2.9.2.mjs';
 import {
   encryptVault,
   decryptVault,
@@ -180,7 +181,15 @@ export class SessionManager {
     try {
       const payload = await decryptVault(envelope, pin);
       this._sk = payload.sk;
-      this._npub = payload.npub;
+      // Vaults created before the client started encoding npub as bech32
+      // (see nostr_auth.js) still hold the raw 64-char hex pubkey. Normalize
+      // it here so identity display/comparison keeps working for every
+      // existing vault, not just ones created after that fix, and quietly
+      // re-save the vault so the correction sticks (no forced re-login).
+      this._npub = this._normalizeNpub(payload.npub);
+      if (this._npub !== payload.npub) {
+        this.saveVault({ npub: this._npub, sk: this._sk, relays: payload.relays }, pin).catch(() => { /* best effort */ });
+      }
       this._relays = payload.relays || [];
       this._locked = false;
       this._pendingBackend = true; // await first successful backend contact
@@ -193,6 +202,19 @@ export class SessionManager {
       this._recordFailedAttempt();
       throw new Error("Wrong PIN");
     }
+  }
+
+  /**
+   * Encode a raw 64-char hex pubkey as bech32 npub; a value already in
+   * npub1... form (or anything unexpected) is returned unchanged.
+   */
+  _normalizeNpub(npub) {
+    if (typeof npub === "string" && /^[0-9a-f]{64}$/i.test(npub)) {
+      try {
+        return nostrTools.nip19.npubEncode(npub.toLowerCase());
+      } catch { /* fall through and keep the original value */ }
+    }
+    return npub;
   }
 
   /* ── Unlock with biometrics ────────────────────────────────── */
