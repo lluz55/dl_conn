@@ -40,6 +40,14 @@ export class NostrClient {
     this.debugListener = null;
     /** Most recent publish() allSettled outcome, for the diagnostics panel. */
     this.lastPublishResult = null;
+    /**
+     * Sender's secret key, cached the first time it is handed to us (via
+     * sendDiscoverRequest/subscribeToResponses). connect() runs before either
+     * of those, but a relay's AUTH challenge can arrive any time afterwards,
+     * so the AUTH responder below reads this lazily instead of capturing it
+     * as a constructor/connect-time argument.
+     */
+    this._senderSk = null;
   }
 
   /** @param {(level:string, area:string, message:string, detail?:string)=>void} fn */
@@ -94,6 +102,26 @@ export class NostrClient {
           relay.onnotice = (msg) => {
             this._debug("info", "relay", "NOTICE de " + url + ": " + msg);
           };
+          // Some public relays now require NIP-42 AUTH before they will
+          // accept an EVENT publish (antispam on encrypted DMs). Without
+          // this handler the relay's AUTH challenge is received and simply
+          // dropped: the relay never sends OK for our publish, and
+          // pool.publish() hangs until our own 10s timeout - which reads
+          // as "host unreachable" even though the socket is fine and the
+          // subscription (read side) works.
+          relay._onauth = async (challenge) => {
+            this._debug("info", "relay", "AUTH solicitado por " + url);
+            if (!this._senderSk) {
+              this._debug("warn", "relay", "AUTH pendente sem chave disponivel ainda: " + url);
+              return;
+            }
+            try {
+              await relay.auth(async (authEvent) => this._signEvent(authEvent, this._senderSk));
+              this._debug("ok", "relay", "AUTH concluido em " + url);
+            } catch (err) {
+              this._debug("error", "relay", "Falha no AUTH em " + url, String(err && err.message || err));
+            }
+          };
           return { url, relay };
         } catch (err) {
           this._debug("error", "relay", "Falha ao conectar: " + url, err && err.message);
@@ -120,6 +148,10 @@ export class NostrClient {
   async sendDiscoverRequest(senderNpub, senderSk) {
     const { nip44 } = this.nostrTools;
     const senderPubHex = toHexPubKey(senderNpub);
+    // Cache the key so a relay's AUTH challenge (see connect()'s
+    // relay._onauth) can be answered whenever it arrives, not just before
+    // the first publish.
+    this._senderSk = senderSk;
 
     // Build and encrypt the request with NIP-44
     const req = { action: "discover_services" };
@@ -195,6 +227,10 @@ export class NostrClient {
     const responseChannel = new EventTarget();
     const hostPubHex = toHexPubKey(this.hostNpub);
     const ourPubHex = toHexPubKey(receiverNpub);
+    // See sendDiscoverRequest(): cache the key so a relay AUTH challenge can
+    // be answered even if subscribeToResponses() runs before the first
+    // discovery publish.
+    this._senderSk = receiverSk;
     // Relays replay stored DMs on subscribe, and every past discovery reply
     // carries the tunnel URL that was current when it was sent. cloudflared
     // mints a new hostname on each restart, so that backscroll is a stream of
@@ -288,9 +324,10 @@ export class NostrClient {
     // Drop our onclose/onnotice hooks so the intentional teardown doesn't read
     // as a spontaneous relay death in the debug log.
     this._relayObjects.forEach((relay) => {
-      try { relay.onclose = null; relay.onnotice = null; } catch { /* ignore */ }
+      try { relay.onclose = null; relay.onnotice = null; relay._onauth = null; } catch { /* ignore */ }
     });
     this._relayObjects.clear();
+    this._senderSk = null;
     if (this.pool) {
       // v2: destroy() closes every relay in the pool. close(relays) requires
       // an array of URLs — passing a string (as the old code did) throws.
