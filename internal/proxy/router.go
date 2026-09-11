@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"log"
 	"net/http"
@@ -53,6 +55,17 @@ func (rt *Router) buildProxy(i int) {
 		// Captured before origDir, which is free to rewrite req.Host.
 		publicHost := req.Host
 		origDir(req)
+		// Root-relative dsh APIs need a root-scoped cookie. Never forward
+		// that credential to another proxied service on the shared origin.
+		cookies := req.Cookies()
+		req.Header.Del("Cookie")
+		for _, cookie := range cookies {
+			if strings.HasPrefix(cookie.Name, "dsh-auth-") &&
+				(svc.LaunchTokenFile == "" || cookie.Name != launchCookieName(svc)) {
+				continue
+			}
+			req.AddCookie(cookie)
+		}
 		// X-Forwarded-For is deliberately not set here: ReverseProxy
 		// appends the client IP itself after the Director runs, and doing
 		// it here too produced "127.0.0.1:50586, 127.0.0.1" — RemoteAddr
@@ -255,7 +268,7 @@ const maxLaunchURLBytes = 4096
 func (rt *Router) bootstrapLaunchSession(w http.ResponseWriter, r *http.Request, svc *config.ServiceConfig) bool {
 	if svc.LaunchTokenFile == "" || r.Method != http.MethodGet ||
 		(r.URL.Path != svc.Prefix && r.URL.Path != svc.Prefix+"/") ||
-		r.URL.RawQuery != "" || !isDocumentNavigation(r) || hasUpstreamAuthCookie(r) {
+		r.URL.RawQuery != "" || !isDocumentNavigation(r) || hasBootstrappedLaunchSession(r, svc) {
 		return false
 	}
 
@@ -302,17 +315,37 @@ func (rt *Router) bootstrapLaunchSession(w http.ResponseWriter, r *http.Request,
 	}
 
 	cookies := resp.Cookies()
-	if len(cookies) != 1 || cookies[0].Domain != "" || !cookies[0].HttpOnly {
+	if len(cookies) != 1 || cookies[0].Name != launchCookieName(svc) || cookies[0].Domain != "" || !cookies[0].HttpOnly {
 		log.Printf("launch bootstrap failed: service=%s stage=cookie", svc.ID)
 		http.Error(w, "upstream authentication unavailable", http.StatusBadGateway)
 		return true
 	}
 	cookie := cookies[0]
-	cookie.Path = svc.Prefix + "/"
+	// Expire the former path-scoped cookie to avoid duplicate credentials.
+	http.SetCookie(w, &http.Cookie{Name: cookie.Name, Path: svc.Prefix + "/", MaxAge: -1, Secure: true, HttpOnly: true})
+	cookie.Path = "/"
 	cookie.Secure = true
 	cookie.HttpOnly = true
-	cookie.SameSite = http.SameSiteStrictMode
+	// Discovery starts on a different origin (the GitHub Pages frontend).
+	// Strict cookies are withheld during that cross-site redirect chain,
+	// causing another bootstrap on every GET. Lax permits top-level safe
+	// navigation while retaining protection against cross-site subrequests.
+	cookie.SameSite = http.SameSiteLaxMode
 	http.SetCookie(w, cookie)
+	// This marker distinguishes a root-scoped cookie issued by this proxy from
+	// the legacy prefix-scoped cookie. Without it, an existing legacy cookie on
+	// /dsh/ would suppress the migration bootstrap and root-relative APIs would
+	// continue to receive no credential.
+	http.SetCookie(w, &http.Cookie{
+		Name:     launchBootstrapCookieName(svc),
+		Value:    "1",
+		Path:     svc.Prefix + "/",
+		Expires:  cookie.Expires,
+		MaxAge:   cookie.MaxAge,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Location", svc.Prefix+"/")
@@ -320,13 +353,24 @@ func (rt *Router) bootstrapLaunchSession(w http.ResponseWriter, r *http.Request,
 	return true
 }
 
-func hasUpstreamAuthCookie(r *http.Request) bool {
-	for _, cookie := range r.Cookies() {
-		if strings.HasPrefix(cookie.Name, "dsh-auth-") && cookie.Value != "" {
-			return true
-		}
+func launchCookieName(svc *config.ServiceConfig) string {
+	authority := svc.OriginHost
+	if authority == "" {
+		u, _ := url.Parse(svc.Target)
+		authority = u.Host
 	}
-	return false
+	sum := sha256.Sum256([]byte(authority))
+	return "dsh-auth-" + base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func launchBootstrapCookieName(svc *config.ServiceConfig) string {
+	return "dl_conn_launch_" + strings.TrimPrefix(launchCookieName(svc), "dsh-auth-")
+}
+
+func hasBootstrappedLaunchSession(r *http.Request, svc *config.ServiceConfig) bool {
+	authCookie, authErr := r.Cookie(launchCookieName(svc))
+	marker, markerErr := r.Cookie(launchBootstrapCookieName(svc))
+	return authErr == nil && authCookie.Value != "" && markerErr == nil && marker.Value == "1"
 }
 
 // matchService decides which service a request belongs to. A request under a

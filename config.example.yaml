@@ -197,7 +197,9 @@ services:
   #
   # launchTokenFile optionally contains the local launch URL printed by the
   # backend. After dl_conn authenticates the caller, it redeems that URL over
-  # loopback and forwards only a path-scoped secure cookie. The launch token
+  # loopback and forwards only a secure cookie. Root-relative dsh APIs require
+  # Path=/; the proxy strips dsh auth cookies when forwarding to other services
+  # and uses a prefix-scoped marker to migrate legacy cookies. The launch token
   # therefore never appears in the public tunnel URL or browser history.
   - id: "dsh"
     name: "DeepSeek Harness"

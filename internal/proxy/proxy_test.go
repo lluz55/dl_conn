@@ -854,7 +854,7 @@ func TestRouter_BootstrapsLaunchSessionWithoutExposingToken(t *testing.T) {
 		if r.URL.Path != "/" || r.URL.Query().Get("token") != token {
 			t.Errorf("redeem request = %q, want root with launch token", r.URL.String())
 		}
-		http.SetCookie(w, &http.Cookie{Name: "dsh-auth-test", Value: "signed", Path: "/", HttpOnly: true})
+		http.SetCookie(w, &http.Cookie{Name: launchCookieName(&config.ServiceConfig{OriginHost: r.Host}), Value: "signed", Path: "/", HttpOnly: true})
 		w.Header().Set("Location", "/")
 		w.WriteHeader(http.StatusSeeOther)
 	}))
@@ -883,16 +883,16 @@ func TestRouter_BootstrapsLaunchSessionWithoutExposingToken(t *testing.T) {
 		t.Fatal("launch token leaked in public response")
 	}
 	cookies := w.Result().Cookies()
-	if len(cookies) != 2 { // dl_conn_svc plus the upstream browser-session cookie.
-		t.Fatalf("cookies = %d, want 2", len(cookies))
+	if len(cookies) != 4 { // Service hint, legacy deletion, root cookie, and bootstrap marker.
+		t.Fatalf("cookies = %d, want 4", len(cookies))
 	}
 	var got *http.Cookie
 	for _, cookie := range cookies {
-		if cookie.Name == "dsh-auth-test" {
+		if cookie.Name == launchCookieName(&services[0]) && cookie.MaxAge >= 0 {
 			got = cookie
 		}
 	}
-	if got == nil || got.Path != "/dsh/" || !got.Secure || !got.HttpOnly || got.SameSite != http.SameSiteStrictMode {
+	if got == nil || got.Path != "/" || !got.Secure || !got.HttpOnly || got.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("sanitized dsh cookie = %#v", got)
 	}
 	if requests != 1 {
@@ -919,7 +919,9 @@ func TestRouter_DoesNotBootstrapExistingLaunchSession(t *testing.T) {
 	req := httptest.NewRequest("GET", "/dsh/", nil)
 	req.Header.Set("Accept", "text/html")
 	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
-	req.AddCookie(&http.Cookie{Name: "dsh-auth-existing", Value: "signed"})
+	svc := &config.ServiceConfig{Target: backend.URL}
+	req.AddCookie(&http.Cookie{Name: launchCookieName(svc), Value: "signed"})
+	req.AddCookie(&http.Cookie{Name: launchBootstrapCookieName(svc), Value: "1"})
 	w := httptest.NewRecorder()
 	rt.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || requests != 1 {

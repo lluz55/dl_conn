@@ -4,6 +4,16 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-11
+
+- Corrigido o HTTP 401 das APIs absolutas do dsh: cookie de bootstrap agora
+  usa `Path=/`; cookies `dsh-auth-*` são removidos no encaminhamento a outros
+  serviços e validados pelo nome derivado da autoridade do backend. Testes
+  cobrem `/api/directoryPicker/list` e isolamento de cookies entre serviços.
+  Um marcador `HttpOnly` restrito ao prefixo força cookies antigos de `/dsh/`
+  a passarem pelo novo bootstrap, onde são expirados. A origem compartilhada
+  continua sendo uma limitação de isolamento no navegador.
+
 ## 2026-09-10
 
 - **Bootstrap automático e privado da sessão web do `dsh`.**

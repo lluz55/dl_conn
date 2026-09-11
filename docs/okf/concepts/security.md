@@ -67,8 +67,17 @@ Serviços com uma segunda autenticação de lançamento, como `dsh web`, podem
 configurar `launchTokenFile`. O arquivo contém a URL local impressa pelo
 processo. Somente depois de validar a sessão Zero-Trust do `dl_conn`, o proxy
 confere que a URL pertence exatamente ao `target`, resgata o token via loopback
-e devolve apenas o cookie assinado, restrito ao prefixo do serviço e reforçado
-com `Secure`, `HttpOnly` e `SameSite=Strict`. O token não atravessa o túnel,
+e devolve apenas o cookie assinado com `Path=/`, necessário para APIs absolutas
+como `/api/directoryPicker/list`, e reforçado com `Secure`, `HttpOnly` e
+`SameSite=Lax`. O proxy remove cookies `dsh-auth-*` antes de encaminhar a outros
+serviços; somente o serviço configurado recebe o cookie de sua autoridade.
+Um marcador `HttpOnly` restrito ao prefixo identifica que o cookie raiz já foi
+emitido pelo proxy; assim, cookies legados restritos a `/dsh/` não impedem a
+migração automática no próximo acesso. Isso reduz exposição entre backends,
+mas não isola aplicações que compartilham
+a mesma origem no navegador. `Lax` permite a navegação GET
+iniciada no frontend de outro domínio; `Strict` suprime o cookie nessa cadeia
+de redirecionamentos e causa bootstrap repetido. O token não atravessa o túnel,
 não entra no histórico do navegador e nunca é registrado pelo `dl_conn`.
 Falhas de leitura, validação, resgate ou cookie fecham o acesso (`502`/`503`).
 
