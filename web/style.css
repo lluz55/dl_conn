@@ -459,7 +459,14 @@ body {
   letter-spacing: -0.01em;
 }
 
-.card-head-actions { display: inline-flex; align-items: center; gap: var(--gap-xs); }
+.card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
 
 .card-sub { margin: 0; font-size: var(--fs-sm); color: var(--color-text-2); }
 
@@ -575,6 +582,11 @@ body {
 
 .btn-link-danger:hover { text-decoration: underline; }
 
+.btn-link-danger,
+.btn-link {
+  min-height: 44px;
+}
+
 .btn-link {
   background: transparent; border: none;
   color: var(--color-text-2); font-size: var(--fs-sm); font-weight: var(--fw-medium);
@@ -585,7 +597,7 @@ body {
 
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; padding: 0;
+  width: 44px; height: 44px; padding: 0;
   border: none; border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-2);
@@ -730,9 +742,9 @@ body {
 
 .dot-unknown { background-color: var(--color-text-3); opacity: 0.55; }
 
-.status { font-size: var(--fs-sm); color: var(--color-text-2); line-height: 1.45; }
+.status { margin: 0; font-size: var(--fs-sm); color: var(--color-text-2); line-height: 1.45; }
 
-.status-sub { font-size: var(--fs-sm); color: var(--color-text-3); }
+.status-sub { margin: 0; font-size: var(--fs-sm); color: var(--color-text-3); }
 
 .status-label {
   font-size: var(--fs-2xs);
@@ -919,7 +931,36 @@ body {
 .health-legend-item .dot { margin: 0; }
 
 /* ── Session card (NEW unified presentation) ──────────────────────── */
-.session-card { padding: 0; overflow: hidden; }
+.session-card { gap: 0; padding: 0; overflow: hidden; }
+
+/* The card drops its generic padding so the live footer can reach both
+   edges. Its setup side therefore owns the same inset and vertical rhythm
+   explicitly; without this, login/unlock controls collapse against the card
+   edge and against one another. */
+#session-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-lg);
+  min-width: 0;
+}
+
+#unlock-ui,
+#login-ui,
+#vault-save-prompt,
+#session-live {
+  min-width: 0;
+}
+
+#unlock-ui,
+#login-ui,
+#vault-save-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+}
+
+#session-live { display: flex; flex-direction: column; }
 
 .session-main {
   display: flex;
@@ -970,7 +1011,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--gap-md);
-  padding: var(--gap-sm) var(--gap-lg);
+  padding: var(--gap-md) var(--gap-lg);
   background: var(--color-surface-2);
   box-shadow: inset 0 1px 0 hsl(var(--shadow-tint) / 0.05);
 }
@@ -1046,7 +1087,15 @@ body {
 
 .service-card:hover { box-shadow: var(--elev-2); transform: translateY(-2px); }
 
-.service-top { display: flex; align-items: center; gap: var(--gap-sm); width: 100%; min-width: 0; }
+.service-top {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  width: 100%;
+  min-width: 0;
+}
+
+.service-top > .dot { margin-inline-start: auto; }
 
 .service-icon {
   position: relative;
@@ -1108,7 +1157,12 @@ body {
 .service-link:focus-visible { outline: none; box-shadow: var(--ring); }
 
 /* ── Relays ───────────────────────────────────────────────────────── */
-.relay-list { display: flex; flex-direction: column; gap: var(--gap-2xs); }
+.relay-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2xs);
+  min-width: 0;
+}
 
 .relay-row {
   display: grid;
@@ -1137,10 +1191,17 @@ body {
 .relay-badge.offline                      { background-color: var(--color-error);   opacity: 1; }
 
 .relay-url {
+  min-width: 0;
+  color: var(--color-text-2);
+}
+
+.relay-url-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  color: var(--color-text-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .relay-rtt {
@@ -1226,7 +1287,9 @@ body {
   white-space: normal;
 }
 
-.relay-nip11-tooltip:hover .tooltip { display: block; }
+.relay-nip11-tooltip:hover .tooltip,
+.relay-nip11-tooltip:focus .tooltip,
+.relay-nip11-tooltip:focus-within .tooltip { display: block; }
 
 /* ── Host telemetry ───────────────────────────────────────────────── */
 .telemetry-grid {
@@ -1239,7 +1302,10 @@ body {
 
 .telemetry-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
-.telemetry-item .status-value { font-size: var(--fs-md); }
+.telemetry-item .status-value {
+  font-size: var(--fs-md);
+  overflow-wrap: anywhere;
+}
 
 .live-badge {
   display: inline-flex; align-items: center; gap: var(--gap-xs);
@@ -1286,6 +1352,8 @@ body {
 .nsec-fallback .nsid-input { margin-top: var(--gap-sm); }
 
 .nsec-fallback .btn { margin-top: var(--gap-sm); }
+
+#vault-save-prompt > .status { margin: 0; }
 
 .btn-stack { display: flex; flex-direction: column; gap: var(--gap-sm); }
 
@@ -1339,6 +1407,9 @@ body {
 
 .qr-overlay-inner {
   width: min(420px, 100%);
+  max-height: calc(100dvh - (2 * var(--gap-md)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--gap-lg);
   background: var(--color-elevated);
   color: var(--color-text);
@@ -1358,6 +1429,7 @@ body {
 
 .qr-video {
   display: block; width: 100%;
+  max-height: min(420px, calc(100dvh - 10rem));
   aspect-ratio: 1 / 1;
   background: #000;
   border-radius: var(--radius-md);
@@ -1470,6 +1542,90 @@ body {
   min-width: 0;
   flex: 1;
 }
+
+/* Compact layouts need explicit reflow rules: controls keep usable touch
+   targets without forcing cards wider than the viewport. */
+@media (max-width: 639px) {
+  .app-container { padding-inline: var(--gap-sm); }
+
+  .header { flex-wrap: wrap; }
+  .header-actions { margin-inline-start: auto; }
+
+  .card { padding: var(--gap-md); }
+  .session-card { padding: 0; }
+  #session-setup { padding: var(--gap-md); }
+
+  .card-head { align-items: flex-start; flex-wrap: wrap; }
+  .card-head-actions { width: 100%; }
+
+  .pin-input-group:not(.pin-input-group--stack),
+  .relay-add-row {
+    flex-direction: column;
+  }
+  .pin-input-group .btn,
+  .relay-add-row .btn { width: 100%; }
+
+  .relay-row {
+    grid-template-columns: 10px minmax(0, 1fr) 44px 44px;
+    padding-inline: var(--gap-sm);
+  }
+  .relay-row > .relay-rtt { display: none; }
+
+  .relay-toggle {
+    width: 44px;
+    height: 44px;
+    background: transparent;
+    box-shadow: none;
+  }
+  .relay-toggle::after {
+    content: "";
+    position: absolute;
+    inset: 11px 2px;
+    z-index: 0;
+    border-radius: var(--radius-toggle);
+    background: var(--color-surface-3);
+    box-shadow: inset 0 1px 2px hsl(var(--shadow-tint) / 0.12);
+  }
+  .relay-toggle::before { top: 14px; left: 5px; z-index: 1; }
+  .relay-toggle.on { background: transparent; }
+  .relay-toggle.on::after { background: var(--color-primary); }
+
+  .relay-remove { width: 44px; height: 44px; }
+  .btn-sm,
+  .checkbox-row,
+  .nsec-fallback summary { min-height: 44px; }
+
+  .session-main { align-items: flex-start; flex-wrap: wrap; padding: var(--gap-md); }
+  .session-id { flex: 1; }
+  .session-state { margin-inline-start: 0; }
+
+  #auto-lock-section {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--gap-sm);
+    padding: var(--gap-md);
+  }
+  #auto-lock-section select.nsid-select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  #biometric-enroll { padding: var(--gap-md); }
+
+  .relay-summary {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+#biometric-enroll {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+#biometric-enroll .pin-input-group { width: 100%; min-width: 0; }
+
 /* stale telemetry: the pulsing green dot freezes to warning amber */
 .live-badge.is-stale .live-dot {
   background-color: var(--color-warning);

@@ -1665,11 +1665,13 @@ import { startScan } from './js/qr_scanner.js';
         encodeURIComponent(state.authToken || "") +
         "&redirect=" + encodeURIComponent(redirectPath);
       card.innerHTML =
+        '<div class="service-top">' +
         serviceIcon(svc.icon) +
-        statusDot(svc) +
         '<div class="service-meta">' +
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
         (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
+        "</div>" +
+        statusDot(svc) +
         "</div>" +
         '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
@@ -1680,7 +1682,11 @@ import { startScan } from './js/qr_scanner.js';
   function onToggleRelays() {
     const willShow = el.relayPanel.classList.contains("hidden");
     el.relayPanel.classList.toggle("hidden", !willShow);
+    el.btnToggleRelays.classList.toggle("on", willShow);
     el.btnToggleRelays.setAttribute("aria-expanded", String(willShow));
+    el.btnToggleRelays.setAttribute("aria-label", willShow
+      ? "Ocultar configuração de relays"
+      : "Mostrar configuração de relays");
   }
 
   async function onTestAllRelays() {
@@ -1747,8 +1753,11 @@ import { startScan } from './js/qr_scanner.js';
       const urlCell = elem("span", {
         class: "relay-url relay-nip11-tooltip",
         title: relay.url,
-      }, relay.url);
+      });
+      urlCell.appendChild(elem("span", { class: "relay-url-text" }, relay.url));
       if (result && result.nip11) {
+        urlCell.setAttribute("tabindex", "0");
+        urlCell.setAttribute("aria-label", relay.url + ". Detalhes NIP-11 disponíveis");
         urlCell.appendChild(buildNip11Tooltip(result.nip11));
       }
       row.appendChild(urlCell);
@@ -1856,8 +1865,13 @@ import { startScan } from './js/qr_scanner.js';
     el.app.classList.remove("hidden");
   }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    showApp();
-    init();
+  window.addEventListener("DOMContentLoaded", async () => {
+    try {
+      await init();
+    } finally {
+      // Keep the boot overlay until async configuration and the first stable
+      // login/unlock state are ready, avoiding an empty card and layout shift.
+      showApp();
+    }
   });
 })();
