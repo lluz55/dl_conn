@@ -278,6 +278,42 @@
           <div class="telemetry-item"><span class="status-label">Bateria</span><span class="status-value" id="tel-batt">—</span></div>
           <div class="telemetry-item"><span class="status-label">Uptime</span><span class="status-value" id="tel-uptime">—</span></div>
         </div>
+        <!-- Recent-history sparklines (client-side ring buffer, no backend
+             history endpoint exists yet — see docs/okf/log.md). Drawn as
+             plain inline SVG polylines updated from app.js; no charting
+             library, no CDN, CSP-compliant. -->
+        <div class="chart-row">
+          <div class="chart-card tone-primary">
+            <div class="chart-card-head">
+              <span class="chart-card-title">CPU (carga)</span>
+              <span class="chart-card-value" id="chart-cpu-value">—</span>
+            </div>
+            <svg class="sparkline" id="chart-cpu" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+              <polygon class="sparkline-fill" id="chart-cpu-fill" points=""></polygon>
+              <polyline class="sparkline-line" id="chart-cpu-line" points=""></polyline>
+            </svg>
+          </div>
+          <div class="chart-card tone-accent">
+            <div class="chart-card-head">
+              <span class="chart-card-title">RAM</span>
+              <span class="chart-card-value" id="chart-ram-value">—</span>
+            </div>
+            <svg class="sparkline" id="chart-ram" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+              <polygon class="sparkline-fill" id="chart-ram-fill" points=""></polygon>
+              <polyline class="sparkline-line" id="chart-ram-line" points=""></polyline>
+            </svg>
+          </div>
+          <div class="chart-card tone-info">
+            <div class="chart-card-head">
+              <span class="chart-card-title">Disco</span>
+              <span class="chart-card-value" id="chart-disk-value">—</span>
+            </div>
+            <svg class="sparkline" id="chart-disk" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+              <polygon class="sparkline-fill" id="chart-disk-fill" points=""></polygon>
+              <polyline class="sparkline-line" id="chart-disk-line" points=""></polyline>
+            </svg>
+          </div>
+        </div>
       </section>
 
       <!-- Services -->
@@ -293,27 +329,60 @@
             </button>
           </div>
         </div>
+        <div id="services-health" class="health-bar-wrap hidden">
+          <!-- Proportional strip drawn as SVG rects (x/width set from
+               app.js via setAttribute, same technique as the sparklines
+               below) so no inline `style` is ever touched — the page CSP
+               forbids style-src 'unsafe-inline'. -->
+          <svg class="health-bar" id="health-bar-svg" viewBox="0 0 100 8" preserveAspectRatio="none"
+               role="img" aria-label="Proporção de serviços ativos, inativos e não confirmados">
+            <rect class="health-seg seg-up" id="health-seg-up" x="0" y="0" width="0" height="8"></rect>
+            <rect class="health-seg seg-down" id="health-seg-down" x="0" y="0" width="0" height="8"></rect>
+            <rect class="health-seg seg-unknown" id="health-seg-unknown" x="0" y="0" width="0" height="8"></rect>
+          </svg>
+          <div class="health-legend">
+            <span class="health-legend-item"><span class="dot dot-good" aria-hidden="true"></span><span id="health-count-up">0 ativos</span></span>
+            <span class="health-legend-item"><span class="dot dot-bad" aria-hidden="true"></span><span id="health-count-down">0 inativos</span></span>
+            <span class="health-legend-item"><span class="dot dot-unknown" aria-hidden="true"></span><span id="health-count-unknown">0 aguardando</span></span>
+          </div>
+        </div>
         <div id="services-list" class="services-grid"></div>
       </section>
 
-      <!-- Status -->
+      <!-- Status: KPI overview (admin dashboard cards) -->
       <section id="status-section" class="card">
-        <div class="status-grid">
-          <div class="status-item">
-            <span class="status-label">Túnel</span>
-            <span id="tunnel-status" class="status-value" role="status">Aguardando túnel…</span>
+        <div class="card-head">
+          <h2>Visão geral</h2>
+          <svg class="icon" aria-hidden="true"><use href="#i-dashboard"></use></svg>
+        </div>
+        <div class="status-grid kpi-grid">
+          <div class="kpi-card tone-primary">
+            <span class="kpi-icon" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-cloud"></use></svg></span>
+            <div class="kpi-body status-item">
+              <span class="kpi-label status-label">Túnel</span>
+              <span id="tunnel-status" class="kpi-value status-value" role="status">Aguardando túnel…</span>
+            </div>
           </div>
-          <div class="status-item">
-            <span class="status-label">Expira em</span>
-            <span id="tunnel-expiry" class="status-value">—</span>
+          <div class="kpi-card tone-warning">
+            <span class="kpi-icon" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-timer"></use></svg></span>
+            <div class="kpi-body status-item">
+              <span class="kpi-label status-label">Expira em</span>
+              <span id="tunnel-expiry" class="kpi-value status-value">—</span>
+            </div>
           </div>
-          <div class="status-item">
-            <span class="status-label">Relays</span>
-            <span id="relay-status" class="status-value" role="status">—</span>
+          <div class="kpi-card tone-info">
+            <span class="kpi-icon" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-relays"></use></svg></span>
+            <div class="kpi-body status-item">
+              <span class="kpi-label status-label">Relays</span>
+              <span id="relay-status" class="kpi-value status-value" role="status">—</span>
+            </div>
           </div>
-          <div class="status-item">
-            <span class="status-label">Sessão</span>
-            <span id="session-status" class="status-value">—</span>
+          <div class="kpi-card tone-accent">
+            <span class="kpi-icon" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-shield"></use></svg></span>
+            <div class="kpi-body status-item">
+              <span class="kpi-label status-label">Sessão</span>
+              <span id="session-status" class="kpi-value status-value">—</span>
+            </div>
           </div>
         </div>
       </section>

@@ -55,5 +55,46 @@ login que só guarda a identidade não revela nada**. Por isso `onLoginNsec` cha
 `state.pendingIdentity` (esconder o card levaria junto os campos de PIN). Ver
 [tasks/10-nsec-session-start.md](../tasks/10-nsec-session-start.md).
 
-Relacionado: [theming.md](theming.md) (tokens, light/dark),
-[security.md](security.md) (CSP, cofre de chaves).
+## Dashboard analytics: KPIs, sparklines e barra de saúde dos serviços
+
+`#status-section` deixou de ser uma lista rasa de 4 pares label/valor
+(`.status-grid`) e passou a ser um grid de **cartões KPI** (`.kpi-grid` >
+`.kpi-card.tone-*`): cada métrica (Túnel/Expira em/Relays/Sessão) ganha um
+ícone-chip colorido e um tom de categorização (`tone-primary`/`tone-warning`/
+`tone-info`/`tone-accent`) só para leitura visual rápida — os `id`s
+(`tunnel-status`, `tunnel-expiry`, `relay-status`, `session-status`) e a
+lógica que os popula em `app.js` não mudaram, só ganharam a classe `kpi-value`
+além de `status-value`.
+
+`#host-telemetry-section` ganhou três **sparklines** (`.chart-row` >
+`.chart-card.tone-*` > `svg.sparkline`) para CPU (carga), RAM e Disco (o
+mountpoint mais cheio). Cada gráfico é um `<polyline>`/`<polygon>` SVG puro
+dentro de um `viewBox="0 0 100 36"`, redesenhado por `drawSparkline()` em
+`app.js` via `setAttribute("points", …)` — nunca `style`/`fill` inline, que a
+CSP (`style-src 'self'`, sem `'unsafe-inline'`) bloquearia. Os dados vêm de um
+**ring buffer client-side** (`cpuLoadHistory`/`ramPctHistory`/
+`diskPctHistory`, cap `CHART_HISTORY_MAX = 30`) alimentado a cada
+`fetchTelemetry()` — não existe endpoint de histórico no backend (só
+`Store.Latest()` em `internal/store/telemetry.go`), então o gráfico reseta a
+cada reload da aba e nunca mostra mais que os últimos ~5 minutos observados
+(30 amostras × polling de 10s).
+
+`#services-section` ganhou uma **barra de saúde proporcional**
+(`#services-health` > `svg.health-bar` com três `<rect>` — ativos/inativos/
+aguardando) mais a legenda com contagem. Mesma técnica dos sparklines: largura
+de cada `<rect>` é `x`/`width` calculados em `renderServicesHealth()` e
+aplicados via `setAttribute`, nunca `style.width`. É recalculada em todo
+`renderServices()`, então acompanha tanto a resposta do host quanto
+"Limpar lista".
+
+Nenhum desses três componentes introduz nova cor de status: reaproveitam
+`--color-success`/`--color-error`/`--color-on-surface-dim` (via `.dot-good`/
+`.dot-bad`/`.dot-unknown` já existentes) para ativo/inativo/desconhecido, e
+usam as variantes `-soft` (ver [theming.md](theming.md)) só como fundo dos
+cartões — a paleta ampliada (`accent`/`info`) é puramente decorativa/
+categorização, não duplica semântica de saúde.
+
+Relacionado: [theming.md](theming.md) (tokens, light/dark, paleta ampliada),
+[security.md](security.md) (CSP, cofre de chaves),
+[host-telemetry.md](host-telemetry.md) (coleta/persistência da telemetria que
+os sparklines consomem).

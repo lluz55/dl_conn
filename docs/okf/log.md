@@ -4,6 +4,40 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-12
+
+- **Modernização visual do SPA: dashboard admin com KPIs, sparklines e barra
+  de saúde dos serviços.**
+  - Paleta ampliada com dois tons de categorização puramente decorativos
+    (`--color-accent` roxo, `--color-info` ciano) e variantes `-soft` de
+    todos os tons de status/categoria via `color-mix(in srgb, …)` — sem
+    bloco extra por tema, porque `color-mix()` resolve `var()` em tempo de
+    uso e já herda a sobrescrita light/dark do tom base. Continua zero
+    gradiente (a política do projeto): todo tingimento é sólido.
+  - `#status-section` virou grid de cartões KPI (`.kpi-card.tone-*`) em vez
+    de 4 pares label/valor soltos; mesmos `id`s/lógica de população, só
+    ganharam ícone-chip e fundo tingido.
+  - Telemetria do host ganhou 3 sparklines (CPU/RAM/Disco) como SVG puro
+    (`<polyline>`/`<polygon>` num `viewBox` fixo, pontos escritos via
+    `setAttribute`) alimentadas por um ring buffer client-side de 30
+    amostras — não existe endpoint de histórico no backend
+    (`Store.Latest()` só devolve a amostra mais recente), então o gráfico é
+    efêmero por aba, não uma série histórica persistida.
+  - Lista de serviços ganhou uma barra de saúde proporcional
+    (ativos/inativos/aguardando) desenhada como três `<rect>` SVG com
+    `x`/`width` calculados em JS — mesma técnica dos sparklines.
+  - Motivo de registrar a técnica: a CSP do projeto (`style-src 'self'`,
+    sem `'unsafe-inline'`) proíbe `element.style.foo = …` **e**
+    `setAttribute("style", …)`, mas não a manipulação de atributos SVG
+    (`points`/`x`/`width`) nem de `class` — por isso todo o "charting" saiu
+    sem biblioteca nova e sem violar a CSP, escrevendo atributos SVG em vez
+    de estilo inline. Ver [web-frontend-layout.md](concepts/web-frontend-layout.md#dashboard-analytics-kpis-sparklines-e-barra-de-saúde-dos-serviços)
+    e [theming.md](concepts/theming.md#paleta-ampliada-para-o-dashboard-tons-de-categorização).
+  - Correção incidental: `setSessionStatus()` reatribuía `className` por
+    inteiro, o que teria descartado a nova classe `kpi-value` a cada
+    mudança de tom de sessão — trocado para `classList.add/remove`
+    cirúrgico do prefixo `status-*`.
+
 ## 2026-09-11
 
 - Corrigido o HTTP 401 das APIs absolutas do dsh: cookie de bootstrap agora

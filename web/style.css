@@ -18,6 +18,12 @@
   --color-primary:         #2563eb;
   --color-primary-hover:   #1d4ed8;
   --color-on-primary:      #ffffff;
+  --color-accent:          #7c3aed;
+  --color-accent-hover:    #6d28d9;
+  --color-on-accent:       #ffffff;
+  --color-info:            #0891b2;
+  --color-info-hover:      #0e7490;
+  --color-on-info:         #ffffff;
   --color-success:         #16a34a;
   --color-warning:         #b4831c;
   --color-error:           #dc2626;
@@ -27,6 +33,17 @@
   --shadow-card:           0 1px 2px var(--color-shadow), 0 1px 4px var(--color-shadow);
   --shadow-card-hover:     0 6px 16px var(--color-shadow), 0 2px 8px var(--color-shadow);
   --shadow-elev:           0 12px 28px var(--color-shadow);
+
+  /* soft tone washes for stat/KPI surfaces — derived from the tone colors
+     above via color-mix, so they auto-follow light/dark overrides of those
+     tokens without needing their own per-theme block (CSS custom properties
+     resolve var() lazily, at used-value time). Solid tints, never gradients. */
+  --color-primary-soft:    color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
+  --color-accent-soft:     color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+  --color-info-soft:       color-mix(in srgb, var(--color-info) 14%, var(--color-surface));
+  --color-success-soft:    color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+  --color-warning-soft:    color-mix(in srgb, var(--color-warning) 16%, var(--color-surface));
+  --color-error-soft:      color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
 
   /* shape */
   --radius-card:    18px;
@@ -77,6 +94,12 @@
     --color-primary:         #60a5fb;
     --color-primary-hover:   #93c5fd;
     --color-on-primary:      #0f172a;
+    --color-accent:          #a78bfa;
+    --color-accent-hover:    #c4b5fd;
+    --color-on-accent:       #1e1033;
+    --color-info:            #22d3ee;
+    --color-info-hover:      #67e8f9;
+    --color-on-info:         #052e33;
     --color-warning:         #fbbf24;
     --color-shadow:          rgba(0, 0, 0, 0.3);
   }
@@ -95,6 +118,12 @@
   --color-primary:         #60a5fb;
   --color-primary-hover:   #93c5fd;
   --color-on-primary:      #0f172a;
+  --color-accent:          #a78bfa;
+  --color-accent-hover:    #c4b5fd;
+  --color-on-accent:       #1e1033;
+  --color-info:            #22d3ee;
+  --color-info-hover:      #67e8f9;
+  --color-on-info:         #052e33;
   --color-warning:         #fbbf24;
   --color-shadow:          rgba(0, 0, 0, 0.3);
 }
@@ -111,6 +140,12 @@
   --color-primary:         #2563eb;
   --color-primary-hover:   #1d4ed8;
   --color-on-primary:      #ffffff;
+  --color-accent:          #7c3aed;
+  --color-accent-hover:    #6d28d9;
+  --color-on-accent:       #ffffff;
+  --color-info:            #0891b2;
+  --color-info-hover:      #0e7490;
+  --color-on-info:         #ffffff;
   --color-warning:         #b4831c;
   --color-shadow:          rgba(0, 0, 0, 0.06);
 }
@@ -312,6 +347,151 @@ body {
 
 .card > .status,
 .card > .status-sub { margin-bottom: 0; }
+
+/* ── KPI overview (admin dashboard stat cards) ────────────────
+   Each card carries a tone (primary/accent/info/success/warning) via a
+   modifier class, resolved to a soft tint background + solid icon chip. Tones
+   are purely decorative categorisation of the four metrics (tunnel/expiry/
+   relays/session), not a status semantics duplicate of dot-good/dot-bad. */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--gap-md);
+}
+
+.kpi-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: var(--gap-md);
+  border-radius: var(--radius-card);
+  border: var(--border-width) solid var(--color-outline);
+  background-color: var(--color-surface-strong);
+  min-width: 0;
+}
+
+.kpi-card.tone-primary { background-color: var(--color-primary-soft); border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-outline)); }
+.kpi-card.tone-accent  { background-color: var(--color-accent-soft);  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-outline)); }
+.kpi-card.tone-info    { background-color: var(--color-info-soft);    border-color: color-mix(in srgb, var(--color-info) 30%, var(--color-outline)); }
+.kpi-card.tone-success { background-color: var(--color-success-soft); border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-outline)); }
+.kpi-card.tone-warning { background-color: var(--color-warning-soft); border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-outline)); }
+
+.kpi-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-icon);
+  color: var(--color-on-primary);
+  background-color: var(--color-primary);
+}
+.kpi-card.tone-primary .kpi-icon { background-color: var(--color-primary); color: var(--color-on-primary); }
+.kpi-card.tone-accent  .kpi-icon { background-color: var(--color-accent);  color: var(--color-on-accent); }
+.kpi-card.tone-info    .kpi-icon { background-color: var(--color-info);    color: var(--color-on-info); }
+.kpi-card.tone-success .kpi-icon { background-color: var(--color-success); color: var(--color-on-primary); }
+.kpi-card.tone-warning .kpi-icon { background-color: var(--color-warning); color: var(--color-on-primary); }
+
+.kpi-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpi-label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-on-surface-dim);
+  opacity: 0.75;
+}
+.kpi-value {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--color-on-surface);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.kpi-sub {
+  font-size: var(--fs-xs);
+  color: var(--color-on-surface-dim);
+}
+
+/* ── Sparkline charts (telemetry history, inline SVG) ─────────
+   Drawn by app.js via SVG attribute updates (points/d), never via inline
+   `style` — CSP forbids style-src 'unsafe-inline'. Colors come from the tone
+   classes below so each metric reads at a glance. */
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap-md);
+  margin-top: var(--gap-sm);
+}
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--gap-sm) var(--gap-md);
+  border-radius: var(--radius-input);
+  background-color: var(--color-surface-strong);
+  border: var(--border-width) solid var(--color-outline);
+  min-width: 0;
+}
+.chart-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-xs);
+}
+.chart-card-title {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-on-surface-dim);
+  opacity: 0.75;
+}
+.chart-card-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-on-surface);
+}
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 36px;
+  overflow: visible;
+}
+.sparkline-fill { fill: color-mix(in srgb, currentColor 16%, transparent); stroke: none; }
+.sparkline-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chart-card.tone-primary .sparkline { color: var(--color-primary); }
+.chart-card.tone-accent  .sparkline { color: var(--color-accent); }
+.chart-card.tone-info    .sparkline { color: var(--color-info); }
+.chart-card.tone-warning .sparkline { color: var(--color-warning); }
+
+/* ── Services health bar (proportional up/down/unknown strip) ── */
+.health-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--gap-sm);
+}
+.health-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: var(--radius-toggle);
+  overflow: hidden;
+  background-color: var(--color-surface-strong);
+  border: var(--border-width) solid var(--color-outline);
+}
+.health-seg.seg-up      { fill: var(--color-success); }
+.health-seg.seg-down    { fill: var(--color-error); }
+.health-seg.seg-unknown { fill: var(--color-on-surface-dim); opacity: 0.4; }
+
+.health-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-md);
+  font-size: var(--fs-xs);
+  color: var(--color-on-surface-dim);
+}
+.health-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ── Hidden (utility, toggled by JS) ────────────────────────── */
 .hidden { display: none !important; }

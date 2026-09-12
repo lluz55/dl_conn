@@ -79,6 +79,22 @@ import { startScan } from './js/qr_scanner.js';
     debugLog: $("debug-log"),
     btnRunDiagnostics: $("btn-run-diagnostics"),
     btnClearDebug: $("btn-clear-debug"),
+    chartCpuValue: $("chart-cpu-value"),
+    chartCpuLine: $("chart-cpu-line"),
+    chartCpuFill: $("chart-cpu-fill"),
+    chartRamValue: $("chart-ram-value"),
+    chartRamLine: $("chart-ram-line"),
+    chartRamFill: $("chart-ram-fill"),
+    chartDiskValue: $("chart-disk-value"),
+    chartDiskLine: $("chart-disk-line"),
+    chartDiskFill: $("chart-disk-fill"),
+    servicesHealth: $("services-health"),
+    healthSegUp: $("health-seg-up"),
+    healthSegDown: $("health-seg-down"),
+    healthSegUnknown: $("health-seg-unknown"),
+    healthCountUp: $("health-count-up"),
+    healthCountDown: $("health-count-down"),
+    healthCountUnknown: $("health-count-unknown"),
   };
 
   let expiryTimer = null;
@@ -124,6 +140,18 @@ import { startScan } from './js/qr_scanner.js';
    * and by the per-row badge so the two never disagree about the same relay.
    */
   const SLOW_RELAY_MS = 600;
+
+  /**
+   * Client-side ring buffers backing the telemetry sparklines. There is no
+   * backend history endpoint (only `Latest()` in `internal/store`), so the
+   * charts only ever show what this tab has observed since it loaded — they
+   * reset on reload. Capped short so a stale tab doesn't render a chart
+   * spanning many silent hours as if it were continuous.
+   */
+  const CHART_HISTORY_MAX = 30;
+  const cpuLoadHistory = [];
+  const ramPctHistory = [];
+  const diskPctHistory = [];
 
   /** Stop everything the Live zone drives; called whenever it goes away. */
   function clearLiveTimers() {
@@ -172,14 +200,25 @@ import { startScan } from './js/qr_scanner.js';
       if (load1 != null) parts.push("load " + load1.toFixed(2));
       if (freqMHz != null) parts.push(freqMHz.toFixed(0) + " MHz");
       el.telCpu.textContent = parts.length ? parts.join(" · ") : "—";
+      // Guarded via typeof: telemetry_tests.js evaluates this function body
+      // in isolation (extractFunction + `new Function`) with only
+      // formatUptime/formatCapacity inlined, so pushChartSample/renderCharts
+      // are undeclared there. `typeof x === "function"` never throws on an
+      // undeclared identifier, unlike calling it directly would.
+      if (load1 != null && typeof pushChartSample === "function") pushChartSample(cpuLoadHistory, load1);
     }
+    let ramPct = null;
     if (el.telRam) {
       if (snap.memory) {
-        el.telRam.textContent = snap.memory.used_pct.toFixed(1) + "% (" + formatCapacity(snap.memory.used_mb) + " / " + formatCapacity(snap.memory.total_mb) + ")";
+        ramPct = snap.memory.used_pct;
+        el.telRam.textContent = ramPct.toFixed(1) + "% (" + formatCapacity(snap.memory.used_mb) + " / " + formatCapacity(snap.memory.total_mb) + ")";
       } else if (snap.ram_used_pct != null) {
-        el.telRam.textContent = snap.ram_used_pct.toFixed(1) + "% (" + formatCapacity(snap.ram_used_mb || 0) + " / " + formatCapacity(snap.ram_total_mb || 0) + ")";
+        ramPct = snap.ram_used_pct;
+        el.telRam.textContent = ramPct.toFixed(1) + "% (" + formatCapacity(snap.ram_used_mb || 0) + " / " + formatCapacity(snap.ram_total_mb || 0) + ")";
       } else el.telRam.textContent = "—";
+      if (ramPct != null && typeof pushChartSample === "function") pushChartSample(ramPctHistory, ramPct);
     }
+    let diskPct = null;
     if (el.telDisk) {
       if (snap.disks && snap.disks.length) {
         // Show every mountpoint, each with its capacity in the most readable
@@ -188,9 +227,15 @@ import { startScan } from './js/qr_scanner.js';
         el.telDisk.textContent = snap.disks.map(function (d) {
           return d.used_pct.toFixed(1) + "% (" + formatCapacity(d.used_mb) + " / " + formatCapacity(d.total_mb) + ") " + d.mountpoint;
         }).join(" · ");
+        // The sparkline tracks a single series: the busiest mountpoint, so a
+        // filling disk is the one that shows up regardless of how many
+        // others stay flat.
+        diskPct = snap.disks.reduce((max, d) => Math.max(max, d.used_pct), 0);
       } else if (snap.disk_used_pct != null) {
-        el.telDisk.textContent = snap.disk_used_pct.toFixed(1) + "% (" + formatCapacity(snap.disk_used_mb || 0) + " / " + formatCapacity(snap.disk_total_mb || 0) + ") " + (snap.mountpoint || "");
+        diskPct = snap.disk_used_pct;
+        el.telDisk.textContent = diskPct.toFixed(1) + "% (" + formatCapacity(snap.disk_used_mb || 0) + " / " + formatCapacity(snap.disk_total_mb || 0) + ") " + (snap.mountpoint || "");
       } else el.telDisk.textContent = "—";
+      if (diskPct != null && typeof pushChartSample === "function") pushChartSample(diskPctHistory, diskPct);
     }
     if (el.telGpu) {
       if (snap.gpu && (snap.gpu.temp_c != null || snap.gpu.util_pct != null)) {
@@ -211,6 +256,65 @@ import { startScan } from './js/qr_scanner.js';
       else el.telBatt.textContent = "—";
     }
     if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
+    if (typeof renderCharts === "function") renderCharts();
+  }
+
+  /** Append a sample to a ring buffer, dropping the oldest once it overflows. */
+  function pushChartSample(buffer, value) {
+    buffer.push(value);
+    if (buffer.length > CHART_HISTORY_MAX) buffer.shift();
+  }
+
+  /**
+   * Draw one sparkline: a filled area + line polyline scaled into the SVG's
+   * `viewBox="0 0 100 36"` box. Points are plain numbers set via
+   * `setAttribute`, never inline `style` (CSP: style-src has no
+   * 'unsafe-inline'). A single sample still draws a flat line so the chart
+   * never looks broken right after the first telemetry fetch.
+   */
+  function drawSparkline(lineEl, fillEl, values, opts) {
+    if (!lineEl || !values.length) return;
+    const max = opts && opts.max != null ? opts.max : Math.max(...values, 1);
+    const min = opts && opts.min != null ? opts.min : 0;
+    const span = Math.max(max - min, 0.0001);
+    const w = 100;
+    const h = 36;
+    const step = values.length > 1 ? w / (values.length - 1) : 0;
+    const coords = values.map((v, i) => {
+      const x = values.length > 1 ? i * step : w;
+      const clamped = Math.min(Math.max(v, min), max);
+      const y = h - ((clamped - min) / span) * h;
+      return x.toFixed(2) + "," + y.toFixed(2);
+    });
+    lineEl.setAttribute("points", coords.join(" "));
+    if (fillEl) {
+      const fillCoords = [coords[0].split(",")[0] + "," + h]
+        .concat(coords)
+        .concat([coords[coords.length - 1].split(",")[0] + "," + h]);
+      fillEl.setAttribute("points", fillCoords.join(" "));
+    }
+  }
+
+  /** Redraw every telemetry sparkline from its current ring buffer. */
+  function renderCharts() {
+    drawSparkline(el.chartCpuLine, el.chartCpuFill, cpuLoadHistory);
+    if (el.chartCpuValue) {
+      el.chartCpuValue.textContent = cpuLoadHistory.length
+        ? cpuLoadHistory[cpuLoadHistory.length - 1].toFixed(2)
+        : "—";
+    }
+    drawSparkline(el.chartRamLine, el.chartRamFill, ramPctHistory, { min: 0, max: 100 });
+    if (el.chartRamValue) {
+      el.chartRamValue.textContent = ramPctHistory.length
+        ? ramPctHistory[ramPctHistory.length - 1].toFixed(1) + "%"
+        : "—";
+    }
+    drawSparkline(el.chartDiskLine, el.chartDiskFill, diskPctHistory, { min: 0, max: 100 });
+    if (el.chartDiskValue) {
+      el.chartDiskValue.textContent = diskPctHistory.length
+        ? diskPctHistory[diskPctHistory.length - 1].toFixed(1) + "%"
+        : "—";
+    }
   }
 
   /**
@@ -458,7 +562,13 @@ import { startScan } from './js/qr_scanner.js';
   function setSessionStatus(text, tone) {
     if (!el.sessionStatus) return;
     el.sessionStatus.textContent = text;
-    el.sessionStatus.className = "status-value" + (tone ? " status-" + tone : "");
+    // Reassigning className outright would drop "kpi-value" (the element also
+    // lives inside a .kpi-card now), so only the status-* tone class is
+    // swapped in/out.
+    Array.from(el.sessionStatus.classList).forEach((c) => {
+      if (c.startsWith("status-") && c !== "status-value") el.sessionStatus.classList.remove(c);
+    });
+    if (tone) el.sessionStatus.classList.add("status-" + tone);
   }
 
   function onSessionEvent(event) {
@@ -1376,8 +1486,41 @@ import { startScan } from './js/qr_scanner.js';
     return '<span class="service-icon" aria-hidden="true">' + escapeHtml(clean) + '</span>';
   }
 
+  /**
+   * Draw the services health bar: a proportional strip of up/down/unknown
+   * segments plus the counts in the legend. Segment widths are plain numbers
+   * set via `setAttribute` on SVG `<rect>`s (same technique as the telemetry
+   * sparklines), never inline `style` — the CSP has no style-src
+   * 'unsafe-inline'. Hidden entirely when there is nothing to summarize.
+   */
+  function renderServicesHealth() {
+    if (!el.servicesHealth) return;
+    const total = state.services.length;
+    if (total === 0) {
+      el.servicesHealth.classList.add("hidden");
+      return;
+    }
+    let up = 0, down = 0, unknown = 0;
+    for (const svc of state.services) {
+      if (svc.status === "up") up++;
+      else if (svc.status === "down") down++;
+      else unknown++;
+    }
+    el.servicesHealth.classList.remove("hidden");
+    const upW = (up / total) * 100;
+    const downW = (down / total) * 100;
+    const unknownW = (unknown / total) * 100;
+    if (el.healthSegUp) { el.healthSegUp.setAttribute("x", "0"); el.healthSegUp.setAttribute("width", upW.toFixed(2)); }
+    if (el.healthSegDown) { el.healthSegDown.setAttribute("x", upW.toFixed(2)); el.healthSegDown.setAttribute("width", downW.toFixed(2)); }
+    if (el.healthSegUnknown) { el.healthSegUnknown.setAttribute("x", (upW + downW).toFixed(2)); el.healthSegUnknown.setAttribute("width", unknownW.toFixed(2)); }
+    if (el.healthCountUp) el.healthCountUp.textContent = up + (up === 1 ? " ativo" : " ativos");
+    if (el.healthCountDown) el.healthCountDown.textContent = down + (down === 1 ? " inativo" : " inativos");
+    if (el.healthCountUnknown) el.healthCountUnknown.textContent = unknown + " aguardando";
+  }
+
   function renderServices() {
     el.servicesList.innerHTML = "";
+    renderServicesHealth();
     if (!state.tunnelURL) return;
     if (state.services.length === 0) {
       el.servicesList.innerHTML =
