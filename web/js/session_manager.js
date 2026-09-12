@@ -292,10 +292,24 @@ export class SessionManager {
     if (this._locked) return;
     // If timeout is 0, auto-lock is disabled
     if (this._inactivityTimeoutMs === 0) return;
+    /** Wall-clock instant the current inactivity window opened; lets the UI
+     *  render an honest countdown without duplicating this timer. */
+    this._timerStartedAt = Date.now();
     this._timer = setTimeout(() => {
       this.lock();
       this._emit("auto-locked");
     }, this._inactivityTimeoutMs);
+  }
+
+  /**
+   * Seconds left before the inactivity timer fires, or null when the session
+   * is locked or auto-lock is disabled. Recomputed from the clock, not from
+   * accumulated ticks, so a backgrounded tab still reports the truth.
+   */
+  get secondsRemaining() {
+    if (this._locked || this._inactivityTimeoutMs === 0 || !this._timerStartedAt) return null;
+    const left = this._inactivityTimeoutMs - (Date.now() - this._timerStartedAt);
+    return Math.max(0, Math.ceil(left / 1000));
   }
 
   _clearTimer() {

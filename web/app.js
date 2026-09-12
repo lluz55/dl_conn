@@ -13,7 +13,6 @@ import { startScan } from './js/qr_scanner.js';
   const el = {
     app: $("app"),
     loading: $("loading"),
-    vaultSection: $("vault-section"),
     vaultStatus: $("vault-status"),
     unlockUi: $("unlock-ui"),
     unlockIdentity: $("unlock-identity"),
@@ -62,6 +61,16 @@ import { startScan } from './js/qr_scanner.js';
     autoLockSection: $("auto-lock-section"),
     autoLockTimeout: $("auto-lock-timeout"),
     autoLockStatus: $("auto-lock-status"),
+    sessionSetup: $("session-setup"),
+    sessionLive: $("session-live"),
+    sessionStatusText: $("session-status-text"),
+    sessionStatePill: $("session-state-pill"),
+    sessionNpub: $("session-npub"),
+    sessionIdenticon: $("session-identicon"),
+    countdownWrap: $("countdown-wrap"),
+    countdownRect: $("countdown-rect"),
+    countdownText: $("countdown-text"),
+    kpiSessionCountdown: $("kpi-session-countdown"),
     biometricEnroll: $("biometric-enroll"),
     biometricPin: $("biometric-pin"),
     btnEnableBiometricLater: $("btn-enable-biometric-later"),
@@ -463,6 +472,8 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   function showUnlockScreen() {
+    el.sessionSetup.classList.remove("hidden");
+    el.sessionLive.classList.add("hidden");
     el.unlockUi.classList.remove("hidden");
     el.loginUi.classList.add("hidden");
     el.vaultSavePrompt.classList.add("hidden");
@@ -476,7 +487,8 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   function showLoginScreen() {
-    el.vaultSection.classList.remove("hidden");
+    el.sessionSetup.classList.remove("hidden");
+    el.sessionLive.classList.add("hidden");
     el.unlockUi.classList.add("hidden");
     el.loginUi.classList.remove("hidden");
     el.loginNip07.classList.remove("hidden");
@@ -512,6 +524,7 @@ import { startScan } from './js/qr_scanner.js';
     const minutes = parseInt(el.autoLockTimeout.value, 10);
     state.session.setInactivityTimeout(minutes);
     updateAutoLockStatus(minutes);
+    renderCountdown();
   }
 
   function updateAutoLockStatus(minutes) {
@@ -561,7 +574,11 @@ import { startScan } from './js/qr_scanner.js';
 
   function setSessionStatus(text, tone) {
     if (!el.sessionStatus) return;
-    el.sessionStatus.textContent = text;
+    // #session-status is a wrapper around the human text and the live
+    // countdown (#kpi-session-countdown); write the text into the inner span
+    // so the ticker's sibling node is never clobbered by a state change.
+    const target = el.sessionStatusText || el.sessionStatus;
+    target.textContent = text;
     // Reassigning className outright would drop "kpi-value" (the element also
     // lives inside a .kpi-card now), so only the status-* tone class is
     // swapped in/out.
@@ -571,14 +588,108 @@ import { startScan } from './js/qr_scanner.js';
     if (tone) el.sessionStatus.classList.add("status-" + tone);
   }
 
+  /** Mirrors the KPI state onto the unified session card's pill. */
+  function setSessionPill(text, variant, dotClass) {
+    if (!el.sessionStatePill) return;
+    el.sessionStatePill.className = "pill session-state" + (variant ? " " + variant : "");
+    el.sessionStatePill.textContent = "";
+    if (dotClass) {
+      const dot = document.createElement("span");
+      dot.className = "dot " + dotClass;
+      dot.setAttribute("aria-hidden", "true");
+      el.sessionStatePill.appendChild(dot);
+    }
+    el.sessionStatePill.appendChild(document.createTextNode(text));
+  }
+
+  /** FNV-1a over the npub tail → 3×3 identicon, pure classes, CSP-safe. */
+  function buildIdenticon(node, npub) {
+    node.textContent = "";
+    let h = 2166136261;
+    const src = (npub || "dl_conn").slice(-24);
+    for (let i = 0; i < src.length; i++) {
+      h ^= src.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement("i");
+      const v = (h >> ((i % 8) * 3)) & 3;
+      if (v > 0) cell.className = "on-" + v;
+      node.appendChild(cell);
+    }
+  }
+
+  function renderSessionIdentity() {
+    const npub = (state.session && state.session.npub) || "";
+    if (el.sessionNpub) {
+      el.sessionNpub.textContent = npub ? truncateNpub(npub) : "—";
+      el.sessionNpub.setAttribute("title", npub || "Identidade ativa (npub)");
+    }
+    if (el.sessionIdenticon) buildIdenticon(el.sessionIdenticon, npub);
+  }
+
+  /* ── Auto-lock countdown (mirrors SessionManager's inactivity timer) ─ */
+
+  let countdownTimer = null;
+
+  function fmtCountdown(sec) {
+    const m = Math.floor(sec / 60);
+    const s = String(sec % 60).padStart(2, "0");
+    return m + ":" + s;
+  }
+
+  function startCountdownTicker() {
+    stopCountdownTicker();
+    countdownTimer = setInterval(renderCountdown, 1000);
+    renderCountdown();
+  }
+
+  function stopCountdownTicker() {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  function renderCountdown() {
+    if (!state.session) return;
+    const left = state.session.secondsRemaining;
+    const total = state.session.inactivityTimeoutMinutes * 60;
+    const live = left != null && total > 0;
+    if (el.kpiSessionCountdown) {
+      el.kpiSessionCountdown.textContent = live ? " · " + fmtCountdown(left) : "";
+      el.kpiSessionCountdown.classList.toggle("hidden", !live);
+    }
+    if (!el.countdownRect || !el.countdownText || !el.countdownWrap) return;
+    if (!live) {
+      // Locked, disabled or unavailable: full neutral bar, no ticking text.
+      el.countdownRect.setAttribute("width", "100");
+      el.countdownText.textContent = total === 0 && !state.session.isLocked ? "—" : "";
+      el.countdownWrap.classList.remove("is-warning", "is-danger");
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, (left / total) * 100));
+    el.countdownRect.setAttribute("width", String(pct));
+    el.countdownText.textContent = fmtCountdown(left);
+    el.countdownWrap.classList.toggle("is-warning", pct <= 33 && pct > 10);
+    el.countdownWrap.classList.toggle("is-danger", pct <= 10);
+  }
+
   function onSessionEvent(event) {
     if (event === "unlocked") {
-      // Keep the card up while an identity is still waiting to be saved —
-      // hiding it would take the PIN fields with it (see showSavePrompt).
-      if (!state.pendingIdentity) el.vaultSection.classList.add("hidden");
+      // The unified session card keeps the identity context on screen; the
+      // login/unlock sub-area steps aside for the live side (npub, state and
+      // countdown) — but stays while an identity is still waiting to be
+      // saved, hiding it would take the PIN fields with it (see
+      // showSavePrompt).
+      if (!state.pendingIdentity) el.sessionSetup.classList.add("hidden");
+      el.sessionLive.classList.remove("hidden");
+      renderSessionIdentity();
+      setSessionPill("Em espera", "p-warn");
       el.btnLockSession.classList.remove("hidden");
       el.autoLockSection.classList.remove("hidden");
       setSessionStatus("Em espera", "dim");
+      startCountdownTicker();
       // Reveal the Live column on authentication so the user sees connection
       // feedback (status rail) while the tunnel is discovered, instead of a
       // blank screen. Services populate when the host responds.
@@ -587,8 +698,10 @@ import { startScan } from './js/qr_scanner.js';
       startNostr();
     } else if (event === "pending") {
       setSessionStatus("Em espera", "dim");
+      setSessionPill("Em espera", "p-warn");
     } else if (event === "active") {
       setSessionStatus("Ativa", "ok");
+      setSessionPill("Ativa", "p-ok", "dot-good");
       startTelemetryPolling();
     } else if (event === "locked") {
       revokeServerSession();
@@ -596,11 +709,15 @@ import { startScan } from './js/qr_scanner.js';
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
+      el.sessionLive.classList.add("hidden");
+      el.sessionSetup.classList.remove("hidden");
+      setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
       clearLiveTimers();
+      stopCountdownTicker();
       el.tunnelStatus.textContent = "Aguardando túnel…";
       setSessionStatus("Bloqueada", "dim");
       // A locked session (manual or auto-lock) still has its vault on disk —
@@ -613,9 +730,12 @@ import { startScan } from './js/qr_scanner.js';
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
+      el.sessionLive.classList.add("hidden");
+      setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       clearLiveTimers();
+      stopCountdownTicker();
       setSessionStatus("Bloqueada", "dim");
       showLoginScreen();
     } else if (event === "auto-locked") {
@@ -698,9 +818,10 @@ import { startScan } from './js/qr_scanner.js';
     if (state.nostr) state.nostr.disconnect();
     state.session.wipe(); // vault + WebAuthn + brute-force + bio-pin (emite "wiped")
     // remove todo dl_conn_* que o wipe() não cobre (host_npub, npub, sk, ...)
-    // EXCETO dl_conn_theme: o tema claro/escuro deve sobreviver ao reset.
+    // EXCETO dl_conn_theme/dl_conn_palette: preferências de aparência devem
+    // sobreviver ao reset.
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("dl_conn_") && k !== "dl_conn_theme") localStorage.removeItem(k);
+      if (k.startsWith("dl_conn_") && k !== "dl_conn_theme" && k !== "dl_conn_palette") localStorage.removeItem(k);
     }
     for (const k of Object.keys(sessionStorage)) if (k.startsWith("dl_conn_")) sessionStorage.removeItem(k);
     // reinicia estado em memória
@@ -769,11 +890,11 @@ import { startScan } from './js/qr_scanner.js';
 
   /**
    * Offer the vault as a follow-up step to an already-open session: the login
-   * controls are done with, but #vault-section has to stay on screen for the
-   * PIN fields to be reachable.
+   * controls are done with, but the session card's setup side has to stay on
+   * screen for the PIN fields to be reachable.
    */
   function showSavePrompt() {
-    el.vaultSection.classList.remove("hidden");
+    el.sessionSetup.classList.remove("hidden");
     el.unlockUi.classList.add("hidden");
     el.loginUi.classList.remove("hidden");
     el.loginNip07.classList.add("hidden");
@@ -789,7 +910,7 @@ import { startScan } from './js/qr_scanner.js';
     el.loginNip07.classList.remove("hidden");
     el.btnScanQr.classList.remove("hidden");
     if (el.nsecFallback) el.nsecFallback.classList.remove("hidden");
-    el.vaultSection.classList.add("hidden");
+    el.sessionSetup.classList.add("hidden");
   }
 
   let _qrStop = null;
@@ -1707,14 +1828,20 @@ import { startScan } from './js/qr_scanner.js';
     const saved = localStorage.getItem("dl_conn_theme") || "system";
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const isDark = saved === "dark" || (saved === "system" && prefersDark);
-    document.body.setAttribute("data-theme", isDark ? "dark" : "light");
+    // Tokens live on the root element (see style.css palette blocks), so the
+    // attributes are set on <html>, not <body>. The palette attribute must
+    // always exist: every dark block is scoped [data-palette=…][data-theme=dark].
+    const root = document.documentElement;
+    root.setAttribute("data-theme", isDark ? "dark" : "light");
+    root.setAttribute("data-palette", localStorage.getItem("dl_conn_palette") || "azure");
     el.themeToggle.innerHTML = themeIcon(isDark);
   }
 
   function toggleTheme() {
-    const current = document.body.getAttribute("data-theme");
+    const root = document.documentElement;
+    const current = root.getAttribute("data-theme");
     const next = current === "dark" ? "light" : "dark";
-    document.body.setAttribute("data-theme", next);
+    root.setAttribute("data-theme", next);
     localStorage.setItem("dl_conn_theme", next);
     el.themeToggle.innerHTML = themeIcon(next === "dark");
   }
