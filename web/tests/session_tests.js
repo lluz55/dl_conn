@@ -169,4 +169,7 @@ assert(localStorage.getItem("dl_conn_theme") === "dark", "dl_conn_theme preserve
 assert(localStorage.getItem("dl_conn_host_npub") === null, "dl_conn_host_npub removed on clear all");
 
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");
-if (failed > 0) process.exit(1);
+// The unlock tests arm SessionManager's real 15-minute inactivity timer,
+// which keeps node's event loop alive long after this synchronous run ends.
+// Exit with the verdict instead of waiting for a timer nobody needs.
+process.exit(failed > 0 ? 1 : 0);

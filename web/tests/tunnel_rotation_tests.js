@@ -41,7 +41,7 @@ console.log("\n== Out-of-order replies are discarded ==");
 
 assert(/addEventListener\("response",\s*\(e\)\s*=>\s*onDiscoveryResponse\(e\.detail\)\)/.test(appJs),
   "the response listener routes through the recency guard");
-assert(/createdAt\s*<\s*lastResponseAt\)\s*return;/.test(appJs),
+assert(/createdAt\s*<\s*lastResponseAt\)\s*\{[^{}]*?return;/.test(appJs),
   "a reply older than the one already applied is dropped");
 assert(/lastResponseAt\s*=\s*createdAt/.test(appJs),
   "applying a reply advances the recency watermark");
