@@ -98,3 +98,33 @@ Relacionado: [theming.md](theming.md) (tokens, light/dark, paleta ampliada),
 [security.md](security.md) (CSP, cofre de chaves),
 [host-telemetry.md](host-telemetry.md) (coleta/persistência da telemetria que
 os sparklines consomem).
+
+## Cartão de sessão unificado (redesign definitivo — Fase 15)
+
+O redesign fundiu os três cartões que falavam da sessão (`#vault-section`,
+`#auto-lock-section` e o valor "Sessão" do rail de status) em **um único
+cartão**: `#vault-section` é agora `.card.session-card` com dois lados —
+
+- `#session-setup`: login/desbloqueio (NIP-07, QR, nsec, prompt de cofre),
+  ocultado quando a sessão abre — **exceto** com `state.pendingIdentity`,
+  mesma regra antiga (esconder levaria os campos de PIN junto);
+- `#session-live`: identidade (`#session-identicon` 3×3 derivado do npub por
+  FNV-1a + `#session-npub` truncado), pill de estado (`#session-state-pill`,
+  variantes `.p-ok`/`.p-warn` com dot), e `#auto-lock-section` reencarnado
+  como `.session-foot` com a **contagem regressiva viva** — barra SVG
+  (`#countdown-rect`, largura via `setAttribute`, técnica CSP-safe dos
+  sparklines) que congela em âmbar/vermelho nos últimos 33%/10% via classes
+  `.is-warning`/`.is-danger` no `.countdown-track`.
+
+Os `id`s antigos (`auto-lock-timeout`, `auto-lock-status`, `biometric-*`)
+sobreviveram; `auto-lock-status` virou o `kpi-sub` do cartão "Sessão" na
+Visão geral, e o valor do KPI ganha o tempo restante como sufixo
+(`#kpi-session-countdown`, "Ativa · 14:32"). O tick vem de um getter aditivo
+`SessionManager.secondsRemaining` — janela de inatividade ancorada em
+relógio (`_timerStartedAt`), então uma aba em segundo plano mostra a verdade
+quando acorda; nenhum timer foi duplicado. A paleta/tema passaram a viver em
+`<html>` (`data-palette`/`data-theme`, ver [theming.md](theming.md)).
+
+Os cartões do protótipo (`test.html`) que não têm equivalente dinâmico (file
+browser, editor, galerias de exemplo) ficaram de fora — o que migrou foi o
+sistema visual, não as demos.

@@ -6,6 +6,39 @@ type: log
 
 ## 2026-09-12
 
+- **Redesign definitivo do SPA: o protótipo aprovado virou produção (Fase 15).**
+  `web/style.css` foi reescrito a partir do CSS do protótipo — 4 palettes
+  (`azure`/`evergreen`/`ember`/`iris`) × light/dark declaradas como
+  `data-palette`/`data-theme` no `<html>`, profundidade em camadas
+  (escada `--elev-*` com matiz por tema via `--shadow-tint`) substituindo as
+  hairlines, tipografia em três famílias **auto-hospedadas**
+  (`web/vendor/fonts/`, subsets latin woff2 — a CSP não admite CDN, e o
+  daemon ganhou `mime.AddExtensionType(".woff2")` + `font-src 'self'`
+  espelhado no `spaCSP` de `cmd/dl_conn/main.go` porque este é obrigado a
+  acompanhar o `<meta>` do `index.html`). O cartão de sessão unificou
+  identidade + estado + auto-lock com contagem regressiva alimentada pelo
+  getter aditivo `SessionManager.secondsRemaining` (janela ancorada em
+  relógio, nenhum timer duplicado). Motivo de registrar: é a troca de tema de
+  maior superfície desde o app; o contrato de que **blocos dark são sempre
+  compostos** (`[data-palette][data-theme]`) e de que os `id`s vistos por
+  `app.js`/testes precisaram sobreviver à reescrita do markup está documentado
+  em [concepts/theming.md](concepts/theming.md) e
+  [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md); rastreio
+  em [tasks/15-web-redesign.md](tasks/15-web-redesign.md).
+  - Armadilha descoberta na depuração do protótipo: a sequência
+    estrela-barra **dentro do texto de um comentário CSS fecha o comentário
+    cedo** e faz o parser engolir a regra seguinte inteira (foi o `:root` do
+    próprio protótipo, vítima de `--color-*/--gap-*` escrito em comentário).
+    Regra prática: nunca curinga adjacente a barra em comentário.
+  - Dois testes que estavam vermelhos/pendurados antes desta fase e foram
+    consertados junto: `session_tests.js` não terminava (o `setTimeout` de
+    15 min do SessionManager segura o event loop — agora `process.exit` com
+    o veredito) e o regex de recency-guard do `tunnel_rotation_tests.js`
+    não casava com o bloco `pushDebug`+`return` real do `app.js`.
+  - Política de lint confirmada na prática: o `golangci-lint` do repo carrega
+    41 findings pré-existentes (HEAD = working tree); esta fase não adicionou
+    nenhum, e dívida alheia ao escopo não foi tocada.
+
 - **Modernização visual do SPA: dashboard admin com KPIs, sparklines e barra
   de saúde dos serviços.**
   - Paleta ampliada com dois tons de categorização puramente decorativos

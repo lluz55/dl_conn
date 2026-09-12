@@ -25,8 +25,8 @@ Para a especificação-fonte completa, ver [SPEC.md](/SPEC.md).
 | [protocol.md](concepts/protocol.md) | `protocol` | Kinds Nostr, payload protobuf, versionamento de schema (espelha `shared/PROTOCOL.md`) |
 | [security.md](concepts/security.md) | `security` | Gestão de chaves por plataforma, NIP-44, modelo de confiança dos relays |
 | [ui-adaptive.md](concepts/ui-adaptive.md) | `architecture-decision` | Breakpoints, navegação por form factor, requisitos de UX mobile/tablet/desktop |
-| [theming.md](concepts/theming.md) | `architecture-decision` | Sistema de tokens de tema, Material You, light/dark obrigatórios |
-| [web-frontend-layout.md](concepts/web-frontend-layout.md) | `architecture-decision` | Layout do SPA `web/`: zonas Setup × Live por fase (`data-phase`), duas colunas em desktop; dashboard de KPIs/sparklines/barra de saúde |
+| [theming.md](concepts/theming.md) | `architecture-decision` | Design tokens do SPA: 4 palettes × light/dark via `data-palette`/`data-theme` no `<html>`, elevações em camadas, fontes auto-hospedadas |
+| [web-frontend-layout.md](concepts/web-frontend-layout.md) | `architecture-decision` | Layout do SPA `web/`: zonas Setup × Live por fase (`data-phase`), duas colunas em desktop; dashboard de KPIs/sparklines/barra de saúde; cartão de sessão unificado |
 | [i18n.md](concepts/i18n.md) | `architecture-decision` | i18n desde a fundação (pt/en), `.arb`, nunca string hardcoded |
 | [performance.md](concepts/performance.md) | `architecture-decision` | Orçamentos de performance e como os scripts de checagem os aplicam |
 | [testing.md](concepts/testing.md) | `testing` | Onde cada camada de teste vive, convenção de nomes, armadilha `pumpAndSettle()` × spinner indeterminado |
