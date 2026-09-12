@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -40,6 +41,11 @@ var (
 )
 
 func init() {
+	// The SPA self-hosts its woff2 subsets (see web/vendor/fonts/); register
+	// the type explicitly so the daemon's file server labels them correctly
+	// regardless of what the host's /etc/mime.types knows.
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "path to YAML config file")
 	rootCmd.PersistentFlags().StringVar(&nsecOverride, "nsec", "", "override Nostr nsec")
 	rootCmd.PersistentFlags().StringVar(&nsecFile, "nsec-file", "", "path to Nostr nsec secret file")
@@ -389,6 +395,7 @@ const spaCSP = "default-src 'self'; " +
 	"style-src 'self'; " +
 	"img-src 'self' data: blob:; " +
 	"media-src 'self' blob:; " +
+	"font-src 'self'; " +
 	"connect-src 'self' https: wss:; " +
 	"form-action 'self'; " +
 	"frame-ancestors 'none'; " +
