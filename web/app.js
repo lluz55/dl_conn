@@ -67,6 +67,10 @@ import { startScan } from './js/qr_scanner.js';
     sessionStatePill: $("session-state-pill"),
     sessionNpub: $("session-npub"),
     sessionIdenticon: $("session-identicon"),
+    sessionPendingIcon: $("session-pending-icon"),
+    sessionDiscoveryNote: $("session-discovery-note"),
+    sessionNip44Pill: $("session-nip44-pill"),
+    vaultStatePill: $("vault-state-pill"),
     countdownWrap: $("countdown-wrap"),
     countdownRect: $("countdown-rect"),
     countdownText: $("countdown-text"),
@@ -471,6 +475,25 @@ import { startScan } from './js/qr_scanner.js';
     else showLoginScreen();
   }
 
+  /**
+   * Mirrors the KPI-style state pill onto the still-locked/logged-out card
+   * head, matching the prototype's session-summary composition where the
+   * card always shows a pill ("sem sessão" / "Bloqueada") next to the title
+   * instead of a bare icon.
+   */
+  function setVaultStatePill(text, variant, dotClass) {
+    if (!el.vaultStatePill) return;
+    el.vaultStatePill.className = "pill" + (variant ? " " + variant : "");
+    el.vaultStatePill.textContent = "";
+    if (dotClass) {
+      const dot = document.createElement("span");
+      dot.className = "dot " + dotClass;
+      dot.setAttribute("aria-hidden", "true");
+      el.vaultStatePill.appendChild(dot);
+    }
+    el.vaultStatePill.appendChild(document.createTextNode(text));
+  }
+
   function showUnlockScreen() {
     el.sessionSetup.classList.remove("hidden");
     el.sessionLive.classList.add("hidden");
@@ -478,6 +501,7 @@ import { startScan } from './js/qr_scanner.js';
     el.loginUi.classList.add("hidden");
     el.vaultSavePrompt.classList.add("hidden");
     el.hostNpubSection.classList.add("hidden");
+    setVaultStatePill("bloqueada", "p-warn", "dot-warn");
     const hint = state.session.getVaultHint();
     el.unlockIdentity.textContent = hint ? "Identidade salva: " + hint : "";
     el.vaultStatus.textContent = "Vault bloqueado. Desbloqueie para continuar.";
@@ -495,6 +519,7 @@ import { startScan } from './js/qr_scanner.js';
     el.btnScanQr.classList.remove("hidden");
     if (el.nsecFallback) el.nsecFallback.classList.remove("hidden");
     el.vaultSavePrompt.classList.add("hidden");
+    setVaultStatePill("sem sessão", "p-warn", "dot-warn");
     el.vaultStatus.textContent = "Nenhuma identidade salva. Faca login abaixo.";
   }
 
@@ -595,7 +620,10 @@ import { startScan } from './js/qr_scanner.js';
     el.sessionStatePill.textContent = "";
     if (dotClass) {
       const dot = document.createElement("span");
-      dot.className = "dot " + dotClass;
+      // "live-dot" is the pulsing indicator (matches the prototype's pending
+      // pill); every other dot is a static status color and keeps the base
+      // "dot" class.
+      dot.className = dotClass === "live-dot" ? "live-dot" : "dot " + dotClass;
       dot.setAttribute("aria-hidden", "true");
       el.sessionStatePill.appendChild(dot);
     }
@@ -626,6 +654,20 @@ import { startScan } from './js/qr_scanner.js';
       el.sessionNpub.setAttribute("title", npub || "Identidade ativa (npub)");
     }
     if (el.sessionIdenticon) buildIdenticon(el.sessionIdenticon, npub);
+  }
+
+  /**
+   * Mirrors the prototype's dedicated "aguardando host" composition: while
+   * the key is unlocked but the daemon has not answered the discovery DM yet
+   * (SessionManager's "pending" window), the identicon steps aside for a
+   * relay icon tile and the card explains what is happening instead of just
+   * showing an npub with a differently colored pill.
+   */
+  function setSessionPendingVisual(isPending) {
+    if (el.sessionIdenticon) el.sessionIdenticon.classList.toggle("hidden", isPending);
+    if (el.sessionPendingIcon) el.sessionPendingIcon.classList.toggle("hidden", !isPending);
+    if (el.sessionDiscoveryNote) el.sessionDiscoveryNote.classList.toggle("hidden", !isPending);
+    if (el.sessionNip44Pill) el.sessionNip44Pill.classList.toggle("hidden", !isPending);
   }
 
   /* ── Auto-lock countdown (mirrors SessionManager's inactivity timer) ─ */
@@ -685,7 +727,8 @@ import { startScan } from './js/qr_scanner.js';
       if (!state.pendingIdentity) el.sessionSetup.classList.add("hidden");
       el.sessionLive.classList.remove("hidden");
       renderSessionIdentity();
-      setSessionPill("Em espera", "p-warn");
+      setSessionPendingVisual(true);
+      setSessionPill("Em espera", "p-warn", "live-dot");
       el.btnLockSession.classList.remove("hidden");
       el.autoLockSection.classList.remove("hidden");
       setSessionStatus("Em espera", "dim");
@@ -698,9 +741,11 @@ import { startScan } from './js/qr_scanner.js';
       startNostr();
     } else if (event === "pending") {
       setSessionStatus("Em espera", "dim");
-      setSessionPill("Em espera", "p-warn");
+      setSessionPendingVisual(true);
+      setSessionPill("Em espera", "p-warn", "live-dot");
     } else if (event === "active") {
       setSessionStatus("Ativa", "ok");
+      setSessionPendingVisual(false);
       setSessionPill("Ativa", "p-ok", "dot-good");
       startTelemetryPolling();
     } else if (event === "locked") {
@@ -711,6 +756,7 @@ import { startScan } from './js/qr_scanner.js';
       el.autoLockSection.classList.add("hidden");
       el.sessionLive.classList.add("hidden");
       el.sessionSetup.classList.remove("hidden");
+      setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
@@ -731,6 +777,7 @@ import { startScan } from './js/qr_scanner.js';
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
       el.sessionLive.classList.add("hidden");
+      setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
@@ -1396,7 +1443,7 @@ import { startScan } from './js/qr_scanner.js';
    * yet ("unknown") or that failed its probe ("down") is shown accordingly, so
    * the dashboard never claims something is live before it answered.
    */
-  function statusDot(svc) {
+  function statusDot(svc, baseClass) {
     const status = svc.status === "up" || svc.status === "down"
       ? svc.status
       : "unknown";
@@ -1405,13 +1452,15 @@ import { startScan } from './js/qr_scanner.js';
       down: { cls: "dot-bad", title: "Inativo" },
       unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
     }[status];
-    return '<span class="dot ' + meta.cls + '" title="' + escapeHtml(meta.title) +
-      '" data-status="' + status + '"></span>';
+    const cls = (baseClass || "dot") + " " + meta.cls;
+    return '<span class="' + cls + '" title="' + escapeHtml(meta.title) +
+      '" data-status="' + status + '" aria-hidden="true"></span>';
   }
 
-  function serviceIcon(icon) {
+  function serviceIcon(icon, dotHtml) {
+    const dot = dotHtml || "";
     if (!icon) {
-      return '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-package"></use></svg></span>';
+      return '<span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg>' + dot + "</span>";
     }
     const clean = String(icon).trim();
     const normalized = clean.toLowerCase().replace(/^#?i-/, "");
@@ -1601,10 +1650,10 @@ import { startScan } from './js/qr_scanner.js';
     };
     const target = aliases[normalized] || normalized;
     if (document.getElementById("i-" + target)) {
-      return '<span class="service-icon" aria-hidden="true"><svg class="icon"><use href="#i-' + escapeHtml(target) + '"></use></svg></span>';
+      return '<span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-' + escapeHtml(target) + '"></use></svg>' + dot + "</span>";
     }
     // Fallback: render as text/emoji if it is a unicode character or non-sprite icon
-    return '<span class="service-icon" aria-hidden="true">' + escapeHtml(clean) + '</span>';
+    return '<span class="service-icon">' + escapeHtml(clean) + dot + "</span>";
   }
 
   /**
@@ -1666,12 +1715,11 @@ import { startScan } from './js/qr_scanner.js';
         "&redirect=" + encodeURIComponent(redirectPath);
       card.innerHTML =
         '<div class="service-top">' +
-        serviceIcon(svc.icon) +
+        serviceIcon(svc.icon, statusDot(svc, "svc-dot")) +
         '<div class="service-meta">' +
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
         (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
         "</div>" +
-        statusDot(svc) +
         "</div>" +
         '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';

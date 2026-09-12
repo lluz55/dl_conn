@@ -128,3 +128,37 @@ quando acorda; nenhum timer foi duplicado. A paleta/tema passaram a viver em
 Os cartões do protótipo (`test.html`) que não têm equivalente dinâmico (file
 browser, editor, galerias de exemplo) ficaram de fora — o que migrou foi o
 sistema visual, não as demos.
+
+### Paridade de estados com o protótipo aprovado
+
+A primeira migração (Fase 15) levou o vocabulário visual (`.session-main`,
+`.session-foot`, pills, identicon) mas deixou dois estados do cartão de
+sessão com composição mais pobre que o protótipo:
+
+- **Bloqueada / sem sessão** (`#session-setup` visível): o `.card-head`
+  ganhou um `.pill` (`#vault-state-pill`, "sem sessão"/"bloqueada" em
+  `.p-warn`) ao lado do `<h2>`, espelhando o resumo de estado que o
+  protótipo mostra mesmo antes do login (`setVaultStatePill()` em
+  `app.js`).
+- **Pendente** (identidade destravada, host ainda mudo): o `.session-main`
+  troca o identicon por um `.icon-tile.tone-warning` com ícone de relay, e o
+  `.session-meta` ganha uma nota de descoberta ("Descobrindo o host pelos
+  relays…") e um `.pill.p-info` "NIP-44", replicando a composição de
+  handshake do protótipo (`#session-pending-icon`, `#session-discovery-note`,
+  `#session-nip44-pill`; alternado por `setSessionPendingVisual()` nos
+  eventos `unlocked`/`pending`/`active`/`locked`/`wiped` do `SessionManager`).
+
+O estado **ativo** permanece deliberadamente mais enxuto que o protótipo: não
+há nome de host nem pill de URL do túnel no `.session-meta` — esse contexto
+já vive no KPI "Túnel" da Visão geral, e duplicá-lo aqui reintroduziria a
+fragmentação que a fusão do cartão de sessão eliminou.
+
+### Indicador de saúde do serviço
+
+O badge de status de cada serviço agora é gerado **dentro** do ícone
+(`.service-icon > .svc-dot`, posicionado no canto superior direito via
+`position: absolute`), não mais como um `.dot` irmão ao final de
+`.service-top`. `serviceIcon(icon, dotHtml)` recebe o HTML do dot de
+`statusDot(svc, "svc-dot")` e o injeta como filho do `<span
+class="service-icon">`, replicando a sobreposição de badge do protótipo. A
+semântica de cor (`dot-good`/`dot-bad`/`dot-unknown`) não mudou.

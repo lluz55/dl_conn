@@ -1095,8 +1095,6 @@ body {
   min-width: 0;
 }
 
-.service-top > .dot { margin-inline-start: auto; }
-
 .service-icon {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;

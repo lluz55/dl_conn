@@ -126,7 +126,9 @@
           <div class="vault-head">
             <div class="card-head">
               <h2>Identidade Nostr</h2>
-              <svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>
+              <span id="vault-state-pill" class="pill p-warn" role="status" aria-live="polite">
+                <span class="dot dot-warn" aria-hidden="true"></span>sem sessão
+              </span>
             </div>
             <span id="vault-status" class="status" role="status" aria-live="polite"></span>
           </div>
@@ -198,10 +200,17 @@
         <div id="session-live" class="hidden">
           <div class="session-main">
             <span class="identicon" id="session-identicon" aria-hidden="true"></span>
+            <span class="icon-tile tone-warning hidden" id="session-pending-icon" aria-hidden="true">
+              <svg class="icon"><use href="#i-relays"></use></svg>
+            </span>
             <div class="session-id">
               <span class="session-name">Sessão</span>
               <div class="session-meta">
                 <span class="mono-chip" id="session-npub" title="Identidade ativa (npub)">—</span>
+                <span class="status hidden" id="session-discovery-note">Descobrindo o host pelos relays…</span>
+                <span class="pill p-info hidden" id="session-nip44-pill">
+                  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-shield"></use></svg>NIP-44
+                </span>
               </div>
             </div>
             <span class="pill session-state" id="session-state-pill" role="status" aria-live="polite">Bloqueada</span>

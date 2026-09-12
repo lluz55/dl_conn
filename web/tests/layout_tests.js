@@ -42,8 +42,12 @@ assert(
   "Compact relay rows reserve space without overflowing",
 );
 assert(
-  /'<div class="service-top">'\s*\+\s*serviceIcon\(svc\.icon\)/.test(app),
+  /'<div class="service-top">'\s*\+\s*serviceIcon\(svc\.icon,\s*statusDot\(svc,\s*"svc-dot"\)\)/.test(app),
   "Generated service content uses the styled service-top wrapper",
+);
+assert(
+  /function serviceIcon\(icon, dotHtml\)/.test(app) && /\.service-icon \.svc-dot \{/.test(css),
+  "Service health indicator renders as an icon-corner badge, matching the approved prototype",
 );
 assert(
   /DOMContentLoaded",\s*async[\s\S]*?await init\(\)[\s\S]*?showApp\(\)/.test(app),
@@ -64,6 +68,26 @@ assert(
 assert(
   /id="relay-panel" class="card"/.test(html) && /id="btn-toggle-relays"[^>]*aria-expanded="true"/.test(html),
   "Relay configuration is visible by default during setup",
+);
+assert(
+  /id="vault-state-pill" class="pill p-warn"/.test(html),
+  "Locked/logged-out session card shows a state pill like the approved prototype",
+);
+assert(
+  /id="session-pending-icon"/.test(html) &&
+    /id="session-discovery-note"/.test(html) &&
+    /id="session-nip44-pill"/.test(html),
+  "Pending session state has a dedicated discovery composition (relay icon, note, NIP-44 pill)",
+);
+assert(
+  /function setSessionPendingVisual\(isPending\)/.test(app) &&
+    /setSessionPendingVisual\(true\)/.test(app) &&
+    /setSessionPendingVisual\(false\)/.test(app),
+  "Pending visual is toggled on both entry (unlocked/pending) and exit (active/locked/wiped)",
+);
+assert(
+  /function setVaultStatePill\(text, variant, dotClass\)/.test(app),
+  "Locked/logged-out screens mirror their state onto a KPI-style pill",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);
