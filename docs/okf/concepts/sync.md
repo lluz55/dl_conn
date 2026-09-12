@@ -2,38 +2,42 @@
 type: architecture-decision
 ---
 
-# Sincronização via Nostr
+# Sinalização via Nostr
 
 ## Decisão
 
-Nostr é tratado como **transporte burro e não confiável**: todo payload é
-assinado e cifrado; nenhum relay é fonte de verdade. Dois tipos de evento:
+Nostr é tratado como **transporte burro e não confiável** para a **sinalização**
+(descoberta + entrega da URL do túnel e do token de acesso), **não** como
+mecanismo de sincronização de dados. Todo payload é assinado e cifrado; nenhum
+relay é fonte de verdade. Fluxo:
 
-- **Snapshot** (kind `30078`, NIP-78, addressable): estado completo
-  compactado, cifrado. Só o mais recente é mantido.
-- **Changeset** (kind regular `9411`, `TEMPLATE_CHANGESET_KIND`): deltas
-  incrementais desde o snapshot.
+- **Pedido (cliente → daemon):** DM NIP-44 com `RequestMessage{action:
+  "discover_services"}` endereçada à npub autorizada do host.
+- **Resposta (daemon → cliente):** DM NIP-44 com `ResponsePayload` contendo
+  `tunnel_url`, `auth_token`, `expires_in_seconds`, `services` e — opcionalmente
+  — `host_telemetry`. O cliente usa a URL + token para abrir a sessão Zero-Trust
+  contra o serviço alvo através do túnel.
 
-**Push:** mutação local → changeset (deltas HLC) → serializado (protobuf) →
-cifrado (NIP-44 v2, auto-cifra) → publicado. Periodicamente, um novo
-snapshot é publicado e changesets antigos podem ser podados (NIP-09).
-
-**Pull (bootstrap):** cliente novo pede o último snapshot do próprio
-`pubkey`, depois changesets desde o timestamp do snapshot; decifra, valida
-assinatura, aplica no store local (merge CRDT idempotente); mantém
-subscrição ativa para deltas em tempo real.
+Não há *changesets*, *snapshots* nem CRDT: os serviços locais já estão prontos no
+host; o papel da Nostr é apenas descobrir a porta de entrada cifrada e autorizar
+o acesso.
 
 ## Por quê
 
-- Sem servidor central obrigatório — sincroniza entre os dispositivos do
-  próprio usuário via relays públicos/privados.
-- Merge idempotente (CRDT) tolera relays não confiáveis, reordenação e
-  duplicação de eventos.
+- **Sem servidor de sinalização próprio:** o daemon não expõe nenhum endpoint de
+  descoberta público; a URL efêmera do túnel é entregue diretamente à(s) npub(s)
+  autorizada(s) via relays públicos/privados.
+- **Zero-Trust:** só npubs em `nostr.authorizedNpubs` recebem a resposta; a
+  assinatura de cada evento é verificada (`CheckSignature`) e eventos com mais de
+  5 min (`maxEventAge`) são descartados (anti-replay). Um relay malicioso não
+  consegue forjar a resposta nem ler o conteúdo (NIP-44).
 
 ## Onde isso vive no código
 
-`app/lib/sync/` (sync engine, cliente Nostr, pool de relays), espelhado em
-`cli/internal/` para a CLI Go (`pull`/`push`/`backup`).
+`internal/nostr` (`client.go` — allowlist/verificação/anti-replay;
+`handler.go` — monta o `ResponsePayload`; `protocol.go` — `RequestMessage`/
+`ResponsePayload`; `crypto.go` — NIP-44). O cliente web inicia o pedido em
+`web/js/nostr_auth.js` / `web/js/nostr_client.js`.
 
-Relacionado: [protocol.md](protocol.md) (schema exato), [security.md](security.md)
-(cifra e modelo de confiança).
+Relacionado: [protocol.md](protocol.md) (payload exato), [security.md](security.md)
+(cifra e modelo de confiança), [architecture.md](architecture.md).

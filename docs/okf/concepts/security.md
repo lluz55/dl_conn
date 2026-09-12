@@ -6,23 +6,23 @@ type: security
 
 ## Gestão de chaves (a decisão mais crítica)
 
-A chave secreta Nostr **é** a identidade **e** a chave de cifra. Vazou =
+A chave privada Nostr **é** a identidade **e** a chave de cifra. Vazou =
 comprometeu tudo.
 
 | Plataforma | Estratégia |
 |------------|------------|
-| Android | Android Keystore via `flutter_secure_storage` |
-| Linux | Keyring do SO (libsecret) via `flutter_secure_storage` |
-| Web | App **nunca** guarda a chave: NIP-07 (extensão) ou NIP-46 (assinador remoto/bunker) |
+| Web (SPA `web/`) | A chave **nunca** é gravada em `localStorage`/`sessionStorage` em texto claro: vive em memória e o único formato em repouso é o cofre **AES-256-GCM** de `web/js/crypto_vault.js`. Opções de login: NIP-07 (extensão do navegador) ou NIP-46 (assinador remoto/bunker). |
+| Daemon Go (`dl_conn`) | A nsec é injetada em runtime via `--nsec` / `--nsec-file` / `nostr.nsec` / `nostr.nsecFile` (SOPS) — **nunca** hardcoded nem versionada. |
 
-A chave do SQLCipher deriva de segredo no storage seguro — nunca em texto
-plano no disco. NIP-46 é recomendado como opção mesmo em desktop/mobile.
+A chave do daemon deriva de segredo injetado (SOPS/`nsecFile`), nunca em texto
+plano no disco. NIP-46 é recomendado também em desktop/servidor.
 
 ## Cifra e integridade
 
-- Todo payload sincronizado: NIP-44 v2 (ChaCha20 + HMAC), auto-cifra.
+- Todo payload de sinalização: NIP-44 v2 (ChaCha20 + Poly1305), auto-cifra.
 - Assinatura Schnorr (secp256k1) verificada em todo evento recebido.
-- Banco local cifrado em repouso (SQLCipher).
+- O cofre do SPA e o canal NIP-44 protegem a chave/segredo em trânsito e em
+  repouso no cliente; o daemon não persiste a nsec.
 
 ## Modelo de confiança
 
@@ -55,11 +55,13 @@ Regras que decorrem disso:
 
 ## Onde isso vive no código
 
-`app/lib/crypto/` (chaves, NIP-44, storage seguro por plataforma). Checklist
-completo em [SPEC.md §10.5](/SPEC.md#105-checklist-de-segurança).
-
-No daemon Go: `internal/nostr/client.go` (allowlist, verificação de assinatura,
-janela anti-replay) e `internal/config/config.go` (`authorizedNpubs`).
+- Web: `web/js/crypto_vault.js` (cofre AES-256-GCM, em memória),
+  `web/js/nostr_auth.js` / `web/js/nostr_client.js` (login NIP-07/46),
+  `web/index.html` (CSP `script-src 'self'`; bibliotecas vendored em
+  `web/vendor/`).
+- Daemon Go: `internal/nostr/client.go` (allowlist, verificação de assinatura,
+  janela anti-replay) e `internal/config/config.go` (`authorizedNpubs`,
+  `GetNsec`).
 
 ## Bootstrap de sessão de serviços internos
 
@@ -81,5 +83,6 @@ de redirecionamentos e causa bootstrap repetido. O token não atravessa o túnel
 não entra no histórico do navegador e nunca é registrado pelo `dl_conn`.
 Falhas de leitura, validação, resgate ou cookie fecham o acesso (`502`/`503`).
 
-Relacionado: [sync.md](sync.md), [environment.md](environment.md)
-(reprodutibilidade de build como parte da cadeia de suprimentos).
+Relacionado: [sync.md](sync.md), [architecture.md](architecture.md),
+[environment.md](environment.md) (reprodutibilidade de build como parte da
+cadeia de suprimentos).

@@ -1,203 +1,179 @@
 # AGENTS.md
 
-Offline-first cross-platform app (Android/Linux/Web) with decentralized sync
-via Nostr. The source specification is [SPEC.md](/SPEC.md) — read it before any
-architectural change.
+Offline-first tunnel daemon for exposing local services (Home Assistant,
+Frigate, Zigbee2MQTT) via a Cloudflare tunnel with Nostr (NIP-44) signaling
+and Zero-Trust access control. The source specification is
+[README.md](/README.md) and the operational runbook is
+[docs/runbook.md](/docs/runbook.md) — read them before any architectural
+change.
 
 > **Language of work:** think and reason in **English**. Internal reasoning,
 > planning, and all code artifacts stay in English. Portuguese is used **only**
-> in user-facing translations (`app/lib/l10n/app_pt.arb`). Reply to the user in
-> the language they wrote in, but reason in English regardless.
+> in user-facing UI strings (`web/app.js` uses `pt-BR` labels inline). Reply to
+> the user in the language they wrote in, but reason in English regardless.
 
 ## Stack
 
-- **App:** Flutter (Material 3), Dart. State: Riverpod. Routing: go_router.
-- **Theme and adaptive navigation:** local package `packages/dl_concept/`
-  (`package:dl_concept`) — `AppTheme`/`AppSpacing`, `AdaptiveScaffold`,
-  `breakpointForWidth`. Material You via `dynamic_color`, wired in
-  `app/lib/main.dart`. **i18n:** `flutter_localizations`/`intl`, `pt`+`en`
-  from the start. See [SPEC §9.1/§9.2].
-- **Persistence:** `sqlite_crdt` (HLC/LWW) + SQLCipher.
-- **Sync:** Nostr client in Dart, NIP-44 encrypted payloads. See [SPEC §7].
-- **Optional CLI:** Go + `go-nostr`.
+- **Daemon:** Go (`dl_conn`), CLI via Cobra. Reverse proxy, Nostr signaling
+  client, Cloudflare tunnel manager, auth/session tokens, host telemetry.
+- **Frontend:** `web/` — a single-page app in **vanilla JavaScript** (no
+  framework). ES modules in `web/js/`, vendored libs in `web/vendor/`, styles
+  in `web/style.css`, markup in `web/index.html`. Served statically by the
+  daemon.
+- **Persistence:** SQLite via `modernc.org/sqlite` (telemetry only); the data
+  is local-only.
+- **Sync/signaling:** Nostr client in Go (`internal/nostr`) using go-nostr,
+  NIP-44 encrypted DMs for the discovery/response handshake.
+- **Tunnel:** `cloudflared` (ephemeral `trycloudflare.com` URL), managed from Go.
 - **Build:** Nix flakes. **Knowledge:** OKF bundle in `docs/okf/`.
 
 ## Development environment (Nix/NixOS required)
 
 - **NixOS is the required development environment** for this project (or, at
   minimum, Nix ≥ 2.18 with flakes enabled on another distro/macOS). See
-  [SPEC §13.1].
+  [docs/okf/concepts/environment.md](docs/okf/concepts/environment.md).
 - **Every** build/lint/test action runs inside a `nix develop` — never with
-  `flutter`, `go`, or the Android SDK installed manually on the system.
-- **Android SDK/NDK come exclusively from the GitHub flake input**
-  `github:tadfisher/android-nixpkgs` (see [SPEC §13.2]) — never from raw
-  `androidenv` in nixpkgs, nor from a hand-installed Android Studio/`sdkmanager`.
-  Build-tools/platform/NDK versions are pinned explicitly in `flake.nix`.
-- `nixpkgs.config.allowUnfree = true` is required (Android SDK license).
-- Update the SDK: `nix flake lock --update-input android-nixpkgs` + an explicit
-  bump of the pinned versions — never hand-edit an already-materialized SDK.
+  `go`, `golangci-lint`, or `cloudflared` installed manually on the system.
+- The only third-party binary the daemon shells out to is `cloudflared`, which
+  is pulled from nixpkgs (see `flake.nix`) — the host must not provide it.
 
 ## Commands
 
 ```bash
-# environments (Nix)
-nix develop .#app-linux     # Flutter + Linux deps
-nix develop .#android       # Android SDK/NDK
-nix develop .#cli           # Go
-nix develop .#tools         # gitleaks (scripts/check-secrets.sh)
+# environment (Nix)
+nix develop          # go, gopls, golangci-lint, cloudflared, git
 
-# first time in this checkout (idempotent — does nothing if it already exists)
-scripts/bootstrap-platforms.sh   # generates app/android, app/linux, app/web
-
-# GENERATORS — the preferred path; do not write the shell by hand. All are
-# non-interactive, idempotent, and fail-loud. See docs/okf/concepts/scaffolding.md.
-scripts/new-screen.sh --name perfil --title-pt "Perfil" --title-en "Profile"
-scripts/new-repository.sh --name nota --fields "titulo:text,fixado:bool"
-scripts/new-concept.sh --slug lembretes --title "Lembretes" --type architecture-decision --summary "..."
-scripts/add-l10n.sh --key salvarBotao --pt "Salvar" --en "Save"
-
-# quick view of what's left to implement, grouped by phase (SPEC §17)
-scripts/list-todos.sh
-
-# instantiate the template for a new project (rename across the whole repo) and
-# version bump (SPEC §15) — neither one commits/pushes on its own
-scripts/rename-template.sh --dry-run new_name
-scripts/bump-version.sh 0.2.0
-
-# run
-cd app && flutter run -d linux        # or -d chrome / apk
-
-# completion gate (run it BEFORE considering the task done): mirrors CI in a
-# single command (format+analyze+tests+secrets+anti-patterns+OKF+protocol+Go);
-# enters the Nix devShells on its own. --full adds size builds (web/APK).
-scripts/verify.sh
-
-# individual checks (verify.sh above already aggregates them) — covers app/ and packages/dl_concept/
-(cd app && dart format . && dart analyze --fatal-infos)
-(cd packages/dl_concept && dart format . && dart analyze --fatal-infos)
-scripts/perf-check.sh                 # perf, OKF, version↔tag (see SPEC §11.4) — already runs both via check-flutter.sh
-scripts/check-secrets.sh              # gitleaks — never commit a key/nsec
-cd cli && go vet ./... && go test ./...
+# build & run
+go build ./cmd/dl_conn
+go test ./internal/...
 
 # single test (prefer a narrow scope)
-cd app && flutter test test/path_to_test.dart
+go test ./internal/sensors/... -run TestCollector
+
+# web frontend tests (standalone, run with node)
+node web/tests/crypto_tests.js
+node web/tests/session_tests.js
+
+# lint (mirrors CI)
+golangci-lint run
+go vet ./...
+
+# completion gate (run BEFORE considering the task done)
+nix develop && go test ./... && golangci-lint run && go vet ./... \
+  && node web/tests/*.js
 ```
 
-### Conventions when running Flutter/Dart commands
+### Conventions when running Go commands
 
-- **`flutter`/`dart analyze`**: focus on **errors** while working; only address
-  warnings/infos when **explicitly asked**. The repo scripts
-  (`check-flutter.sh`, CI) still use `--fatal-infos` — that does not change;
-  the difference is only what demands your immediate action, not the quality bar.
-- **`flutter` commands with `--[no-]pub`** (`test`, `run`, `build apk/web/linux`,
-  `analyze`; does not apply to `dart analyze`/`dart format`): use `--no-pub` by
-  default, since `flutter pub get` already runs explicitly when needed. Only
-  omit it (or run `flutter pub get` first) when `pubspec.yaml`/`.lock` changed
-  since the last run, or when explicitly asked.
+- **`go vet` / `golangci-lint`**: focus on **errors** while working; only
+  address warnings (linters `errcheck`/`ineffassign` etc.) when **explicitly
+  asked**. The CI gate still flags them — that does not change; the difference
+  is only what demands your immediate action, not the quality bar.
+- **Web frontend**: no bundler/build step. The SPA is plain JS served from
+  `web/`; edits are picked up on browser reload. Tests in `web/tests/` are
+  plain scripts run with `node` and import the production ES modules directly.
 
 ## Structure (capabilities, not fixed paths)
 
-- Screens live in `app/lib/ui/`. Adaptive navigation (bar/rail/drawer) and
-  theme (design tokens) live in the `packages/dl_concept/` package
-  (`package:dl_concept`), consumed via a path dependency — do not redefine these
-  components in the app, extend the package.
-- i18n (`.arb` + generated code) in `app/lib/l10n/` — config in `app/l10n.yaml`.
-- Local store + repositories in `app/lib/data/`; sync/Nostr in `app/lib/sync/`.
-- Keys and crypto in `app/lib/crypto/`.
-- Shared protocol (Dart↔Go) in `shared/`.
-- Details and the "why" behind decisions: OKF bundle in `docs/okf/`.
+- `cmd/dl_conn` — daemon entrypoint (Cobra root command, server bootstrap).
+- `cmd/hellosvc` — sample backend service used for testing the proxy.
+- `internal/` — daemon packages: `config`, `tunnel` (cloudflared), `nostr`
+  (client/handler/protocol/crypto), `auth` (tokens/sessions/handler),
+  `proxy` (reverse proxy + root fallback + WebSocket upgrades), `store`
+  (SQLite telemetry persistence), `sensors` (host metrics collector),
+  `telemetry` (HTTP handler), `health` (service probes).
+- `web/` — SPA client: `index.html`, `style.css`, `app.js`, ES modules in
+  `web/js/`, vendored libs in `web/vendor/`, tests in `web/tests/`.
+- `nixos/` — NixOS module (`services.dl-conn`).
+- `docs/` — runbook and OKF knowledge bundle.
+- `shared/` — (intencionalmente ausente no checkout atual) — reserved for any
+  shared protocol types between Go and future clients.
 
 ## When changing/adding code: security and performance
 
-Security (see [SPEC §10]):
+Security (see [docs/okf/concepts/security.md](docs/okf/concepts/security.md)
+and [SPEC §10] where SPEC exists):
 - **Never** log, serialize in plaintext, or version-control the Nostr private
-  key, nsec, or the SQLCipher key.
-- Every published payload is encrypted (NIP-44); every received signature is
-  verified. Do not trust relays.
-- Do not introduce telemetry or network traffic outside the configured relays.
+  key, nsec, or the daemon's signing seed. The nsec is injected at runtime via
+  `--nsec`/`--nsec-file` or `nostr.nsecFile`/`SOPS` — never hardcoded.
+- Every published/received Nostr payload is encrypted (NIP-44); every received
+  event signature is verified (`CheckSignature`), and events older than 5 min
+  are rejected to prevent replay. Do not trust relays.
+- The SPA loads no third-party code at runtime — `nostr-tools` and `jsQR` are
+  vendored in `web/vendor/` and the page applies `script-src 'self'` (CSP).
+- The web client's Nostr private key is never persisted to
+  `localStorage`/`sessionStorage` in plaintext: it lives in memory and the
+  only at-rest form is the AES-256-GCM vault in `web/js/crypto_vault.js`.
+- Do not introduce telemetry/network traffic outside the configured relays and
+  the Cloudflare tunnel.
 
-Performance (see [SPEC §11]):
-- The UI talks only to the local store; **never** block the UI thread with
-  network I/O, large JSON, or crypto — use isolates (`compute`).
-- Use `const` on widgets; small components; small diffs.
-- If you add a heavy dependency, measure the impact on the web/APK bundle
-  (`scripts/check-web-bundle.sh`, `scripts/check-apk-size.sh`).
+Performance (see [docs/okf/concepts/performance.md](docs/okf/concepts/performance.md)):
+- Never block the request path with synchronous I/O or crypto.
+- Keep the Go binary and the web bundle small — measure on every change
+  (`go build` binary size, `web/` served size).
+- If you add a heavy dependency, measure the impact.
 
 ## Design and code
 
-Follow the guideline already established in [SPEC §9] and the concepts in
-`docs/okf/`:
-- **Do not** hardcode colors/spacing — use the tokens from `package:dl_concept`
-  (`ColorScheme`/`AppTheme`, `AppSpacing` via `context.spacing`). See [SPEC §9.1].
-- **Do not** hardcode UI strings — every user-visible string goes in
-  `app/lib/l10n/app_pt.arb` **and** `app_en.arb`, accessed via
-  `AppLocalizations.of(context)!`. See [SPEC §9.2]. Exception: purely
-  domain/protocol text (not visible in the UI) does not go into i18n.
-- **Code language: English.** Names (classes, functions, variables, files),
-  comments, and internal logs are in **English** — Portuguese only in the
-  translations (`app/lib/l10n/app_pt.arb`) and documentation/OKF. This applies
-  to new code; legacy code still in Portuguese will be migrated gradually — do
-  not rewrite it en masse without a request.
-- Functional widgets; avoid unnecessary `Container`; prefer an existing
-  component over creating a new one.
-- **Preserve the existing look:** do not change theme, palette, typography,
-  spacing, or the established component pattern without an explicit request —
-  keep consistency, do not redesign on your own.
-- **New screen:** generate it with `scripts/new-screen.sh` (see
-  [`docs/okf/concepts/scaffolding.md`](/docs/okf/concepts/scaffolding.md))
-  instead of writing the shell by hand — it is born with `ConsumerWidget`, i18n
-  in both `.arb` files, `dl_concept` tokens, and a test. Then register the route
-  in `app/lib/ui/router.dart` (the generator prints the snippet) and run
-  `flutter pub get` (regenerates the l10n).
-- Adaptive nav by breakpoint (compact→`NavigationBar`, expanded→`NavigationDrawer`).
-- **Every new screen/feature must work well on phone, tablet, and desktop**
-  (compact/medium/expanded) — not just "not break". Before considering it done,
-  verify across the three breakpoints: adequate touch targets in compact/medium,
-  mouse/keyboard support (hover, focus, shortcuts) in expanded, and no lost
-  functionality between form factors.
-- Every new screen covers **light and dark** and both locales (`pt`/`en`) — it
-  is not optional, it is part of "done" as much as the three breakpoints.
+Follow [docs/okf/index.md](docs/okf/index.md) and the concepts under
+`docs/okf/concepts/`:
+- **Do not** hardcode colors/spacing in `web/` — define design tokens as CSS
+  custom properties (`--color-*`, `--gap-*`, `--radius-*`) in `web/style.css`
+  and reference them everywhere.
+- **Do not** hardcode UI strings in `web/` — keep user-facing labels in one
+  place (see [docs/okf/concepts/i18n.md](docs/okf/concepts/i18n.md)).
+- **Code language: English.** Names (functions, variables, files), comments,
+  and internal logs are in **English** — Portuguese only in user-facing
+  translations and documentation. Applies to new code; legacy code still in
+  Portuguese will be migrated gradually — do not rewrite it en masse without a
+  request.
+- **Preserve the existing look:** do not change the theme, palette, typography,
+  or spacing without an explicit request — keep consistency, do not redesign.
+- **Every new feature must work well on phone, tablet, and desktop** — verify
+  across breakpoints (mobile-first; `≥1024px` switches to a two-column layout,
+  see [docs/okf/concepts/web-frontend-layout.md](docs/okf/concepts/web-frontend-layout.md)).
+- **New Go package/CLI command**: follow the existing layout
+  (`internal/<name>` + `cmd/...`) and add `*_test.go` alongside it. New Cobra
+  subcommands go in `cmd/dl_conn`.
 
 ## Domain knowledge: the OKF pattern
 
-**Mandatory: use the OKF skill before writing code** — especially changes that
-touch architecture, protocol, security, sync, or the data model. Start with
-[`docs/okf/index.md`](/docs/okf/index.md) and the relevant concepts in
-`docs/okf/concepts/` (the source of truth on the "why" behind decisions already
-made); check incomplete tasks in
-[`docs/okf/tasks/index.md`](/docs/okf/tasks/index.md) before coding and mark
-them done when you finish. Do not decide something already covered there without
+**Mandatory: consult the OKF bundle before writing code** — especially
+changes that touch architecture, protocol, security, sync, or the data model.
+Start with [docs/okf/index.md](docs/okf/index.md) and the relevant concepts in
+`docs/okf/concepts/` (the source of truth on the "why" behind decisions
+already made); check incomplete tasks in
+[docs/okf/tasks/index.md](docs/okf/tasks/index.md) before coding and mark them
+done when you finish. Do not decide something already covered there without
 consulting first, and do not contradict an existing concept without updating it.
 
 When you **create, edit, or remove** knowledge (decisions, protocol, domain
-context), do it in the OKF bundle in `docs/okf/` (see [SPEC §8.1]):
+context), do it in the OKF bundle in `docs/okf/` (see
+[docs/okf/concepts/architecture.md](docs/okf/concepts/architecture.md)):
 - Each concept is a `.md` with YAML frontmatter and a required **`type`** field.
 - Keep `index.md` and `log.md` (reserved); record relevant changes in `log.md`.
 - Use relative cross-links between concepts.
-- Validate with `scripts/check-okf.sh` before committing.
+- Validate format with `scripts/check-okf.sh` before committing.
 
 ## Versioning and releases
 
-- The version is single-sourced in `app/pubspec.yaml` (SemVer) and **the app
-  displays the current release version** at runtime (`package_info_plus`) —
-  never hardcoded.
-- On release, the version **must** match the Git tag `vX.Y.Z` (checked in CI).
-- Use `scripts/bump-version.sh X.Y.Z` to update `pubspec.yaml`, `flake.nix`
-  (`packages.cli.version`) and move `[Unreleased]` from `CHANGELOG.md` into a
-  dated section — do not edit these three by hand, to avoid drift.
-  `scripts/bump-version.sh --tag` creates the local tag (no push).
-- Releases are made on GitHub with the **`gh` CLI**, attaching the artifacts and
-  `checksums.txt` (see [SPEC §15]):
+- The version is single-sourced in `dl-conn.nix` (`version = "0.1.0"`); do not
+  hardcode it elsewhere.
+- Releases use the **`gh` CLI**, attaching the binary and `checksums.txt` (see
+  [docs/runbook.md](/docs/runbook.md)):
   ```bash
   gh release create "v${VERSION}" --notes-file CHANGELOG.md \
-    build/*.apk build/app-linux.tar.gz build/web.tar.gz build/cli-* checksums.txt
+    build/dl_conn-linux-* build/web.tar.gz checksums.txt
   ```
+- The NixOS module pins the package version; keep them in sync by hand when
+  bumping (`dl-conn.nix` `version` + `flake.nix`/`nixos/module.nix` if they
+  carry it).
 
 ## Git
 
 - Commits in **Conventional Commits** (`feat:`, `fix:`, `perf:`, `docs:` …).
-- A PR only lands with `dart format`, `dart analyze`, and `scripts/perf-check.sh`
-  green.
+- A PR only lands green after `go test ./... && golangci-lint run && go vet ./...`
+  and the web tests pass.
 - **MANDATORY RULE, no exceptions:** no commit message (or PR) may contain
   `Co-Authored-By`, "Generated with", an AI-tool signature, or any variation
   attributing co-authorship to an agent/LLM — even if the default behavior of
@@ -207,29 +183,27 @@ context), do it in the OKF bundle in `docs/okf/` (see [SPEC §8.1]):
 
 ## Boundaries
 
-**Allowed without asking:** read files, `dart format`, `dart analyze`, unit
-tests, run the check scripts.
+**Allowed without asking:** read files, `go vet`/`golangci-lint`, unit tests,
+run the check commands.
 
-**Ask first:** installing new dependencies, `git push`, deleting files, touching
-`flake.nix`/lockfiles, changing the protocol format in `shared/`, publishing
-releases, running `scripts/rename-template.sh` (rewrites the project name across
-~20 files at once — only do it if explicitly asked).
+**Ask first:** installing new dependencies, `git push`, deleting files,
+touching `flake.nix`/lockfiles, changing the protocol format (Nostr kinds /
+payload fields) in `internal/nostr/`, publishing releases — only do it if
+explicitly asked.
 
-**Never:** commit secrets/keys, add telemetry, weaken signature or cipher
-verification, hardcode the app version, publish an unencrypted payload, install
-toolchains (Flutter, Go, Android SDK/NDK) outside the Nix environment, switch
-the Android SDK source to anything other than the flake input
-`github:tadfisher/android-nixpkgs` without aligning first, hardcode color/spacing
-outside `package:dl_concept` (`packages/dl_concept/`), hardcode UI strings
-outside the i18n system (`app/lib/l10n/`), or **add `Co-Authored-By`/AI
-co-authorship attribution to commits or PRs** (see "Git" above — mandatory, no
-exceptions).
+**Never:** commit secrets/keys/nsecs, add telemetry/network traffic outside the
+configured relays+tunnel, weaken signature or NIP-44 cipher verification,
+hardcode the version, publish an unencrypted payload, install toolchains
+(Go, cloudflared) outside the Nix environment, or **add `Co-Authored-By`/AI
+co-authorship attribution to commits or PRs** (see "Git" above — mandatory,
+no exceptions).
 
 ## Execution practices for agents
 
-- **Empirical validation before completion:** do not declare a task done without
-  running **`scripts/verify.sh`** (the single gate that mirrors CI) and seeing it
-  green. "It should work" is not a conclusion — run it and verify.
+- **Empirical validation before completion:** do not declare a task done
+  without running the checks above (`go test`, `golangci-lint`, `go vet`,
+  `node web/tests/*.js`) and seeing them green. "It should work" is not a
+  conclusion — run it and verify.
 - **No unsourced assumptions:** do not guess a schema, file path, or method/API
   signature — inspect the source file before writing the call.
 - **Atomic, focused changes:** small, incremental diffs, no speculative

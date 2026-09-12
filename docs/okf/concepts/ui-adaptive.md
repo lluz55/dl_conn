@@ -6,36 +6,35 @@ type: architecture-decision
 
 ## Decisão
 
-A experiência deve ser boa em **celular, tablet e desktop** — não apenas
-"não quebrar". Cada breakpoint Material 3 é um alvo de UX de primeira
-classe:
+A experiência deve ser boa em **celular, tablet e desktop** — não apenas "não
+quebrar". O SPA é **mobile-first** e usa breakpoints de CSS (não os breakpoints de
+componentes de um framework móvel):
 
-| Faixa | Largura | Dispositivo típico | Navegação |
-|-------|---------|---------------------|-----------|
-| Compact | < 600dp | Celular | `NavigationBar` |
-| Medium | 600–840dp | Tablet retrato / janela pequena de desktop | `NavigationRail` |
-| Expanded | > 840dp | Tablet paisagem / desktop | `NavigationDrawer` |
+| Faixa | Largura | Layout |
+|-------|---------|--------|
+| Compact (celular) | < 1024px | coluna única: Setup acima, Live abaixo |
+| Expanded (tablet/desktop) | ≥ 1024px | duas colunas (`grid 1fr 1fr`) lado a lado |
 
-Uma shell de navegação única (`go_router` `ShellRoute`) decide o componente
-via `MediaQuery`/`LayoutBuilder`, preservando estado das abas. Alvos de
-toque ≥ 48×48dp em compact/medium; em expanded/desktop, suporte a
-mouse/teclado (hover, foco visível, atalhos, scroll). Nenhuma
-funcionalidade exclusiva de um form factor.
+A transição de fase (Setup → Live) é controlada por `data-phase` no
+`.app-container` (ver [web-frontend-layout.md](web-frontend-layout.md)), não por
+um componente de navegação separado. Alvos de toque ≥ 44×44dp em telas small;
+em desktop, suporte a mouse/teclado (hover, foco visível, atalhos, scroll) e a
+mesma funcionalidade de compact/medium. Nenhuma funcionalidade exclusiva de um
+form factor.
 
 ## Por quê
 
-O template visa três plataformas de primeira classe (Android, Linux, Web) —
-cada uma coexiste com múltiplos form factors reais (celular Android, tablet
-Android, janela Linux redimensionável, browser em qualquer largura). Tratar
-um breakpoint como "principal" e os outros como fallback degrada a UX nas
-plataformas não-priorizadas.
+O produto visa três contextos de primeira classe (celular, tablet, janela de
+desktop redimensionável no browser). Tratar um breakpoint como "principal" e os
+outros como fallback degrada a UX nos não-priorizados.
 
 ## Onde isso vive no código
 
-Pacote `packages/dl_concept/` (`lib/src/nav/` — shell adaptativa,
-`lib/src/theme/`), consumido pelo app via `package:dl_concept` em
-`app/lib/ui/router.dart`. Testado com testes de unidade e widget tests
-próprios em `packages/dl_concept/test/`; o app cobre a integração completa
-em `app/test/widget/adaptive_nav_test.dart`.
+`web/style.css`: `.app-columns` (`grid 1fr 1fr` em `≥1024px`), `.col`,
+`.col-live` (display:none em setup, flex em live), `.status-grid`, `.card-head`,
+header slim; breakpoints em `≥1024px`. Estado de fase alternado em
+`web/app.js` (`data-phase="live"` em `handleNostrResponse`, `data-phase="setup"`
+em `onSessionEvent`).
 
-Relacionado: [architecture.md](architecture.md).
+Relacionado: [architecture.md](architecture.md), [theming.md](theming.md),
+[web-frontend-layout.md](web-frontend-layout.md).

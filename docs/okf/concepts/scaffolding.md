@@ -2,65 +2,62 @@
 type: process
 ---
 
-# Automação: geradores e gate de verificação
+# Automação e gate de verificação
 
 ## O que é
 
-Um conjunto de scripts em `scripts/` que automatiza os padrões repetitivos do
-repo de forma **determinística e não-interativa**, otimizado para consumo por
-**agente LLM**. São o caminho preferencial — tanto para humano quanto para
-agente — de criar tela, feature de dados, conceito OKF ou string de UI, e de
-verificar se uma tarefa está concluída.
+O projeto **não** usa geradores de scaffolding nem um `verify.sh` dedicado: o
+stack é pequeno e explícito (Go + web vanilla), então o caminho preferencial é
+editar os arquivos diretamente dentro do devShell Nix. A "definição de
+concluído" é um conjunto fixo de comandos que espelham o CI.
 
-## Por que existe (o ganho não é digitar menos)
+## Por que existe (e por que não há geradores)
 
-Para um agente, o valor não é velocidade de digitação — é **eliminar variância**
-e **nascer dentro da "definição de concluído"**. Escrita livre erra sempre nas
-mesmas coisas que este repo exige (i18n pt+en, tokens de tema, camadas,
-`ConsumerWidget`, teste). A pesquisa de 2026 é clara: *o gargalo dos agentes não
-é gerar código, é **verificar** código* — por isso o item de maior alavancagem é
-o gate `verify.sh`, não outro gerador.
+Para um agente, o valor não é gerar código — é **verificar** código. Neste repo
+isso significa rodar os checks abaixo e ver tudo verde, não invocar um gerador.
+A pesquisa de 2026 é clara: *o gargalo dos agentes não é gerar código, é
+verificar código*.
 
-## Geradores e verificação
+## Comandos de verificação (o gate)
 
-| Script | Cria/faz | Toca arquivo existente? |
-|--------|----------|--------------------------|
-| [`scripts/verify.sh`](/scripts/verify.sh) | **Gate de conclusão**: espelha o CI (format+analyze+testes+segredos+anti-padrões+OKF+protocolo+Go) num comando; `--full` adiciona builds de tamanho | — (só lê) |
-| [`scripts/new-screen.sh`](/scripts/new-screen.sh) | Tela adaptativa: `ConsumerWidget` + i18n pt/en + teste | Imprime snippet de rota (não edita router) |
-| [`scripts/new-repository.sh`](/scripts/new-repository.sh) | Feature de dados: entidade + porta + impl. CRDT local + teste (field spec tipado) | Imprime CREATE TABLE + wiring de providers |
-| [`scripts/new-concept.sh`](/scripts/new-concept.sh) | Conceito OKF com frontmatter válido + registro no `index.md` | Edita `index.md` (append de linha) |
-| [`scripts/add-l10n.sh`](/scripts/add-l10n.sh) | Uma chave i18n nos **dois** `.arb` (simetria pt/en) | Edita os dois `.arb` |
+```bash
+nix develop                                  # entra no devShell (Go + cloudflared + golangci-lint)
 
-Padrões comuns dos geradores: só flags (nada no stdin), idempotentes, fail-loud
-(abortam sem escrever se o alvo já existe), e a saída Dart passa
-`dart analyze --fatal-infos` e é no-op sob `dart format`. Onde um ponto de
-integração envolve **decisão** (rota, versão de schema/migração), o gerador
-**imprime** o snippet em vez de auto-editar — o mesmo princípio do router em
-`new-screen.sh`.
+go build ./cmd/dl_conn                       # compila o daemon
+go test ./...                                # todos os testes Go
+golangci-lint run                            # linters (errcheck, ineffassign, ...)
+go vet ./...                                 # vet do Go
 
-## Ordem de uso típica (agente)
+for t in web/tests/*_tests.js; do node "$t"; done   # testes do SPA
+```
 
-1. `new-screen.sh` / `new-repository.sh` gera os arquivos.
-2. Cola os snippets impressos (rota / CREATE TABLE + providers).
-3. `add-l10n.sh` para strings extras; `(cd app && flutter pub get)` regenera o l10n.
-4. **`scripts/verify.sh`** — só considere a tarefa concluída quando ficar verde.
+**Só considere a tarefa concluída quando todos estiverem verdes.**
+
+## Convenções comuns
+
+- **Go:** novos pacotes em `internal/<nome>` + `*_test.go` ao lado; novos
+  subcomandos Cobra em `cmd/dl_conn`. Sem `init()` surpresa; sem dependência
+  de rede em testes (use stubs/fakes — ver [testing.md](testing.md)).
+- **Web:** edite `web/js/*.js`, `web/index.html`, `web/style.css`; sem bundler,
+  sem framework. Bibliotecas de terceiros só via `web/vendor/` (CSP
+  `script-src 'self'`).
+- **Nix:** `dl-conn.nix` (`buildGoModule`, `vendorHash`), `flake.nix`
+  (devShell/pacote), `nixos/module.nix`. Nunca instale Go/cloudflared fora do Nix.
 
 ## Erros comuns de agente
 
-- **Escrever à mão "porque é rápido".** Use o gerador; é o que garante i18n nos
-  dois `.arb`, tokens de tema e camadas corretas.
-- **Concluir sem rodar `verify.sh`.** É o gate de "definição de concluído"; um
-  teste vermelho gerado (ex.: `new-repository.sh` antes de wirar o schema) é o
-  seu checklist, não um bug.
-- **Esquecer os snippets impressos.** A tela não roteia e a tabela não existe
-  até você colar o que o gerador imprimiu.
-- **`new-repository.sh` e schema:** adicionar a tabela ao `_onCreate` pode exigir
-  bump de `_schemaVersion` + migração para instalações existentes — ver
-  [data-model.md](data-model.md).
+- **Rodar `go`/`golangci-lint` fora do `nix develop`.** Sempre entre no
+  devShell; o host não deve ter essas toolchains.
+- **Concluir sem rodar os checks.** O gate de "definição de concluído" é o
+  comando acima — um teste vermelho (ex.: allowlist em `internal/nostr`) é o seu
+  checklist, não um bug.
+- **Tocar em `flake.lock`/lockfiles ou `flake.nix` sem necessidade.** Isso
+  requer alinhamento prévio (ver AGENTS.md → Boundaries).
+- **Adicionar dependência de runtime que não passe na CSP** (CDN/inline/eval no
+  web, ou binário não-vendored). O SPA bloqueia qualquer coisa fora `'self'`.
 
 ## Referências
 
-Convenções que os geradores materializam: [i18n.md](i18n.md),
-[theming.md](theming.md), [ui-adaptive.md](ui-adaptive.md),
-[architecture.md](architecture.md), [data-model.md](data-model.md),
-[testing.md](testing.md). Rastreamento: [tasks.md](tasks.md).
+Convenções que os checks materializam: [environment.md](environment.md),
+[testing.md](testing.md), [security.md](security.md),
+[architecture.md](architecture.md). Rastreamento: [tasks.md](tasks.md).
