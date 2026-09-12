@@ -89,6 +89,10 @@ assert(
   /function setVaultStatePill\(text, variant, dotClass\)/.test(app),
   "Locked/logged-out screens mirror their state onto a KPI-style pill",
 );
+assert(
+  /\.kpi-card\s*\{[^}]*padding-inline-start:\s*calc\(var\(--gap-md\)\s*\+\s*3px\)/s.test(css),
+  "KPI card text keeps an even gap from the 3px tone bar instead of sitting closer to it than the other edges",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

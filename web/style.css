@@ -793,6 +793,13 @@ body {
   flex-direction: column;
   gap: var(--gap-sm);
   padding: var(--gap-md);
+  /* The 3px tone bar (::before, below) is drawn inside this padding box, at
+     the card's own edge — it does not add its own gap. Without this extra
+     inset, the text sits only ~13px from the bar (16px padding minus the
+     bar's 3px), noticeably tighter than the 16px kept on every other side;
+     the gap is most visible once a long value (e.g. the tunnel URL) wraps
+     onto several lines that all start that close to the bar. */
+  padding-inline-start: calc(var(--gap-md) + 3px);
   border-radius: var(--radius-lg);
   border: none;
   background: var(--color-surface-2);
