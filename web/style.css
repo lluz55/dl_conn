@@ -859,13 +859,21 @@ body {
 }
 
 .kpi-value {
+  display: block;
   font-family: var(--font-display);
   font-size: var(--fs-xl);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
   line-height: 1.25;
-  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
+  /* Every KPI card in the same grid row stretches to the tallest one
+     (grid default align-items: stretch). A long value like the tunnel URL
+     wrapping onto several lines used to blow the whole row's height up, so
+     values are clipped to a single line with an ellipsis instead — the full
+     text stays available via the element's `title` (see app.js). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kpi-sub { font-size: var(--fs-xs); color: var(--color-text-3); font-variant-numeric: tabular-nums; }

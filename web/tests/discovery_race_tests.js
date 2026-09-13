@@ -28,7 +28,9 @@ assert(sends.length === 2, "both discovery senders found (got " + sends.length +
 for (const send of sends) {
   const after = appJs.slice(send.index + send[0].length, send.index + send[0].length + 400);
   const guard = after.indexOf("answeredGeneration >= generation");
-  const status = after.indexOf("el.tunnelStatus.textContent");
+  const statusDirect = after.indexOf("el.tunnelStatus.textContent");
+  const statusHelper = after.indexOf("setTunnelStatus(");
+  const status = [statusDirect, statusHelper].filter((i) => i !== -1).sort((a, b) => a - b)[0] ?? -1;
   assert(guard !== -1, "guard present after the awaited send");
   assert(guard !== -1 && (status === -1 || guard < status),
     "guard runs before the status line is overwritten");

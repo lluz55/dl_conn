@@ -93,6 +93,19 @@ assert(
   /\.kpi-card\s*\{[^}]*padding-inline-start:\s*calc\(var\(--gap-md\)\s*\+\s*3px\)/s.test(css),
   "KPI card text keeps an even gap from the 3px tone bar instead of sitting closer to it than the other edges",
 );
+assert(
+  /\.kpi-value\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/s.test(css),
+  "A long KPI value (e.g. the tunnel URL) is clipped to one line instead of stretching every card in its grid row",
+);
+assert(
+  /function setTunnelStatus\(text\)/.test(app) &&
+    /el\.tunnelStatus\.setAttribute\("title", text\)/.test(app),
+  "The full tunnel status text stays reachable via title when the KPI value is clipped",
+);
+assert(
+  (app.match(/el\.tunnelStatus\.textContent\s*=/g) || []).length === 1,
+  "Every tunnel status update outside setTunnelStatus() itself goes through the helper, so the title tooltip never goes stale",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

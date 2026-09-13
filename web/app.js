@@ -597,6 +597,18 @@ import { startScan } from './js/qr_scanner.js';
     el.btnClearDebug.addEventListener("click", onClearDebug);
   }
 
+  /**
+   * The KPI value is clipped to one line with an ellipsis (see .kpi-value in
+   * style.css) so a long tunnel URL cannot stretch every card sharing its
+   * grid row; the full text is kept reachable on hover/focus via the native
+   * title tooltip.
+   */
+  function setTunnelStatus(text) {
+    if (!el.tunnelStatus) return;
+    el.tunnelStatus.textContent = text;
+    el.tunnelStatus.setAttribute("title", text);
+  }
+
   function setSessionStatus(text, tone) {
     if (!el.sessionStatus) return;
     // #session-status is a wrapper around the human text and the live
@@ -764,7 +776,7 @@ import { startScan } from './js/qr_scanner.js';
       state.nostr = null;
       clearLiveTimers();
       stopCountdownTicker();
-      el.tunnelStatus.textContent = "Aguardando túnel…";
+      setTunnelStatus("Aguardando túnel…");
       setSessionStatus("Bloqueada", "dim");
       // A locked session (manual or auto-lock) still has its vault on disk —
       // send the user back to the PIN/biometric unlock screen, not the
@@ -879,7 +891,7 @@ import { startScan } from './js/qr_scanner.js';
     state.pendingIdentity = null;
     clearLiveTimers();
     el.servicesSection.classList.add("hidden");
-    el.tunnelStatus.textContent = "Aguardando túnel…";
+    setTunnelStatus("Aguardando túnel…");
     setSessionStatus("Bloqueada", "dim");
     window.location.reload();
   }
@@ -1081,7 +1093,7 @@ import { startScan } from './js/qr_scanner.js';
         state.session.npub, state.session.sk
       );
       responseChannel.addEventListener("response", (e) => onDiscoveryResponse(e.detail));
-      el.tunnelStatus.textContent = "Solicitando descoberta de serviços...";
+      setTunnelStatus("Solicitando descoberta de serviços...");
       const generation = ++discoveryGeneration;
       const result = await state.nostr.sendDiscoverRequest(
         state.session.npub, state.session.sk
@@ -1091,17 +1103,16 @@ import { startScan } from './js/qr_scanner.js';
       // timed-out request indistinguishable from a host that simply had not
       // answered yet.
       if (result && result.status === "timeout") {
-        el.tunnelStatus.textContent = "Sem confirmação dos relays ao publicar o pedido.";
+        setTunnelStatus("Sem confirmação dos relays ao publicar o pedido.");
         pushDebug("warn", "nostr", "Publicação do pedido expirou sem confirmação");
         return;
       }
       if (result && result.status === "failed") {
-        el.tunnelStatus.textContent =
-          "Falha ao publicar o pedido: " + (result.errors || []).join("; ");
+        setTunnelStatus("Falha ao publicar o pedido: " + (result.errors || []).join("; "));
         pushDebug("error", "nostr", "Falha ao publicar pedido: " + (result.errors || []).join("; "));
         return;
       }
-      el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
+      setTunnelStatus("Pedido enviado. Aguardando o host…");
       startDiscoveryTimeout();
     } catch (err) {
       el.relayStatus.textContent = "Erro: " + err.message;
@@ -1126,9 +1137,10 @@ import { startScan } from './js/qr_scanner.js';
       // warning for every later refresh — the button appeared to do nothing.
       if (!awaitingDiscovery) return; // response already arrived
       awaitingDiscovery = false;
-      el.tunnelStatus.textContent =
+      setTunnelStatus(
         "O host não respondeu. Verifique se o daemon está rodando e se seu npub " +
-        "está em authorizedNpubs.";
+        "está em authorizedNpubs."
+      );
     }, DISCOVERY_TIMEOUT_MS);
   }
 
@@ -1154,8 +1166,7 @@ import { startScan } from './js/qr_scanner.js';
     // Stamp the time: two consecutive refreshes with identical statuses are
     // otherwise indistinguishable from a refresh that never landed.
     const hora = new Date().toLocaleTimeString();
-    el.tunnelStatus.textContent =
-      "Túnel: " + (data.tunnel_url || "conectado") + " · atualizado às " + hora;
+    setTunnelStatus("Túnel: " + (data.tunnel_url || "conectado") + " · atualizado às " + hora);
     state.tunnelURL = data.tunnel_url;
     state.authToken = data.auth_token;
     state.services = data.services || [];
@@ -1411,7 +1422,7 @@ import { startScan } from './js/qr_scanner.js';
     if (!state.nostr || !state.session.sk) return;
     el.btnRefreshServices.disabled = true;
     el.btnRefreshServices.setAttribute("aria-busy", "true");
-    el.tunnelStatus.textContent = "Atualizando status…";
+    setTunnelStatus("Atualizando status…");
     const generation = ++discoveryGeneration;
     try {
       const result = await state.nostr.sendDiscoverRequest(
@@ -1419,17 +1430,16 @@ import { startScan } from './js/qr_scanner.js';
       );
       if (answeredGeneration >= generation) return;
       if (result && result.status === "timeout") {
-        el.tunnelStatus.textContent = "Sem resposta do host ao atualizar.";
+        setTunnelStatus("Sem resposta do host ao atualizar.");
         pushDebug("warn", "nostr", "Atualização expirou sem confirmação");
         return;
       }
       if (result && result.status === "failed") {
-        el.tunnelStatus.textContent =
-          "Falha ao atualizar: " + (result.errors || []).join("; ");
+        setTunnelStatus("Falha ao atualizar: " + (result.errors || []).join("; "));
         pushDebug("error", "nostr", "Falha ao atualizar: " + (result.errors || []).join("; "));
         return;
       }
-      el.tunnelStatus.textContent = "Pedido enviado. Aguardando o host…";
+      setTunnelStatus("Pedido enviado. Aguardando o host…");
       startDiscoveryTimeout();
     } finally {
       el.btnRefreshServices.disabled = false;
