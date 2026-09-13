@@ -815,7 +815,11 @@ body {
 .kpi-card::before {
   content: "";
   position: absolute;
-  inset-block: 0; inline-start: 0;
+  /* `inset-inline-start` (not the non-existent `inline-start`): with an
+     invalid/absent horizontal offset the bar falls back to its static
+     position, i.e. the start of the *content* box — visually glued to the
+     text instead of sitting flush against the card's left edge. */
+  inset-block: 0; inset-inline-start: 0;
   width: 3px;
   background: var(--color-primary);
 }

@@ -94,6 +94,11 @@ assert(
   "KPI card text keeps an even gap from the 3px tone bar instead of sitting closer to it than the other edges",
 );
 assert(
+  /\.kpi-card::before\s*\{[^}]*inset-inline-start:\s*0/s.test(css) &&
+    !/^\s*inline-start\s*:/m.test(css),
+  "The KPI tone bar is pinned to the card edge with the real property (inset-inline-start), not the non-existent `inline-start`, which leaves it on top of the text",
+);
+assert(
   /\.kpi-value\s*\{[^}]*white-space:\s*nowrap;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;/s.test(css),
   "A long KPI value (e.g. the tunnel URL) is clipped to one line instead of stretching every card in its grid row",
 );
