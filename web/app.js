@@ -113,6 +113,7 @@ import { startScan } from './js/qr_scanner.js';
   let expiryTimer = null;
   let discoveryTimer = null;
   let telemetryTimer = null;
+  let telemetryFetchInFlight = false;
   let liveTicker = null;
   let lastTelemetryAt = 0;
   let visibilityListenerAdded = false;
@@ -162,6 +163,8 @@ import { startScan } from './js/qr_scanner.js';
    * spanning many silent hours as if it were continuous.
    */
   const CHART_HISTORY_MAX = 30;
+  /** Refresh the host health card often enough to feel live without overlap. */
+  const TELEMETRY_POLL_MS = 2000;
   const cpuLoadHistory = [];
   const ramPctHistory = [];
   const diskPctHistory = [];
@@ -348,7 +351,7 @@ import { startScan } from './js/qr_scanner.js';
     el.telUpdated.textContent = secs < 5 ? "ao vivo" : "ha " + secs + "s";
   }
 
-  /** 1s ticker so the "ha Xs" label counts up between 10s fetches. */
+  /** 1s ticker so the "ha Xs" label counts up between telemetry fetches. */
   function startLiveTicker() {
     if (liveTicker) clearInterval(liveTicker);
     liveTicker = setInterval(function () {
@@ -357,6 +360,9 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   async function fetchTelemetry() {
+    // A slow request must not pile up behind the 2s interval.
+    if (telemetryFetchInFlight) return;
+    telemetryFetchInFlight = true;
     try {
       const r = await fetch("/api/host/telemetry", { credentials: "include" });
       if (!r.ok) { updateLiveBadge(false); return; }
@@ -364,7 +370,11 @@ import { startScan } from './js/qr_scanner.js';
       renderTelemetry(snap);
       lastTelemetryAt = Date.now();
       updateLiveBadge(true);
-    } catch (_) { updateLiveBadge(false); }
+    } catch (_) {
+      updateLiveBadge(false);
+    } finally {
+      telemetryFetchInFlight = false;
+    }
   }
 
   function startTelemetryPolling() {
@@ -374,7 +384,7 @@ import { startScan } from './js/qr_scanner.js';
     // successful fetch lands.
     if (el.hostTelemetrySection) el.hostTelemetrySection.classList.remove("hidden");
     fetchTelemetry();
-    telemetryTimer = setInterval(fetchTelemetry, 10000);
+    telemetryTimer = setInterval(fetchTelemetry, TELEMETRY_POLL_MS);
     startLiveTicker();
     // The visibility handler must be registered exactly once: the previous code
     // added a new listener on every (re-)activation, which could leak and even
@@ -386,7 +396,7 @@ import { startScan } from './js/qr_scanner.js';
           if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
         } else if (!telemetryTimer) {
           fetchTelemetry();
-          telemetryTimer = setInterval(fetchTelemetry, 10000);
+          telemetryTimer = setInterval(fetchTelemetry, TELEMETRY_POLL_MS);
         }
       });
     }

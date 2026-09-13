@@ -60,6 +60,12 @@ const formatUptimeBody = extractFunction(appJs, 'formatUptime');
 const formatCapacityBody = extractFunction(appJs, 'formatCapacity');
 const renderTelemetryBody = extractFunction(appJs, 'renderTelemetry');
 
+console.log("\n=== Telemetry Polling Tests ===");
+assert(/const TELEMETRY_POLL_MS = 2000;/.test(appJs), "host health refreshes every 2 seconds");
+assert((appJs.match(/setInterval\(fetchTelemetry, TELEMETRY_POLL_MS\)/g) || []).length === 2,
+  "initial and visibility-resume polling use the shared interval");
+assert(/if \(telemetryFetchInFlight\) return;/.test(appJs), "slow telemetry requests do not overlap");
+
 // renderTelemetry calls formatUptime internally. Since function declarations
 // inside a new Function body don't get hoisted to the wrapped scope, we
 // inline the formatUptime body as a const at the top.

@@ -76,8 +76,8 @@ CSP (`style-src 'self'`, sem `'unsafe-inline'`) bloquearia. Os dados vêm de um
 `diskPctHistory`, cap `CHART_HISTORY_MAX = 30`) alimentado a cada
 `fetchTelemetry()` — não existe endpoint de histórico no backend (só
 `Store.Latest()` em `internal/store/telemetry.go`), então o gráfico reseta a
-cada reload da aba e nunca mostra mais que os últimos ~5 minutos observados
-(30 amostras × polling de 10s).
+cada reload da aba e nunca mostra mais que o último ~1 minuto observado
+(30 amostras × polling de 2s).
 
 `#services-section` ganhou uma **barra de saúde proporcional**
 (`#services-health` > `svg.health-bar` com três `<rect>` — ativos/inativos/

@@ -34,7 +34,7 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
 - All snap.disks are listed in the Saude do host card (not just the first
   mountpoint), each rendered with its adaptive capacity.
 - Continuous refresh: startTelemetryPolling() reveals the card immediately,
-  polls /api/host/telemetry every 10s, and drives a 1s liveTicker that
+  polls /api/host/telemetry every 2s, and drives a 1s liveTicker that
   updates an "ao vivo / ha Xs" badge (ids tel-live / tel-updated). A failed
   fetch keeps the last snapshot on screen and flags the badge is-stale
   ("indisponivel") instead of leaving a frozen-looking value. The

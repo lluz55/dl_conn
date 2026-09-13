@@ -4,6 +4,15 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-13
+
+- **Saúde do host com atualização quase em tempo real.** O polling autenticado
+  de `/api/host/telemetry` no SPA passou de 10s para 2s, mantendo pausa quando
+  a aba fica oculta, atualização imediata ao voltar e o ticker visual de 1s.
+  Os sparklines continuam limitados a 30 amostras e agora representam cerca de
+  1 minuto observado. Ver [concepts/host-telemetry.md](concepts/host-telemetry.md)
+  e [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md).
+
 ## 2026-09-12
 
 - **Redesign definitivo do SPA: o protótipo aprovado virou produção (Fase 15).**
