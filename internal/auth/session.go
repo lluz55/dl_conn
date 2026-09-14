@@ -60,8 +60,9 @@ func (sm *SessionManager) CreateSession(r *http.Request) string {
 }
 
 // ValidateSession checks whether r carries a live session cookie for a
-// session still within its TTL and originating from the same client address
-// it was created from, sliding its expiration forward on success.
+// session still within its TTL and originating from the same client (see
+// sameClient) it was created from, sliding its expiration forward on
+// success.
 func (sm *SessionManager) ValidateSession(r *http.Request) bool {
 	sessionID := sm.GetSessionID(r)
 	if sessionID == "" {
@@ -80,7 +81,7 @@ func (sm *SessionManager) ValidateSession(r *http.Request) bool {
 		delete(sm.sessions, sessionID)
 		return false
 	}
-	if s.IP != ip {
+	if !sameClient(s.IP, ip) {
 		// Not deleted: a stolen cookie shouldn't be able to evict the
 		// legitimate session, and a legitimate client whose address
 		// genuinely changed (Wi-Fi/cellular handoff, ISP re-IP) just needs
@@ -103,6 +104,31 @@ func (sm *SessionManager) Invalidate(sessionID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	delete(sm.sessions, sessionID)
+}
+
+// sameClient reports whether ip a and ip b should be treated as the same
+// client for session binding. IPv6 is compared by its /64 routing prefix
+// rather than byte-for-byte: RFC 4941 privacy extensions rotate the
+// interface identifier (the low 64 bits) on a timer, independent of any
+// actual network change, and that rotation lands mid-session on mobile
+// carriers — it was showing up as "session denied: reason=ip mismatch" on
+// every websocket reconnect for a client whose address hadn't meaningfully
+// changed, which broke the Hermes chat websocket entirely for anyone not on
+// a static-prefix connection. IPv4 has no equivalent rotation, so it still
+// requires an exact match.
+func sameClient(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ipA, ipB := net.ParseIP(a), net.ParseIP(b)
+	if ipA == nil || ipB == nil {
+		return false
+	}
+	if ipA.To4() != nil || ipB.To4() != nil {
+		return false // exact match already failed above
+	}
+	mask := net.CIDRMask(64, 128)
+	return ipA.Mask(mask).Equal(ipB.Mask(mask))
 }
 
 // ClientIP extracts the address of the actual client that reached

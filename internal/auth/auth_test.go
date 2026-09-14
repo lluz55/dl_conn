@@ -109,6 +109,27 @@ func TestSessionManager_IPMismatchDenied(t *testing.T) {
 	}
 }
 
+func TestSessionManager_IPv6PrefixRotationTolerated(t *testing.T) {
+	sm := NewSessionManager(4 * time.Hour)
+	createReq := httptest.NewRequest("GET", "/", nil)
+	createReq.RemoteAddr = "[2804:1690:624:4794:b40b:5282:c42f:b02b]:5555"
+	id := sm.CreateSession(createReq)
+
+	rotated := httptest.NewRequest("GET", "/", nil)
+	rotated.RemoteAddr = "[2804:1690:624:4794:4989:f5e6:5b25:662e]:6666" // same /64, new privacy address
+	rotated.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if !sm.ValidateSession(rotated) {
+		t.Error("session should tolerate an IPv6 address rotating within the same /64 prefix")
+	}
+
+	otherPrefix := httptest.NewRequest("GET", "/", nil)
+	otherPrefix.RemoteAddr = "[2001:db8:aaaa:bbbb::1]:7777"
+	otherPrefix.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: id})
+	if sm.ValidateSession(otherPrefix) {
+		t.Error("session should be denied for a genuinely different IPv6 /64 prefix")
+	}
+}
+
 func TestSessionManager_Invalidate(t *testing.T) {
 	sm := NewSessionManager(4 * time.Hour)
 	req := httptest.NewRequest("GET", "/", nil)
