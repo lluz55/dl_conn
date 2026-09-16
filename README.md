@@ -46,6 +46,7 @@ Copie `config.example.yaml` para `config.yaml` e ajuste:
 - `tunnel.listenPort` — porta do proxy local
 - `auth.tokenTTL` / `auth.sessionTTL` — expiração de tokens e sessões
 - `services` — lista de serviços expostos (prefixo, target, WebSocket)
+- `dynamicPorts.deniedPorts` — portas adicionais bloqueadas no acesso dinâmico `/local/<porta>/`; o alvo é sempre `127.0.0.1`, e portas `<1024`, a porta do daemon e a de diagnóstico já são bloqueadas
 
 ## Instalação como serviço NixOS
 
@@ -64,6 +65,7 @@ Veja `nixos/module.nix`.
 - Relays não são confiáveis por definição: a assinatura de cada evento recebido é
   verificada (`CheckSignature`) e eventos fora da janela de 5 min são descartados
   para impedir replay.
+- O proxy dinâmico `/local/<porta>/` exige a sessão Zero-Trust existente, aceita somente HTTP em `127.0.0.1`, rejeita WebSocket e bloqueia portas privilegiadas/sensíveis.
 - O SPA não carrega código de terceiros em runtime — `nostr-tools` e `jsQR` são
   *vendorizados* em `web/vendor/` e a página aplica CSP `script-src 'self'`.
   Ao atualizar essas bibliotecas, baixe o *bundle* e atualize o arquivo local;

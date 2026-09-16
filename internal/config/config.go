@@ -111,6 +111,13 @@ func (s *ServiceConfig) SendsForwardedFor() bool {
 	return s.ForwardedFor == nil || *s.ForwardedFor
 }
 
+// DynamicPortsConfig controls the authenticated /local/<port>/ proxy.
+// Ports below 1024, the daemon's own listeners, and SSH are always denied;
+// DeniedPorts lets operators add host-specific sensitive ports.
+type DynamicPortsConfig struct {
+	DeniedPorts []int `mapstructure:"deniedPorts"`
+}
+
 // AuthConfig holds token and session TTLs.
 type AuthConfig struct {
 	TokenTTL   time.Duration `mapstructure:"tokenTTL"`
@@ -127,11 +134,12 @@ type TelemetryConfig struct {
 
 // Config is the top-level configuration.
 type Config struct {
-	Nostr     NostrConfig     `mapstructure:"nostr"`
-	Tunnel    TunnelConfig    `mapstructure:"tunnel"`
-	Services  []ServiceConfig `mapstructure:"services"`
-	Auth      AuthConfig      `mapstructure:"auth"`
-	Telemetry TelemetryConfig `mapstructure:"telemetry"`
+	Nostr        NostrConfig        `mapstructure:"nostr"`
+	Tunnel       TunnelConfig       `mapstructure:"tunnel"`
+	Services     []ServiceConfig    `mapstructure:"services"`
+	DynamicPorts DynamicPortsConfig `mapstructure:"dynamicPorts"`
+	Auth         AuthConfig         `mapstructure:"auth"`
+	Telemetry    TelemetryConfig    `mapstructure:"telemetry"`
 }
 
 // DefaultRelays contains public Nostr relays used when none are explicitly configured.
@@ -172,6 +180,7 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("tunnel.cloudflaredPath", "cloudflared")
 	v.SetDefault("tunnel.autoStart", true)
 	v.SetDefault("tunnel.inactivityTimeout", "10m")
+	v.SetDefault("dynamicPorts.deniedPorts", []int{22})
 	v.SetDefault("auth.tokenTTL", "120s")
 	v.SetDefault("auth.sessionTTL", "4h")
 	v.SetDefault("telemetry.enabled", true)
@@ -225,6 +234,12 @@ func parseDurations(cfg *Config) error {
 func (c *Config) Validate() error {
 	if c.Tunnel.ListenPort < 1 || c.Tunnel.ListenPort > 65535 {
 		return errors.New("tunnel.listenPort must be between 1 and 65535")
+	}
+
+	for _, port := range c.DynamicPorts.DeniedPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("dynamicPorts.deniedPorts contains invalid port: %d", port)
+		}
 	}
 
 	for _, n := range c.Nostr.AuthorizedNpubs {

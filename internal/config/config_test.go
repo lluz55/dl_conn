@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,6 +81,18 @@ func TestValidate_EmptyAuthorizedNpubs(t *testing.T) {
 	err := c.Validate()
 	if err == nil {
 		t.Fatal("expected error for empty authorized_npubs")
+	}
+}
+
+func TestValidate_DynamicDeniedPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := minimalValidConfig() + "\ndynamicPorts:\n  deniedPorts: [8123, 70000]\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "dynamicPorts.deniedPorts") {
+		t.Fatalf("Load() error = %v, want dynamic denied port error", err)
 	}
 }
 

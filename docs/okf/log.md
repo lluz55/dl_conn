@@ -546,6 +546,17 @@ escolha de sondar **no host** (e não pela SPA, através do túnel) é o que evi
 precisar de CORS no proxy, e o preço assumido é que o dashboard mostra o último
 probe conhecido, não um stream ao vivo. Ver [tasks/12-service-health-status.md](tasks/12-service-health-status.md).
 
+## Acesso dinâmico a serviços HTTP em loopback
+
+O dashboard ganhou um campo de porta que abre `/local/<porta>/` usando a mesma
+sessão Zero-Trust dos serviços configurados. O handler dedicado resolve o alvo
+somente como `127.0.0.1`, remove credenciais internas antes do encaminhamento,
+rejeita WebSocket e bloqueia portas privilegiadas, os listeners do daemon e a
+denylist extensível `dynamicPorts.deniedPorts`. Motivo de registrar: permitir
+uma porta arbitrária amplia a superfície de acesso do usuário autorizado; a
+restrição de host, o bloqueio explícito e o isolamento de cookies são limites
+de segurança deliberados, não detalhes de implementação.
+
 ## Correção — resumo de relays contava latência como desconexão
 
 `updateRelaySummary` (`web/app.js`) filtrava por `r.ok && r.rttMs < 600` e

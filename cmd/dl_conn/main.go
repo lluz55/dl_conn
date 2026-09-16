@@ -306,6 +306,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	mux.HandleFunc("/auth/logout", authHandler.HandleLogout)
 	mux.Handle("/_static/", http.StripPrefix("/_static/", fs))
 
+	// Dynamic loopback services use the same Zero-Trust session as configured
+	// services. The handler owns only /local/<port>/ and never accepts a host.
+	dynamicProxy := proxy.NewDynamicPortProxy(sessionMgr, cfg.Tunnel.ListenPort, cfg.DynamicPorts.DeniedPorts)
+	mux.Handle("/local/", dynamicProxy)
+
 	// Service routes through the proxy (Zero-Trust). Each prefix is
 	// registered both bare and with a trailing slash: ServeMux only treats
 	// the trailing-slash form as a subtree match, but a bare request for

@@ -63,6 +63,19 @@ Regras que decorrem disso:
   janela anti-replay) e `internal/config/config.go` (`authorizedNpubs`,
   `GetNsec`).
 
+## Proxy dinâmico de portas locais
+
+A rota `/local/<porta>/` reutiliza a sessão Zero-Trust vinculada ao IP, mas
+nunca aceita um host fornecido pelo cliente: o destino é construído pelo daemon
+como `http://127.0.0.1:<porta>`. Portas privilegiadas (`<1024`), a porta HTTP
+do próprio daemon, sua porta adjacente de diagnóstico e a denylist adicional
+`dynamicPorts.deniedPorts` são bloqueadas. Upgrade de WebSocket não é suportado.
+Antes de encaminhar, o proxy remove o cookie de sessão do `dl_conn`, o cookie
+de contexto de serviço e credenciais `dsh-auth-*`/`dl_conn_launch_*`, evitando
+entregá-los ao processo arbitrário escolhido pela porta. O recurso é habilitado
+por padrão para usuários já autorizados; operadores devem acrescentar à
+denylist qualquer porta sensível específica do host.
+
 ## Bootstrap de sessão de serviços internos
 
 Serviços com uma segunda autenticação de lançamento, como `dsh web`, podem

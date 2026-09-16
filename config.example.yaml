@@ -41,6 +41,15 @@ tunnel:
   # Idle timeout before stopping ephemeral tunnel if no activity occurs.
   inactivityTimeout: "10m"
 
+# Dynamic loopback proxy. Authenticated users can open HTTP services at
+# /local/<port>/. Targets are always 127.0.0.1; privileged ports (<1024),
+# tunnel.listenPort, and the local diagnostics port are always blocked.
+# Add any other host-specific sensitive ports here (SSH/22 is blocked by
+# default even though it is already privileged, to keep the policy explicit).
+dynamicPorts:
+  deniedPorts:
+    - 22
+
 auth:
   # Time-to-live for single-use authentication tokens.
   tokenTTL: "120s"
