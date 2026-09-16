@@ -75,7 +75,13 @@ func (p *DynamicPortProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.SetXForwarded()
 
 		// Proxy authentication and configured-service credentials belong to
-		// dl_conn, not to an arbitrary process selected by port.
+		// dl_conn, not to an arbitrary process selected by port. GetSessionID
+		// accepts "Authorization: Bearer <sessionID>" as an alternative to the
+		// session cookie (see internal/auth/session.go), so a caller who
+		// authenticated that way would otherwise have dl_conn's own live
+		// session ID forwarded verbatim to the loopback backend, which could
+		// replay it against dl_conn's protected routes.
+		req.Out.Header.Del("Authorization")
 		cookies := req.Out.Cookies()
 		req.Out.Header.Del("Cookie")
 		for _, cookie := range cookies {

@@ -204,6 +204,35 @@ func TestValidate_ServiceMissingPrefixSlash(t *testing.T) {
 	}
 }
 
+func TestValidate_ServiceReservedPrefixCollision(t *testing.T) {
+	// Guards the daemon against a panic on duplicate http.ServeMux
+	// registration: cmd/dl_conn/main.go always registers "/auth" and
+	// "/local/" itself before any configured service prefix, including one
+	// merged in from the frontend's custom-services export fragment.
+	for _, prefix := range []string{"/auth", "/local", "/local/8080"} {
+		t.Run(prefix, func(t *testing.T) {
+			s := ServiceConfig{ID: "custom", Prefix: prefix, Target: "http://127.0.0.1:8080"}
+			err := s.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil for reserved prefix %q, want error", prefix)
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("Validate() error = %v, want it to mention the reserved route", err)
+			}
+		})
+	}
+	// A prefix that merely contains a reserved segment as a substring, not as
+	// a path component, must not be rejected (e.g. "/authorization").
+	for _, prefix := range []string{"/authorization", "/localdev"} {
+		t.Run("not reserved: "+prefix, func(t *testing.T) {
+			s := ServiceConfig{ID: "custom", Prefix: prefix, Target: "http://127.0.0.1:8080"}
+			if err := s.Validate(); err != nil {
+				t.Errorf("Validate() = %v, want nil for non-colliding prefix %q", err, prefix)
+			}
+		})
+	}
+}
+
 func TestGetNsec_FromNsec(t *testing.T) {
 	c := &Config{Nostr: NostrConfig{Nsec: "nsec1abc"}}
 	v, err := c.GetNsec()

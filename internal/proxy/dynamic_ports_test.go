@@ -56,6 +56,41 @@ func TestDynamicPortProxyForwardsToLoopbackAndStripsPrefix(t *testing.T) {
 	}
 }
 
+func TestDynamicPortProxyStripsAuthorizationHeader(t *testing.T) {
+	// auth.SessionManager.GetSessionID accepts "Authorization: Bearer
+	// <sessionID>" as an alternative to the session cookie. Without
+	// stripping it, a caller authenticating that way would have dl_conn's
+	// own live session ID forwarded verbatim to the arbitrary loopback
+	// backend selected by port, which could replay it against dl_conn's
+	// protected routes.
+	var gotAuthorization string
+	sawHeader := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization, sawHeader = r.Header.Get("Authorization"), r.Header.Get("Authorization") != ""
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	u, _ := url.Parse(backend.URL)
+	port, _ := strconv.Atoi(u.Port())
+
+	sm := auth.NewSessionManager(time.Hour)
+	sid := sm.CreateSession(httptest.NewRequest(http.MethodGet, "/", nil))
+	h := NewDynamicPortProxy(sm, 9099, nil)
+	req := httptest.NewRequest(http.MethodGet, "/local/"+strconv.Itoa(port)+"/api/value", nil)
+	// Authenticate via bearer (not cookie) so ValidateSession accepts the
+	// request, then confirm that exact session ID never reaches the backend.
+	req.Header.Set("Authorization", "Bearer "+sid)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if sawHeader {
+		t.Errorf("Authorization header leaked to dynamic upstream: %q", gotAuthorization)
+	}
+}
+
 func TestDynamicPortProxyDeniesSensitivePorts(t *testing.T) {
 	sm := auth.NewSessionManager(time.Hour)
 	sid := sm.CreateSession(httptest.NewRequest(http.MethodGet, "/", nil))

@@ -273,6 +273,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// reservedRoutePrefixes lists the mux patterns cmd/dl_conn/main.go registers
+// unconditionally ("/auth", "/auth/logout", "/local/") before any configured
+// service prefix. A configured service claiming one of these — including via
+// a merged export fragment from the frontend's custom-services feature —
+// would collide on http.ServeMux registration and panic the daemon at
+// startup, so it is rejected here as a config error instead.
+var reservedRoutePrefixes = []string{"/auth", "/local"}
+
 func (s *ServiceConfig) Validate() error {
 	if s.ID == "" {
 		return errors.New("id is required")
@@ -286,6 +294,11 @@ func (s *ServiceConfig) Validate() error {
 	}
 	if !strings.HasPrefix(s.Prefix, "/") {
 		return fmt.Errorf("prefix must start with /: %s", s.Prefix)
+	}
+	for _, reserved := range reservedRoutePrefixes {
+		if s.Prefix == reserved || strings.HasPrefix(s.Prefix, reserved+"/") {
+			return fmt.Errorf("prefix %q collides with the daemon's reserved %q route", s.Prefix, reserved)
+		}
 	}
 	for _, rp := range s.RootPaths {
 		if !strings.HasPrefix(rp, "/") || !strings.HasSuffix(rp, "/") || rp == "/" {
