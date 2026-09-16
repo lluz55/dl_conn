@@ -349,6 +349,15 @@
             </div>
           </div>
         </div>
+
+        <!-- Services list in overview (compact list view) -->
+        <div id="services-overview" class="services-overview hidden" aria-label="Serviços">
+          <div class="services-overview-head">
+            <h3>Serviços</h3>
+            <span id="services-overview-count" class="pill p-info" aria-live="polite">0</span>
+          </div>
+          <ul id="services-overview-list" class="services-overview-list" role="list"></ul>
+        </div>
       </section>
 
       <!-- Host Telemetry -->
@@ -402,6 +411,25 @@
               <polyline class="sparkline-line" id="chart-disk-line" points=""></polyline>
             </svg>
           </div>
+        </div>
+      </section>
+
+      <!-- Dynamic loopback service -->
+      <section id="local-port-section" class="card hidden">
+        <div class="card-head">
+          <h2>Abrir porta local</h2>
+          <svg class="icon" aria-hidden="true"><use href="#i-router"></use></svg>
+        </div>
+        <p id="local-port-help" class="status-sub">Acessa um serviço HTTP no localhost do host usando a sessão atual. Portas privilegiadas e sensíveis são bloqueadas.</p>
+        <div class="field">
+          <label for="local-port-input" class="field-label">Porta do serviço</label>
+          <div class="relay-add-row">
+            <input type="number" id="local-port-input" class="nsid-input" min="1024" max="65535" inputmode="numeric" placeholder="Ex.: 8080" aria-describedby="local-port-help local-port-status" />
+            <button id="btn-open-local-port" class="btn btn-tonal">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir
+            </button>
+          </div>
+          <p id="local-port-status" class="status-sub" role="status" aria-live="polite"></p>
         </div>
       </section>
 

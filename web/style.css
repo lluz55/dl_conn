@@ -1102,6 +1102,7 @@ body {
   box-shadow: var(--elev-1);
   transition: box-shadow var(--transition), transform var(--transition);
   height: 100%;
+  position: relative;
 }
 
 .service-card:hover { box-shadow: var(--elev-2); transform: translateY(-2px); }
@@ -1559,6 +1560,203 @@ body {
   min-width: 0;
   flex: 1;
 }
+
+/* ── Services overview list (compact list in Visão geral) ───────── */
+.services-overview {
+  margin-top: var(--gap-lg);
+  padding-top: var(--gap-lg);
+  border-top: 1px solid var(--color-outline);
+}
+
+.services-overview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-sm);
+}
+
+.services-overview-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.services-overview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+.service-overview-item {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-md);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition), transform var(--transition);
+  cursor: grab;
+}
+
+.service-overview-item:hover {
+  background: var(--color-surface-3);
+}
+
+.service-overview-item.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.service-overview-item.drag-over {
+  border-top: 2px solid var(--color-primary);
+}
+
+.service-overview-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-ink);
+  flex-shrink: 0;
+}
+
+.service-overview-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.service-overview-icon .svc-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-text-3);
+  box-shadow: 0 0 0 2px var(--color-surface-2);
+}
+
+.service-overview-icon .svc-dot.dot-good { background: var(--color-success); }
+.service-overview-icon .svc-dot.dot-bad  { background: var(--color-error); }
+.service-overview-icon .svc-dot.dot-unknown { background: var(--color-text-3); }
+
+.service-overview-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.service-overview-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.service-overview-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-2xs);
+  color: var(--color-text-3);
+}
+
+.service-overview-status .dot { width: 6px; height: 6px; }
+
+.service-overview-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-ink);
+  text-decoration: none;
+  transition: background-color var(--transition), color var(--transition);
+  flex-shrink: 0;
+}
+
+.service-overview-link:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.service-overview-link svg { width: 14px; height: 14px; }
+
+.service-overview-drag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-3);
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity var(--transition), color var(--transition);
+}
+
+.service-overview-drag:hover {
+  opacity: 1;
+  color: var(--color-primary-ink);
+  background: var(--color-primary-soft);
+}
+
+.service-overview-drag:active { cursor: grabbing; }
+
+/* Drag-and-drop for service cards (grid view) */
+.service-card {
+  cursor: grab;
+}
+
+.service-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.service-card.drag-over {
+  box-shadow: var(--elev-2), 0 0 0 2px var(--color-primary);
+}
+
+.service-card-drag {
+  position: absolute;
+  top: var(--gap-xs);
+  right: var(--gap-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-3);
+  cursor: grab;
+  opacity: 0.5;
+  transition: opacity var(--transition), color var(--transition), background-color var(--transition);
+  z-index: 1;
+}
+
+.service-card-drag:hover {
+  opacity: 1;
+  color: var(--color-primary-ink);
+  background: var(--color-primary-soft);
+}
+
+.service-card.dragging .service-card-drag { display: none; }
 
 /* Compact layouts need explicit reflow rules: controls keep usable touch
    targets without forcing cards wider than the viewport. */

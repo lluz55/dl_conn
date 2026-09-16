@@ -44,6 +44,10 @@ import { startScan } from './js/qr_scanner.js';
     btnResetRelays: $("btn-reset-relays"),
     servicesSection: $("services-section"),
     servicesList: $("services-list"),
+    localPortSection: $("local-port-section"),
+    localPortInput: $("local-port-input"),
+    localPortStatus: $("local-port-status"),
+    btnOpenLocalPort: $("btn-open-local-port"),
     tunnelStatus: $("tunnel-status"),
     relayStatus: $("relay-status"),
     themeToggle: $("theme-toggle"),
@@ -108,6 +112,9 @@ import { startScan } from './js/qr_scanner.js';
     healthCountUp: $("health-count-up"),
     healthCountDown: $("health-count-down"),
     healthCountUnknown: $("health-count-unknown"),
+    servicesOverview: $("services-overview"),
+    servicesOverviewList: $("services-overview-list"),
+    servicesOverviewCount: $("services-overview-count"),
   };
 
   let expiryTimer = null;
@@ -124,6 +131,12 @@ import { startScan } from './js/qr_scanner.js';
   let lastWatchdogAlive = true;
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
+
+  /** Drag-and-drop state for service reordering */
+  let dragSourceEl = null;
+  let dragSourceIndex = -1;
+  let dragTargetIndex = -1;
+  const SERVICES_ORDER_KEY = "dl_conn_services_order";
 
   /**
    * Discovery requests are numbered so a reply that beats its own publish
@@ -597,6 +610,10 @@ import { startScan } from './js/qr_scanner.js';
     el.btnRefreshServices.addEventListener("click", onRefreshServices);
     el.btnClearServices.addEventListener("click", onClearServices);
     el.btnClearAll.addEventListener("click", onClearAll);
+    el.btnOpenLocalPort.addEventListener("click", onOpenLocalPort);
+    el.localPortInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") onOpenLocalPort();
+    });
     el.btnScanQr.addEventListener("click", onScanQr);
     el.btnQrClose.addEventListener("click", stopQrScan);
     el.autoLockTimeout.addEventListener("change", onAutoLockChange);
@@ -781,6 +798,7 @@ import { startScan } from './js/qr_scanner.js';
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
+      el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
       state.nostr = null;
@@ -802,6 +820,7 @@ import { startScan } from './js/qr_scanner.js';
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
       el.servicesSection.classList.add("hidden");
+      el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       clearLiveTimers();
       stopCountdownTicker();
@@ -901,6 +920,7 @@ import { startScan } from './js/qr_scanner.js';
     state.pendingIdentity = null;
     clearLiveTimers();
     el.servicesSection.classList.add("hidden");
+    el.localPortSection.classList.add("hidden");
     setTunnelStatus("Aguardando túnel…");
     setSessionStatus("Bloqueada", "dim");
     window.location.reload();
@@ -1180,9 +1200,12 @@ import { startScan } from './js/qr_scanner.js';
     state.tunnelURL = data.tunnel_url;
     state.authToken = data.auth_token;
     state.services = data.services || [];
+    // Apply any saved user ordering after receiving fresh services
+    loadServicesOrder();
     startExpiryCountdown(data.expires_in_seconds || 0);
     renderServices();
     el.servicesSection.classList.remove("hidden");
+    el.localPortSection.classList.remove("hidden");
     if (data.host_telemetry) renderTelemetry(data.host_telemetry);
     el.app.setAttribute("data-phase", "live");
     // Transition session from "pending" to "active" on first successful
@@ -1275,9 +1298,29 @@ import { startScan } from './js/qr_scanner.js';
     return tip;
   }
 
+  const localPortStrings = {
+    invalid: "Digite uma porta entre 1024 e 65535.",
+    opening: "Abrindo serviço local…"
+  };
+
+  function onOpenLocalPort() {
+    const port = Number(el.localPortInput.value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535 || !state.tunnelURL) {
+      el.localPortStatus.textContent = localPortStrings.invalid;
+      return;
+    }
+    el.localPortStatus.textContent = localPortStrings.opening;
+    const redirectPath = "/local/" + port + "/";
+    const href = state.tunnelURL + "/auth?token=" +
+      encodeURIComponent(state.authToken || "") +
+      "&redirect=" + encodeURIComponent(redirectPath);
+    window.open(href, "_blank", "noopener,noreferrer");
+  }
+
   function onClearServices() {
     if (!confirm("Apagar todos os serviços da visualização?")) return;
     state.services = [];
+    localStorage.removeItem(SERVICES_ORDER_KEY);
     renderServices();
   }
 
@@ -1708,6 +1751,152 @@ import { startScan } from './js/qr_scanner.js';
     if (el.healthCountUnknown) el.healthCountUnknown.textContent = unknown + " aguardando";
   }
 
+  /** Load saved service order from localStorage and apply it. */
+  function loadServicesOrder() {
+    try {
+      const saved = localStorage.getItem(SERVICES_ORDER_KEY);
+      if (saved) {
+        const order = JSON.parse(saved);
+        if (Array.isArray(order) && order.length > 0) {
+          // Reorder services to match saved order by ID
+          const serviceMap = new Map(state.services.map((s) => [s.id, s]));
+          const reordered = order.map((id) => serviceMap.get(id)).filter(Boolean);
+          // Append any new services not in the saved order
+          const remaining = state.services.filter((s) => !order.includes(s.id));
+          state.services = reordered.concat(remaining);
+        }
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  /** Save current service order to localStorage. */
+  function saveServicesOrder() {
+    try {
+      // Save the service IDs in current order
+      const order = state.services.map((s) => s.id);
+      localStorage.setItem(SERVICES_ORDER_KEY, JSON.stringify(order));
+    } catch (_) { /* ignore */ }
+  }
+
+  /** Reorder services array and persist. */
+  function reorderServices(fromIndex, toIndex) {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    if (fromIndex >= state.services.length || toIndex >= state.services.length) return;
+    const [removed] = state.services.splice(fromIndex, 1);
+    state.services.splice(toIndex, 0, removed);
+    saveServicesOrder();
+  }
+
+  /** Render the compact services list in the Visão geral section. */
+  function renderServicesOverview() {
+    if (!el.servicesOverview || !el.servicesOverviewList || !el.servicesOverviewCount) return;
+
+    if (state.services.length === 0) {
+      el.servicesOverview.classList.add("hidden");
+      return;
+    }
+
+    el.servicesOverview.classList.remove("hidden");
+    el.servicesOverviewCount.textContent = state.services.length + (state.services.length === 1 ? " serviço" : " serviços");
+
+    const frag = document.createDocumentFragment();
+
+    state.services.forEach((svc, index) => {
+      const li = document.createElement("li");
+      li.className = "service-overview-item";
+      li.draggable = true;
+      li.dataset.index = index;
+
+      const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
+      const href = state.tunnelURL + "/auth?token=" +
+        encodeURIComponent(state.authToken || "") +
+        "&redirect=" + encodeURIComponent(redirectPath);
+
+      const status = svc.status === "up" || svc.status === "down" ? svc.status : "unknown";
+      const statusMeta = {
+        up: { cls: "dot-good", title: "Ativo" },
+        down: { cls: "dot-bad", title: "Inativo" },
+        unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
+      }[status];
+
+      const iconHtml = serviceIcon(svc.icon,
+        '<span class="svc-dot ' + statusMeta.cls + '" title="' + escapeHtml(statusMeta.title) + '" aria-hidden="true"></span>');
+
+      li.innerHTML =
+        '<span class="service-overview-drag" aria-label="Reordenar" data-tip="Arrastar para reordenar">' +
+        '<svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>' +
+        '</span>' +
+        iconHtml +
+        '<div class="service-overview-meta">' +
+        '<div class="service-overview-name">' + escapeHtml(svc.name || svc.id || "serviço") + '</div>' +
+        '<div class="service-overview-status">' +
+        '<span class="dot ' + statusMeta.cls + '" aria-hidden="true"></span>' +
+        '<span>' + escapeHtml(statusMeta.title) + '</span>' +
+        '</div>' +
+        '</div>' +
+        '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + escapeHtml(svc.name || svc.id || "serviço") + '">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>';
+
+      // Drag-and-drop event listeners
+      li.addEventListener("dragstart", handleDragStart);
+      li.addEventListener("dragend", handleDragEnd);
+      li.addEventListener("dragover", handleDragOver);
+      li.addEventListener("dragleave", handleDragLeave);
+      li.addEventListener("drop", handleDrop);
+
+      frag.appendChild(li);
+    });
+
+    el.servicesOverviewList.replaceChildren(frag);
+  }
+
+  /** Drag-and-drop handlers for service reordering (both views). */
+  function handleDragStart(e) {
+    dragSourceEl = e.target.closest(".service-overview-item, .service-card");
+    if (!dragSourceEl) return;
+    dragSourceIndex = parseInt(dragSourceEl.dataset.index, 10);
+    dragSourceEl.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(dragSourceIndex));
+  }
+
+  function handleDragEnd(e) {
+    const el = e.target.closest(".service-overview-item, .service-card");
+    if (el) el.classList.remove("dragging");
+    // Clear drag-over state on all items
+    document.querySelectorAll(".drag-over").forEach((item) => item.classList.remove("drag-over"));
+    dragSourceEl = null;
+    dragSourceIndex = -1;
+    dragTargetIndex = -1;
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const targetEl = e.target.closest(".service-overview-item, .service-card");
+    if (!targetEl || targetEl === dragSourceEl) return;
+    targetEl.classList.add("drag-over");
+    dragTargetIndex = parseInt(targetEl.dataset.index, 10);
+  }
+
+  function handleDragLeave(e) {
+    const targetEl = e.target.closest(".service-overview-item, .service-card");
+    if (targetEl) targetEl.classList.remove("drag-over");
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    const targetEl = e.target.closest(".service-overview-item, .service-card");
+    if (!targetEl || targetEl === dragSourceEl) return;
+    targetEl.classList.remove("drag-over");
+    const targetIndex = parseInt(targetEl.dataset.index, 10);
+    if (dragSourceIndex !== targetIndex) {
+      reorderServices(dragSourceIndex, targetIndex);
+      renderServices(); // Re-render both views
+      renderServicesOverview();
+    }
+  }
+
   function renderServices() {
     el.servicesList.innerHTML = "";
     renderServicesHealth();
@@ -1715,11 +1904,14 @@ import { startScan } from './js/qr_scanner.js';
     if (state.services.length === 0) {
       el.servicesList.innerHTML =
         '<p class="services-empty" role="status">Nenhum serviço na visualização.</p>';
+      renderServicesOverview();
       return;
     }
-    state.services.forEach((svc) => {
+    state.services.forEach((svc, index) => {
       const card = document.createElement("div");
       card.className = "service-card";
+      card.draggable = true;
+      card.dataset.index = index;
       // A trailing slash matters here: proxied SPAs (Frigate's is the known
       // case) fetch some of their own assets via relative URLs resolved
       // against the current document's path. Land the browser on
@@ -1734,6 +1926,9 @@ import { startScan } from './js/qr_scanner.js';
         encodeURIComponent(state.authToken || "") +
         "&redirect=" + encodeURIComponent(redirectPath);
       card.innerHTML =
+        '<span class="service-card-drag" aria-label="Reordenar" data-tip="Arrastar para reordenar">' +
+        '<svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>' +
+        '</span>' +
         '<div class="service-top">' +
         serviceIcon(svc.icon, statusDot(svc, "svc-dot")) +
         '<div class="service-meta">' +
@@ -1743,8 +1938,19 @@ import { startScan } from './js/qr_scanner.js';
         "</div>" +
         '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
+
+      // Drag-and-drop event listeners
+      card.addEventListener("dragstart", handleDragStart);
+      card.addEventListener("dragend", handleDragEnd);
+      card.addEventListener("dragover", handleDragOver);
+      card.addEventListener("dragleave", handleDragLeave);
+      card.addEventListener("drop", handleDrop);
+
       el.servicesList.appendChild(card);
     });
+
+    // Also render the overview list
+    renderServicesOverview();
   }
 
   function onToggleRelays() {
