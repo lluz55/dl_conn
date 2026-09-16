@@ -438,6 +438,9 @@
         <div class="card-head">
           <h2>Serviços</h2>
           <div class="card-head-actions">
+            <button id="btn-toggle-custom-service" class="btn-icon" aria-label="Adicionar serviço" data-tip="Adicionar serviço" aria-expanded="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            </button>
             <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip="Atualizar status dos serviços">
               <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
             </button>
@@ -446,6 +449,49 @@
             </button>
           </div>
         </div>
+        <form id="custom-service-form" class="custom-service-form hidden" novalidate>
+          <div class="custom-service-fields">
+            <div class="field">
+              <label for="custom-service-name" class="field-label">Nome</label>
+              <input id="custom-service-name" class="nsid-input" type="text" maxlength="80" required placeholder="Ex.: Grafana" />
+            </div>
+            <div class="field">
+              <label for="custom-service-port" class="field-label">Porta</label>
+              <input id="custom-service-port" class="nsid-input" type="number" min="1024" max="65535" inputmode="numeric" required placeholder="Ex.: 3000" />
+            </div>
+            <div class="field">
+              <label for="custom-service-icon" class="field-label">Ícone</label>
+              <select id="custom-service-icon" class="nsid-select" aria-label="Ícone do serviço"></select>
+            </div>
+            <div class="field custom-service-description-field">
+              <label for="custom-service-description" class="field-label">Descrição (opcional)</label>
+              <input id="custom-service-description" class="nsid-input" type="text" maxlength="240" placeholder="Como este serviço é usado" />
+            </div>
+          </div>
+          <div class="custom-service-options">
+            <label class="checkbox-row">
+              <input type="checkbox" id="custom-service-websocket" />
+              <span>Usar WebSocket na instalação permanente</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="custom-service-persist" />
+              <span>Salvar neste navegador</span>
+            </label>
+          </div>
+          <p class="status-sub">O acesso temporário usa <code>/local/&lt;porta&gt;/</code> e é somente HTTP. A opção WebSocket só será aplicada ao arquivo exportado para instalação permanente.</p>
+          <div class="custom-service-actions">
+            <button type="submit" id="btn-add-custom-service" class="btn btn-primary">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>Adicionar serviço
+            </button>
+            <button type="button" id="btn-export-services-yaml" class="btn btn-tonal">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar YAML
+            </button>
+            <button type="button" id="btn-export-services-nix" class="btn btn-tonal">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar Nix
+            </button>
+          </div>
+          <p id="custom-service-status" class="status-sub" role="status" aria-live="polite"></p>
+        </form>
         <div id="services-health" class="health-bar-wrap hidden">
           <!-- Proportional strip drawn as SVG rects (x/width set from
                app.js via setAttribute, same technique as the sparklines
@@ -485,6 +531,6 @@
     </div>
   </div>
 
-  <script type="module" src="./app.js?v=20260916-1"></script>
+  <script type="module" src="./app.js?v=20260916-2"></script>
 </body>
 </html>

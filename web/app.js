@@ -4,6 +4,17 @@ import { NostrClient } from './js/nostr_client.js';
 import { RelayManager } from './js/relay_manager.js';
 import { SessionManager } from './js/session_manager.js';
 import { startScan } from './js/qr_scanner.js';
+import {
+  CUSTOM_SERVICES_STORAGE_KEY,
+  CUSTOM_SERVICE_STRINGS,
+  SAFE_SERVICE_ICONS,
+  createCustomService,
+  exportCustomServicesNix,
+  exportCustomServicesYaml,
+  mergeHostAndCustomServices,
+  parseCustomServices,
+  serializeCustomServices,
+} from './js/custom_services.js';
 
 (function () {
   "use strict";
@@ -115,6 +126,17 @@ import { startScan } from './js/qr_scanner.js';
     servicesOverview: $("services-overview"),
     servicesOverviewList: $("services-overview-list"),
     servicesOverviewCount: $("services-overview-count"),
+    btnToggleCustomService: $("btn-toggle-custom-service"),
+    customServiceForm: $("custom-service-form"),
+    customServiceName: $("custom-service-name"),
+    customServicePort: $("custom-service-port"),
+    customServiceIcon: $("custom-service-icon"),
+    customServiceDescription: $("custom-service-description"),
+    customServiceWebsocket: $("custom-service-websocket"),
+    customServicePersist: $("custom-service-persist"),
+    customServiceStatus: $("custom-service-status"),
+    btnExportServicesYaml: $("btn-export-services-yaml"),
+    btnExportServicesNix: $("btn-export-services-nix"),
   };
 
   let expiryTimer = null;
@@ -446,6 +468,8 @@ import { startScan } from './js/qr_scanner.js';
     nostr: null,
     tunnelURL: null,
     authToken: null,
+    hostServices: [],
+    customServices: [],
     services: [],
     pendingIdentity: null,
     config: { relays: [], hostNpub: null },
@@ -486,6 +510,8 @@ import { startScan } from './js/qr_scanner.js';
       });
     }
     renderRelayList();
+    loadCustomServices();
+    populateCustomServiceIcons();
     state.session.on(onSessionEvent);
     state.relayManager.on(onRelayEvent);
     bindEvents();
@@ -609,6 +635,10 @@ import { startScan } from './js/qr_scanner.js';
     el.btnLockSession.addEventListener("click", () => state.session.lock());
     el.btnRefreshServices.addEventListener("click", onRefreshServices);
     el.btnClearServices.addEventListener("click", onClearServices);
+    el.btnToggleCustomService.addEventListener("click", onToggleCustomServiceForm);
+    el.customServiceForm.addEventListener("submit", onAddCustomService);
+    el.btnExportServicesYaml.addEventListener("click", () => onExportCustomServices("yaml"));
+    el.btnExportServicesNix.addEventListener("click", () => onExportCustomServices("nix"));
     el.btnClearAll.addEventListener("click", onClearAll);
     el.btnOpenLocalPort.addEventListener("click", onOpenLocalPort);
     el.localPortInput.addEventListener("keydown", (event) => {
@@ -913,6 +943,8 @@ import { startScan } from './js/qr_scanner.js';
     }
     for (const k of Object.keys(sessionStorage)) if (k.startsWith("dl_conn_")) sessionStorage.removeItem(k);
     // reinicia estado em memória
+    state.hostServices = [];
+    state.customServices = [];
     state.services = [];
     state.tunnelURL = null;
     state.authToken = null;
@@ -1199,7 +1231,8 @@ import { startScan } from './js/qr_scanner.js';
     setTunnelStatus("Túnel: " + (data.tunnel_url || "conectado") + " · atualizado às " + hora);
     state.tunnelURL = data.tunnel_url;
     state.authToken = data.auth_token;
-    state.services = data.services || [];
+    state.hostServices = data.services || [];
+    mergeServices();
     // Apply any saved user ordering after receiving fresh services
     loadServicesOrder();
     startExpiryCountdown(data.expires_in_seconds || 0);
@@ -1318,10 +1351,143 @@ import { startScan } from './js/qr_scanner.js';
   }
 
   function onClearServices() {
-    if (!confirm("Apagar todos os serviços da visualização?")) return;
-    state.services = [];
+    if (!confirm("Apagar todos os serviços da visualização? Isso também remove os serviços personalizados salvos neste navegador.")) return;
+    state.hostServices = [];
+    state.customServices = [];
+    // The in-memory list is cleared either way; only the persistence outcome
+    // decides which message is honest (see saveCustomServices/mergeServices).
+    const persisted = mergeServices();
     localStorage.removeItem(SERVICES_ORDER_KEY);
     renderServices();
+    if (el.customServiceStatus) {
+      el.customServiceStatus.textContent = persisted ? "" : CUSTOM_SERVICE_STRINGS.clearedButNotPersisted;
+    }
+  }
+
+  function populateCustomServiceIcons() {
+    if (!el.customServiceIcon) return;
+    el.customServiceIcon.replaceChildren(...SAFE_SERVICE_ICONS.map((icon) => {
+      const option = document.createElement("option");
+      option.value = icon;
+      option.textContent = icon;
+      return option;
+    }));
+    el.customServiceIcon.value = "package";
+  }
+
+  function loadCustomServices() {
+    state.customServices = parseCustomServices(localStorage.getItem(CUSTOM_SERVICES_STORAGE_KEY));
+    mergeServices();
+  }
+
+  /**
+   * Persists the current custom-services set (the opt-in subset only — see
+   * serializeCustomServices) and reports whether the write actually landed.
+   * localStorage.setItem can throw (quota exceeded, disabled storage in
+   * private browsing, SecurityError), and swallowing that silently used to
+   * make add/remove/clear report success even when nothing was saved, so
+   * every caller below must check this return value and phrase its status
+   * message honestly instead of assuming success.
+   */
+  function saveCustomServices() {
+    try {
+      localStorage.setItem(CUSTOM_SERVICES_STORAGE_KEY, serializeCustomServices(state.customServices));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** Rebuilds the merged view and persists it; returns whether the persist step succeeded (see saveCustomServices). */
+  function mergeServices() {
+    const merged = mergeHostAndCustomServices(state.hostServices, state.customServices);
+    state.customServices = merged.customServices;
+    state.services = merged.services;
+    return saveCustomServices();
+  }
+
+  function onToggleCustomServiceForm() {
+    const willShow = el.customServiceForm.classList.contains("hidden");
+    el.customServiceForm.classList.toggle("hidden", !willShow);
+    el.btnToggleCustomService.setAttribute("aria-expanded", String(willShow));
+    if (willShow) el.customServiceName.focus();
+  }
+
+  function onAddCustomService(event) {
+    event.preventDefault();
+    try {
+      const service = createCustomService({
+        name: el.customServiceName.value,
+        port: el.customServicePort.value,
+        icon: el.customServiceIcon.value,
+        description: el.customServiceDescription.value,
+        websocket: el.customServiceWebsocket.checked,
+        persisted: el.customServicePersist.checked,
+      }, state.hostServices, state.customServices);
+      state.customServices.push(service);
+      // The in-memory add always applies; mergeServices' return value only
+      // decides which status message is honest, so a failed localStorage
+      // write never rolls back the service the user just saw get added.
+      const persisted = mergeServices();
+      loadServicesOrder();
+      renderServices();
+      el.customServiceForm.reset();
+      el.customServiceIcon.value = "package";
+      if (service.persisted && !persisted) {
+        el.customServiceStatus.textContent = CUSTOM_SERVICE_STRINGS.addedButNotPersisted;
+      } else {
+        el.customServiceStatus.textContent = service.persisted
+          ? CUSTOM_SERVICE_STRINGS.addedPersisted
+          : CUSTOM_SERVICE_STRINGS.addedTemporary;
+      }
+    } catch (err) {
+      el.customServiceStatus.textContent = err.message;
+    }
+  }
+
+  function onDeleteCustomService(configId) {
+    const deletedWasPersisted = state.customServices.some((service) => service.configId === configId && service.persisted);
+    state.customServices = state.customServices.filter((service) => service.configId !== configId);
+    // Same rule as onAddCustomService: the in-memory removal always applies;
+    // only the message reflects whether localStorage actually caught up, so
+    // a deleted persisted entry can only "reappear" via the storage that
+    // failed to update, never via the in-memory list this function owns.
+    const persisted = mergeServices();
+    saveServicesOrder();
+    renderServices();
+    el.customServiceStatus.textContent = deletedWasPersisted && !persisted
+      ? CUSTOM_SERVICE_STRINGS.deletedButNotPersisted
+      : CUSTOM_SERVICE_STRINGS.deleted;
+  }
+
+  function downloadableCustomServices() {
+    return state.customServices;
+  }
+
+  function downloadText(filename, content, type) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function onExportCustomServices(format) {
+    const services = downloadableCustomServices();
+    if (!services.length) {
+      el.customServiceStatus.textContent = CUSTOM_SERVICE_STRINGS.noCustomServices;
+      return;
+    }
+    if (format === "yaml") {
+      downloadText("dl-conn-custom-services.yaml", exportCustomServicesYaml(services), "application/yaml;charset=utf-8");
+      el.customServiceStatus.textContent = CUSTOM_SERVICE_STRINGS.exportYaml;
+      return;
+    }
+    downloadText("dl-conn-custom-services.nix", exportCustomServicesNix(services), "text/plain;charset=utf-8");
+    el.customServiceStatus.textContent = CUSTOM_SERVICE_STRINGS.exportNix;
   }
 
   /* ── Debug console ─────────────────────────────────────────── */
@@ -1510,11 +1676,13 @@ import { startScan } from './js/qr_scanner.js';
     const status = svc.status === "up" || svc.status === "down"
       ? svc.status
       : "unknown";
-    const meta = {
-      up: { cls: "dot-good", title: "Ativo" },
-      down: { cls: "dot-bad", title: "Inativo" },
-      unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
-    }[status];
+    const meta = svc.custom
+      ? { cls: "dot-unknown", title: CUSTOM_SERVICE_STRINGS.unprobed }
+      : {
+        up: { cls: "dot-good", title: "Ativo" },
+        down: { cls: "dot-bad", title: "Inativo" },
+        unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
+      }[status];
     const cls = (baseClass || "dot") + " " + meta.cls;
     return '<span class="' + cls + '" title="' + escapeHtml(meta.title) +
       '" data-status="' + status + '" aria-hidden="true"></span>';
@@ -1813,11 +1981,13 @@ import { startScan } from './js/qr_scanner.js';
         "&redirect=" + encodeURIComponent(redirectPath);
 
       const status = svc.status === "up" || svc.status === "down" ? svc.status : "unknown";
-      const statusMeta = {
-        up: { cls: "dot-good", title: "Ativo" },
-        down: { cls: "dot-bad", title: "Inativo" },
-        unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
-      }[status];
+      const statusMeta = svc.custom
+        ? { cls: "dot-unknown", title: CUSTOM_SERVICE_STRINGS.unprobed }
+        : {
+          up: { cls: "dot-good", title: "Ativo" },
+          down: { cls: "dot-bad", title: "Inativo" },
+          unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
+        }[status];
 
       const iconHtml = serviceIcon(svc.icon,
         '<span class="svc-dot ' + statusMeta.cls + '" title="' + escapeHtml(statusMeta.title) + '" aria-hidden="true"></span>');
@@ -1925,6 +2095,11 @@ import { startScan } from './js/qr_scanner.js';
       const href = state.tunnelURL + "/auth?token=" +
         encodeURIComponent(state.authToken || "") +
         "&redirect=" + encodeURIComponent(redirectPath);
+      const customMeta = svc.custom
+        ? '<div class="service-custom-meta"><span class="pill p-info">' + CUSTOM_SERVICE_STRINGS.customBadge + '</span>' +
+          '<span class="status-sub">' + (svc.persisted ? CUSTOM_SERVICE_STRINGS.persistedBadge : CUSTOM_SERVICE_STRINGS.temporaryBadge) + '</span></div>' +
+          '<div class="service-unprobed">' + CUSTOM_SERVICE_STRINGS.unprobed + '</div>'
+        : "";
       card.innerHTML =
         '<span class="service-card-drag" aria-label="Reordenar" data-tip="Arrastar para reordenar">' +
         '<svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>' +
@@ -1934,10 +2109,19 @@ import { startScan } from './js/qr_scanner.js';
         '<div class="service-meta">' +
         '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
         (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
+        customMeta +
         "</div>" +
         "</div>" +
+        '<div class="service-card-actions">' +
         '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
-        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>';
+        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>' +
+        (svc.custom ? '<button type="button" class="btn-icon custom-service-delete" aria-label="' + CUSTOM_SERVICE_STRINGS.deleteLabel + '" data-custom-id="' + escapeHtml(svc.configId) + '">' +
+          '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"></use></svg></button>' : "") +
+        '</div>';
+
+      if (svc.custom) {
+        card.querySelector(".custom-service-delete").addEventListener("click", () => onDeleteCustomService(svc.configId));
+      }
 
       // Drag-and-drop event listeners
       card.addEventListener("dragstart", handleDragStart);
