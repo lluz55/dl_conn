@@ -153,6 +153,34 @@ há nome de host nem pill de URL do túnel no `.session-meta` — esse contexto
 já vive no KPI "Túnel" da Visão geral, e duplicá-lo aqui reintroduziria a
 fragmentação que a fusão do cartão de sessão eliminou.
 
+## Serviços personalizados no frontend
+
+O cartão `#services-section` permite adicionar um serviço local por nome,
+porta (`1024–65535`), descrição opcional e ícone escolhido da allowlist do
+sprite já incluído na página. O acesso imediato reutiliza a rota autenticada
+`/local/<porta>/`: por isso é sempre HTTP-only, aponta implicitamente para
+`127.0.0.1` e aparece como **não sondado**, nunca verde. O checkbox WebSocket
+não muda essa rota temporária; ele só define o campo `websocket` do fragmento
+de configuração permanente exportado.
+
+Serviços vindos da descoberta continuam em `state.hostServices`; cadastros do
+usuário vivem em `state.customServices`, e `mergeServices()` produz somente a
+visão renderizada. Assim, uma nova resposta Nostr atualiza os serviços do host
+sem apagar customizações. IDs/prefixos permanentes normalizados são
+religiosamente desambiguados contra IDs e prefixos do host, que sempre têm
+precedência. Remover num cartão personalizado atua apenas na coleção
+personalizada; não existe controle de remoção em cartões configurados pelo
+host.
+
+A persistência é opt-in e versionada em `localStorage` pela chave
+`dl_conn_custom_services_v1`. Entradas não marcadas ficam somente em memória.
+A exportação gera fragmentos para merge, nunca uma configuração completa:
+YAML com a chave `services:` para `config.yaml`, e lista Nix para
+`services.dl-conn.settings.services`. Ambos usam os campos canônicos do daemon
+e alvo fixo `http://127.0.0.1:<porta>`, sem segredo, chave Nostr ou estado de
+sessão. A lógica pura de validação, merge e serialização vive em
+`web/js/custom_services.js`.
+
 ### Indicador de saúde do serviço
 
 O badge de status de cada serviço agora é gerado **dentro** do ícone

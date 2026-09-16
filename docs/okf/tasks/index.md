@@ -32,6 +32,7 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 13 | `keygen files`: npub e nsec em arquivos separados | [13-keygen-files.md](13-keygen-files.md) | ✅ concluída | 9/9 |
 | 14 | Telemetria completa do host no dashboard | [14-host-telemetry.md](14-host-telemetry.md) | ✅ concluída | 9/9 |
 | 15 | Redesign definitivo do SPA (protótipo → produção) | [15-web-redesign.md](15-web-redesign.md) | ✅ concluída | 10/10 |
+| 16 | Serviços personalizados no frontend | [16-custom-frontend-services.md](16-custom-frontend-services.md) | ✅ concluída | 9/9 |
 
 ---
 

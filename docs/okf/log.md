@@ -4,6 +4,20 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-16
+
+- **Serviços personalizados no frontend (Fase 16).** O SPA passou a cadastrar
+  atalhos HTTP para `127.0.0.1:<porta>` por meio do proxy autenticado dinâmico,
+  com nome/descrição/ícone e persistência local explicitamente opt-in. A
+  coleção customizada é separada da descoberta do host e mesclada somente para
+  renderização, preservando os dois lados em refresh e impedindo colisões de
+  ID/prefixo de substituir configuração do daemon. Exportações YAML e Nix são
+  fragmentos de merge contendo só serviços personalizados e campos canônicos;
+  o checkbox WebSocket é intencionalmente apenas de exportação, pois
+  `/local/<porta>/` continua HTTP-only por política de segurança. Ver
+  [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md#serviços-personalizados-no-frontend)
+  e [tasks/16-custom-frontend-services.md](tasks/16-custom-frontend-services.md).
+
 ## 2026-09-13
 
 - **Saúde do host com atualização quase em tempo real.** O polling autenticado
