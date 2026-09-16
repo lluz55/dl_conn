@@ -1834,8 +1834,8 @@ import { startScan } from './js/qr_scanner.js';
         '<span>' + escapeHtml(statusMeta.title) + '</span>' +
         '</div>' +
         '</div>' +
-        '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + escapeHtml(svc.name || svc.id || "serviço") + '">
-        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>';
+        '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + escapeHtml(svc.name || svc.id || "serviço") + '">' +
+        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>';
 
       // Drag-and-drop event listeners
       li.addEventListener("dragstart", handleDragStart);
