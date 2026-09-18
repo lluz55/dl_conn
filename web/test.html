@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-palette="azure" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Prototype of the UI redesign proposal (NOT the production app).
+       Served by the daemon at /test.html; honors the same CSP as
+       index.html — everything (styles, scripts, fonts) is same-origin,
+       no inline style/script anywhere, so what you see here is directly
+       implementable under the real security headers. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self';
+    img-src 'self' data: blob:;
+    media-src 'self' blob:;
+    connect-src 'self' https: wss:;
+    form-action 'self';
+    base-uri 'none';
+    object-src 'none'" />
+  <title>dl_conn · Proposta de redesign</title>
+  <link rel="stylesheet" href="./test.css" />
+</head>
+<body>
+  <!-- Same icon sprite as the production app (kept in sync) -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false" width="0" height="0">
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><path d="m21 2-2 2m-1.5 1.5L14 9l-3-3L8 9m0 0a5 5 0 1 0 7 7l4.5-4.5"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M7 7h.01M17 7h.01M7 17h.01M14 10h3M10 14v3M10 10h4v4h-4z"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4M14 13.12c0 2.38 0 6.38-1 8.88M17.29 21.02c.12-.6.43-2.3.5-3.02M2 12a10 10 0 0 1 18-6M2 16h.01M21.8 16c.2-2 .13-5.35 0-6M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2M8.65 22c.21-.66.45-1.32.57-2M9 6.8a6 6 0 0 1 9 5.2v2"/></symbol>
+    <symbol id="i-relays" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-launch" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+    <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></symbol>
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></symbol>
+    <symbol id="i-thermometer" viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></symbol>
+    <symbol id="i-router" viewBox="0 0 24 24"><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="18" x2="6.01" y2="18"/><line x1="10" y1="18" x2="10.01" y2="18"/><line x1="6" y1="14" x2="6" y2="4"/><line x1="18" y1="14" x2="18" y2="4"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+  </svg>
+
+  <!-- ══ Prototype-only toolbar: switch palettes, theme, demo states ══ -->
+  <nav class="proto-bar" aria-label="Controles da proposta">
+    <span class="proto-bar-label">Paleta</span>
+    <div class="segmented" id="palette-switch" role="group">
+      <button type="button" data-palette="azure" aria-pressed="true"><span class="dot-pip pip-azure" aria-hidden="true"></span>Azure</button>
+      <button type="button" data-palette="evergreen" aria-pressed="false"><span class="dot-pip pip-evergreen" aria-hidden="true"></span>Evergreen</button>
+      <button type="button" data-palette="ember" aria-pressed="false"><span class="dot-pip pip-ember" aria-hidden="true"></span>Ember</button>
+      <button type="button" data-palette="iris" aria-pressed="false"><span class="dot-pip pip-iris" aria-hidden="true"></span>Iris</button>
+    </div>
+    <span class="proto-bar-label">Tema</span>
+    <div class="segmented" id="theme-switch" role="group">
+      <button type="button" data-theme="light" aria-pressed="true"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-sun"></use></svg>Claro</button>
+      <button type="button" data-theme="dark" aria-pressed="false"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-moon"></use></svg>Escuro</button>
+    </div>
+    <div class="proto-spacer"></div>
+    <span class="swatch-row" aria-hidden="true">
+      <span class="swatch s-bg"></span><span class="swatch s-surface"></span>
+      <span class="swatch s-primary"></span><span class="swatch s-accent"></span>
+      <span class="swatch s-info"></span><span class="swatch s-success"></span>
+      <span class="swatch s-warning"></span><span class="swatch s-text"></span>
+    </span>
+    <a class="btn btn-ghost btn-sm" href="./index.html">Ver app atual</a>
+  </nav>
+
+  <div class="app-container">
+
+    <header class="header">
+      <div class="header-title">
+        <span class="logo" aria-hidden="true"><svg class="icon"><use href="#i-zap"></use></svg></span>
+        <h1>dl_conn</h1>
+      </div>
+      <div class="header-actions">
+        <button id="btn-toggle-relays" class="btn-icon on" aria-label="Configurar relays" data-tip="Configurar relays" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg>
+        </button>
+        <button id="btn-toggle-debug" class="btn-icon" aria-label="Ferramentas de depuração" data-tip="Ferramentas de depuração" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-terminal"></use></svg>
+        </button>
+        <button id="btn-lock-session" class="btn-icon" aria-label="Bloquear sessão" data-tip="Bloquear sessão">
+          <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
+        </button>
+        <button id="theme-toggle" class="btn-icon" aria-label="Alternar tema" data-tip="Alternar tema">
+          <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ══ 1. Overview of the proposal ══ -->
+    <section class="proto-section" aria-labelledby="t-intro">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Proposta · r1</span>
+        <h2 class="proto-title s-display-xl" id="t-intro">Uma console de acesso seguro que parece profissional.</h2>
+        <p class="proto-note">
+          Quatro eixos: <strong>paletas intercambiáveis</strong> (Azure, Evergreen, Ember, Iris —
+          cada uma com claro + escuro), <strong>profundidade em camadas</strong> que elimina as linhas
+          de marcação, <strong>tipografia com propósito</strong> e uma <strong>sessão unificada</strong>:
+          identidade, estado e bloqueio automático no mesmo cartão, com contagem regressiva viva.
+        </p>
+      </div>
+      <div class="demo-grid cols-2">
+        <div class="well">
+          <div class="row">
+            <span class="icon-tile"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg></span>
+            <div class="spacer"></div>
+            <span class="pill p-primary">tokens puros</span>
+          </div>
+          <p class="card-sub">Sem uma cor ou pixel hardcoded: tudo consome <code>--color-*</code>, <code>--gap-*</code>,
+          <code>--radius-*</code>. Trocar de paleta é reescrever só o bloco de tokens — exatamente como pede
+          <code>docs/okf/concepts/theming.md</code>.</p>
+        </div>
+        <div class="well">
+          <div class="row">
+            <span class="icon-tile tone-success"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg></span>
+            <div class="spacer"></div>
+            <span class="pill p-ok">CSP-compatível</span>
+          </div>
+          <p class="card-sub">Esta página roda sob a mesma <code>Content-Security-Policy</code> do app real: zero CSS/JS
+          inline, zero CDN. O que funciona aqui é diretamente implementável em <code>style.css</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 2. Palettes ══ -->
+    <section class="proto-section" aria-labelledby="t-palettes">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Eixo 1 · Cor</span>
+        <h2 class="proto-title" id="t-palettes">Paletas</h2>
+        <p class="proto-note">Use a barra no topo para alternar. Cada paleta re-tinta também os neutros (fundo,
+        superfícies, sombras), não apenas o accent — é isso que dá coesão. Todos os pares claro/escuro têm
+        contraste AA em texto e estado.</p>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-head"><div class="kpi-body"><span class="kpi-label">Azure</span><span class="kpi-value">Azul confiável</span><span class="kpi-sub">Evolução direta da paleta atual — escolha conservadora.</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-cloud"></use></svg></span></div></div>
+        <div class="kpi-card tone-success"><div class="kpi-head"><div class="kpi-body"><span class="kpi-label">Evergreen</span><span class="kpi-value">Verde-infra</span><span class="kpi-sub">Calmo, "tudo funcionando". Combina com Home Assistant/Frigate.</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-activity"></use></svg></span></div></div>
+        <div class="kpi-card tone-warning"><div class="kpi-head"><div class="kpi-body"><span class="kpi-label">Ember</span><span class="kpi-value">Cobre quente</span><span class="kpi-sub">Caráter de homelab, aconchegante, alto contraste no escuro.</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-zap"></use></svg></span></div></div>
+        <div class="kpi-card tone-accent"><div class="kpi-head"><div class="kpi-body"><span class="kpi-label">Iris</span><span class="kpi-value">Índigo privado</span><span class="kpi-sub">Identidade Nostr/zero-trust: técnica e discreta.</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-shield"></use></svg></span></div></div>
+      </div>
+    </section>
+
+    <!-- ══ 3. Typography ══ -->
+    <section class="proto-section" aria-labelledby="t-type">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Eixo 2 · Tipografia</span>
+        <h2 class="proto-title" id="t-type">Space Grotesk para títulos, Inter para o corpo, JetBrains Mono para números e chaves</h2>
+        <p class="proto-note">O produto é uma console técnica: títulos geométricos e compactos, texto neutro e
+        legível, e tudo que é identificador (<code>npub</code>, URL, RTT, telemetria) em mono com dígitos
+        tabulares — valores param de "dançar" quando atualizam. Na implementação os woff2 são <em>self-hosted</em>
+        em <code>web/vendor/fonts/</code> (~45 KB subsets latin, CSP proíbe CDN); sem os arquivos, o fallback
+        de sistema mantém o ritmo da escala.</p>
+      </div>
+      <div class="spec-grid">
+        <div class="spec-rows">
+          <div class="spec-row"><span class="spec-tag">display · 52/700</span><p class="spec-sample s-display">Expirando em 23:41</p></div>
+          <div class="spec-row"><span class="spec-tag">h2 · 26/600</span><p class="spec-sample s-h2">Saúde do host</p></div>
+          <div class="spec-row"><span class="spec-tag">h3 · 20/600</span><p class="spec-sample s-h3">Identidade Nostr</p></div>
+          <div class="spec-row"><span class="spec-tag">body · 15/400</span><p class="spec-sample s-body">Seu túnel Cloudflare fica ativo enquanto a sessão estiver válida; o bloqueio automático protege o cofre quando você se afasta.</p></div>
+          <div class="spec-row"><span class="spec-tag">small · 13.5/500</span><p class="spec-sample s-small">Relay respondeu em 42 ms · NIP-44 verificado</p></div>
+          <div class="spec-row"><span class="spec-tag">mono · 13.5</span><p class="spec-sample s-mono">npub1w7y2…k9q4 · https://casa-xyz.trycloudflare.com</p></div>
+        </div>
+        <div class="well spec-card">
+          <span class="status-label">Empilhamento</span>
+          <div class="type-stack">
+            <div><h4 class="type-sample t-display">Espaços que respiram</h4><p><code>--font-display</code> · títulos, KPIs, contadores</p></div>
+            <div><h4 class="type-sample t-body">Texto que se lê rápido</h4><p><code>--font-body</code> · UI corrente, descrições, ajuda</p></div>
+            <div><h4 class="type-sample t-mono">0123456789 · nsec1a3f…</h4><p><code>--font-mono</code> · chaves, URLs, métricas, logs</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 4. Session ══ -->
+    <section class="proto-section" aria-labelledby="t-session">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Eixo 3 · Sessão</span>
+        <h2 class="proto-title" id="t-session">Uma sessão, não três fragmentos</h2>
+        <p class="proto-note">Hoje a sessão vive espalhada: KPI "Sessão" (texto solto) + card "Bloqueio automático" +
+        cofre. A proposta unifica em um cartão: <strong>identidade → estado → tempo restante</strong>. O auto-bloqueio
+        vira um <em>countdown</em> contínuo com barra (verde → âmbar → vermelho) e a escolha do tempo mora ao lado,
+        inline. Abaixo, os três estados do mesmo componente:</p>
+      </div>
+
+      <div class="demo-grid cols-2">
+        <div>
+          <article class="card session-card" aria-label="Sessão bloqueada">
+            <div class="session-main">
+              <span class="icon-tile"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg></span>
+              <div class="session-id">
+                <span class="session-name">Sessão bloqueada</span>
+                <div class="session-meta">
+                  <span class="status">Cofre pronto neste dispositivo</span>
+                </div>
+              </div>
+              <span class="pill session-state" role="status">Bloqueada</span>
+            </div>
+            <div class="session-foot">
+              <div class="pin-input-group" >
+                <input type="password" class="nsid-input" placeholder="PIN" inputmode="numeric" maxlength="8" aria-label="PIN" />
+                <button class="btn btn-primary" type="button">Desbloquear</button>
+              </div>
+            </div>
+            <div class="session-foot">
+              <button class="btn btn-tonal btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-fingerprint"></use></svg>Biometria</button>
+              <span class="identity-hint">npub1w7y2…k9q4</span>
+              <div class="spacer"></div>
+              <button class="btn-link-danger" type="button">Esqueci o PIN</button>
+            </div>
+          </article>
+          <p class="demo-caption">Estado bloqueado: cofre + desbloqueio no mesmo cartão que mostra quem você é.</p>
+        </div>
+
+        <div>
+          <article class="card session-card" aria-label="Sessão ativa">
+            <div class="session-main">
+              <span class="identicon" aria-hidden="true"><i class="on-2"></i><i></i><i class="on-1"></i><i></i><i class="on-3"></i><i></i><i class="on-1"></i><i class="on-2"></i><i></i></span>
+              <div class="session-id">
+                <span class="session-name">casa-ha</span>
+                <div class="session-meta">
+                  <span class="mono-chip">npub1w7y2…k9q4</span>
+                  <span class="pill p-info"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-cloud"></use></svg>túnel: casa-a1b2.trycloudflare.com</span>
+                </div>
+              </div>
+              <span class="pill p-ok session-state"><span class="dot dot-good" aria-hidden="true"></span>Ativa</span>
+            </div>
+            <div class="session-foot">
+              <span class="status"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-timer"></use></svg></span>
+              <div class="countdown-track" id="countdown-wrap" role="progressbar" aria-label="Tempo até bloqueio automático">
+                <svg class="countdown-svg" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="countdown-fill" id="countdown-rect" x="0" y="0" width="100" height="4"></rect></svg>
+              </div>
+              <span class="countdown-text" id="countdown-text">14:58</span>
+              <label class="hidden" for="auto-lock-timeout"></label>
+              <select class="nsid-select" id="auto-lock-timeout" aria-label="Tempo de bloqueio automático">
+                <option value="0">Sem bloqueio</option>
+                <option value="5">5 min</option>
+                <option value="15" selected>15 min</option>
+                <option value="30">30 min</option>
+                <option value="60">1 h</option>
+              </select>
+            </div>
+          </article>
+          <p class="demo-caption">Estado ativo: identicon derivado do npub, pills de contexto e o countdown do auto-bloqueio substituindo o card separado.</p>
+        </div>
+
+        <div>
+          <article class="card session-card" aria-label="Sessão aguardando host">
+            <div class="session-main">
+              <span class="icon-tile tone-warning"><svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg></span>
+              <div class="session-id">
+                <span class="session-name">casa-ha</span>
+                <div class="session-meta"><span class="status">Descobrindo o host pelos relays…</span></div>
+              </div>
+              <span class="pill p-warn session-state"><span class="live-dot" aria-hidden="true"></span>Em espera</span>
+            </div>
+            <div class="session-foot">
+              <span class="pill"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-shield"></use></svg>NIP-44</span>
+              <div class="countdown-track">
+                <svg class="countdown-svg" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"><rect class="countdown-fill" x="0" y="0" width="30" height="4"></rect></svg>
+              </div>
+              <span class="countdown-text">handshake…</span>
+            </div>
+          </article>
+          <p class="demo-caption">Estado "pendente" (chave destravada, backend ainda mudo) — hoje inexiste visualmente.</p>
+        </div>
+
+        <div>
+          <article class="card" aria-label="Visão geral KPI">
+            <div class="card-head">
+              <h2>Visão geral</h2>
+              <span class="live-badge"><span class="live-dot" aria-hidden="true"></span>agora</span>
+            </div>
+            <div class="kpi-grid status-grid">
+              <div class="kpi-card">
+                <div class="kpi-head"><div class="kpi-body status-item"><span class="kpi-label status-label">Túnel</span><span class="kpi-value status-value">Ativo</span><span class="kpi-sub">expira em 22:41:07</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-cloud"></use></svg></span></div>
+              </div>
+              <div class="kpi-card tone-success">
+                <div class="kpi-head"><div class="kpi-body status-item"><span class="kpi-label status-label">Sessão</span><span class="kpi-value status-value">Ativa · <span class="num" id="kpi-session-countdown">14:58</span></span><span class="kpi-sub">auto-bloqueio 15 min</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-shield"></use></svg></span></div>
+              </div>
+              <div class="kpi-card tone-info">
+                <div class="kpi-head"><div class="kpi-body status-item"><span class="kpi-label status-label">Relays</span><span class="kpi-value status-value">6/7 online</span><span class="kpi-sub">melhor RTT 42 ms</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-relays"></use></svg></span></div>
+              </div>
+              <div class="kpi-card tone-accent">
+                <div class="kpi-head"><div class="kpi-body status-item"><span class="kpi-label status-label">Serviços</span><span class="kpi-value status-value">7 online</span><span class="kpi-sub">1 sem resposta</span></div><span class="kpi-icon"><svg class="icon icon-sm"><use href="#i-dashboard"></use></svg></span></div>
+              </div>
+            </div>
+          </article>
+          <p class="demo-caption">KPIs: barra de tom de 3px + fundo neutro afundado (em vez do cartão inteiro tingido e com borda), números tabulares.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 5. Depth & the rest of the UI (mirrors the live app) ══ -->
+    <section class="proto-section" aria-labelledby="t-depth">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Eixo 4 · Profundidade &amp; componentes</span>
+        <h2 class="proto-title" id="t-depth">Camadas em vez de linhas</h2>
+        <p class="proto-note">Saem todas as bordas decorativas de 1px; entram três superfícies escalonadas
+        (<code>bg → surface → surface-2/3</code>) e uma escada de sombras <code>--elev-1/2/3</code>. Listas
+        respiram sem contêiner; itens ganham fundo ao hover; inputs são <em>filled wells</em> com anel de foco.
+        A prévia abaixo replica a tela "ao vivo" do app:</p>
+      </div>
+
+      <div class="app-columns">
+        <div class="col">
+
+          <!-- Vault / login (setup phase) -->
+          <section class="card">
+            <div class="vault-head">
+              <div class="card-head">
+                <h2>Identidade Nostr</h2>
+                <span class="pill p-warn"><span class="dot dot-warn" aria-hidden="true"></span>sem sessão</span>
+              </div>
+              <span class="status" role="status">Nenhuma identidade salva. Faça login abaixo.</span>
+            </div>
+            <div class="btn-stack">
+              <button class="btn btn-primary btn-full" type="button"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>Login via NIP-07</button>
+              <button class="btn btn-tonal btn-full" type="button" id="btn-scan-qr"><svg class="icon" aria-hidden="true"><use href="#i-qr"></use></svg>Ler nsec via QR</button>
+              <div class="divider-label"><span>ou</span></div>
+              <details class="nsec-fallback">
+                <summary>Inserir nsec manualmente</summary>
+                <input type="password" class="nsid-input" placeholder="nsec1…" aria-label="nsec" />
+                <button class="btn btn-tonal btn-full" type="button">Entrar com nsec</button>
+              </details>
+            </div>
+            <button class="btn-link-danger" type="button">Apagar todos os dados</button>
+          </section>
+
+          <!-- Relays -->
+          <section class="card" id="relay-panel">
+            <div class="card-head">
+              <h2>Relays</h2>
+              <div class="card-head-actions">
+                <span class="pill p-ok">6/7 online</span>
+                <button class="btn btn-ghost btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"></use></svg>Testar todos</button>
+              </div>
+            </div>
+            <div class="relay-list">
+              <div class="relay-row"><span class="relay-badge excellent" aria-hidden="true"></span><span class="relay-url">wss://relay.damus.io</span><span class="relay-rtt excellent">42 ms</span><button class="relay-toggle on" type="button" aria-label="Alternar relay" aria-pressed="true"></button><button class="relay-remove" type="button" aria-label="Remover relay"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+              <div class="relay-row"><span class="relay-badge good" aria-hidden="true"></span><span class="relay-url">wss://nos.lol</span><span class="relay-rtt good">58 ms</span><button class="relay-toggle on" type="button" aria-label="Alternar relay" aria-pressed="true"></button><button class="relay-remove" type="button" aria-label="Remover relay"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+              <div class="relay-row"><span class="relay-badge moderate" aria-hidden="true"></span><span class="relay-url">wss://relay.nostr.band</span><span class="relay-rtt moderate">312 ms</span><button class="relay-toggle on" type="button" aria-label="Alternar relay" aria-pressed="true"></button><button class="relay-remove" type="button" aria-label="Remover relay"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+              <div class="relay-row"><span class="relay-badge offline" aria-hidden="true"></span><span class="relay-url">wss://relay.offline.example</span><span class="relay-rtt offline">—</span><button class="relay-toggle" type="button" aria-label="Alternar relay" aria-pressed="false"></button><button class="relay-remove" type="button" aria-label="Remover relay"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
+            </div>
+            <div class="relay-add-row">
+              <input type="text" class="nsid-input" placeholder="wss://novo-relay.example.com" aria-label="Adicionar relay" />
+              <button class="btn btn-tonal" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>Adicionar</button>
+            </div>
+            <button class="btn-link" type="button">Restaurar padrões</button>
+          </section>
+        </div>
+
+        <div class="col">
+          <!-- Host telemetry -->
+          <section class="card">
+            <div class="card-head">
+              <h2>Saúde do host</h2>
+              <span class="live-badge" title="Telemetria do host em tempo real"><span class="live-dot" aria-hidden="true"></span><span>atualizado 2 s atrás</span></span>
+            </div>
+            <div class="telemetry-grid">
+              <div class="telemetry-item"><span class="status-label">CPU</span><span class="status-value num">18%</span></div>
+              <div class="telemetry-item"><span class="status-label">RAM</span><span class="status-value num">4,2 / 16 GB</span></div>
+              <div class="telemetry-item"><span class="status-label">Disco</span><span class="status-value num">61%</span></div>
+              <div class="telemetry-item"><span class="status-label">GPU</span><span class="status-value num">7%</span></div>
+              <div class="telemetry-item"><span class="status-label">Bateria</span><span class="status-value num">—</span></div>
+              <div class="telemetry-item"><span class="status-label">Uptime</span><span class="status-value num">12 d 4 h</span></div>
+            </div>
+            <div class="chart-row">
+              <div class="chart-card tone-primary">
+                <div class="chart-card-head"><span class="chart-card-title">CPU</span><span class="chart-card-value num">18%</span></div>
+                <svg class="sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+                  <polygon class="sparkline-fill" points="0,30 10,28 20,31 30,24 40,27 50,20 60,25 70,18 80,22 90,16 100,19 100,36 0,36"></polygon>
+                  <polyline class="sparkline-line" points="0,30 10,28 20,31 30,24 40,27 50,20 60,25 70,18 80,22 90,16 100,19"></polyline>
+                </svg>
+              </div>
+              <div class="chart-card tone-accent">
+                <div class="chart-card-head"><span class="chart-card-title">RAM</span><span class="chart-card-value num">26%</span></div>
+                <svg class="sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+                  <polygon class="sparkline-fill" points="0,22 10,22 20,21 30,21 40,20 50,20 60,19 70,19 80,18 90,18 100,17 100,36 0,36"></polygon>
+                  <polyline class="sparkline-line" points="0,22 10,22 20,21 30,21 40,20 50,20 60,19 70,19 80,18 90,18 100,17"></polyline>
+                </svg>
+              </div>
+              <div class="chart-card tone-info">
+                <div class="chart-card-head"><span class="chart-card-title">Disco</span><span class="chart-card-value num">61%</span></div>
+                <svg class="sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
+                  <polygon class="sparkline-fill" points="0,14 20,14 40,13 60,13 80,12 100,12 100,36 0,36"></polygon>
+                  <polyline class="sparkline-line" points="0,14 20,14 40,13 60,13 80,12 100,12"></polyline>
+                </svg>
+              </div>
+            </div>
+          </section>
+
+          <!-- Services -->
+          <section class="card">
+            <div class="card-head">
+              <h2>Serviços</h2>
+              <div class="card-head-actions">
+                <button class="btn-icon" aria-label="Atualizar status" data-tip="Atualizar status dos serviços"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+              </div>
+            </div>
+            <div class="health-bar-wrap">
+              <svg class="health-bar" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="Proporção de serviços ativos, inativos e não confirmados">
+                <rect class="health-seg seg-up" x="0" y="0" width="78" height="8"></rect>
+                <rect class="health-seg seg-down" x="78" y="0" width="11" height="8"></rect>
+                <rect class="health-seg seg-unknown" x="89" y="0" width="11" height="8"></rect>
+              </svg>
+              <div class="health-legend">
+                <span class="health-legend-item"><span class="dot dot-good" aria-hidden="true"></span>7 ativos</span>
+                <span class="health-legend-item"><span class="dot dot-bad" aria-hidden="true"></span>1 inativo</span>
+                <span class="health-legend-item"><span class="dot dot-unknown" aria-hidden="true"></span>1 aguardando</span>
+              </div>
+            </div>
+            <div class="services-grid">
+              <div class="service-card">
+                <div class="service-top">
+                  <span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg><span class="svc-dot dot-good" aria-hidden="true"></span></span>
+                  <div class="service-meta">
+                    <div class="service-name">Home Assistant</div>
+                    <div class="service-desc">Automação da casa</div>
+                  </div>
+                </div>
+                <a class="service-link" href="#demo"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>
+              </div>
+              <div class="service-card">
+                <div class="service-top">
+                  <span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-video"></use></svg><span class="svc-dot dot-good" aria-hidden="true"></span></span>
+                  <div class="service-meta">
+                    <div class="service-name">Frigate</div>
+                    <div class="service-desc">Câmeras &amp; detecção</div>
+                  </div>
+                </div>
+                <a class="service-link" href="#demo"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>
+              </div>
+              <div class="service-card">
+                <div class="service-top">
+                  <span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-router"></use></svg><span class="svc-dot dot-bad" aria-hidden="true"></span></span>
+                  <div class="service-meta">
+                    <div class="service-name">Zigbee2MQTT</div>
+                    <div class="service-desc">Sem resposta do host</div>
+                  </div>
+                </div>
+                <a class="service-link" href="#demo"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>
+              </div>
+              <div class="service-card">
+                <div class="service-top">
+                  <span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-database"></use></svg><span class="svc-dot dot-unknown" aria-hidden="true"></span></span>
+                  <div class="service-meta">
+                    <div class="service-name">Grafana</div>
+                    <div class="service-desc">Aguardando confirmação</div>
+                  </div>
+                </div>
+                <a class="service-link" href="#demo"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>
+              </div>
+            </div>
+          </section>
+
+          <!-- Debug console -->
+          <section class="card">
+            <div class="card-head">
+              <h2>Ferramentas de depuração</h2>
+              <div class="card-head-actions">
+                <button class="btn-icon" aria-label="Rodar diagnóstico" data-tip="Rodar diagnóstico"><svg class="icon" aria-hidden="true"><use href="#i-activity"></use></svg></button>
+                <button class="btn-icon" aria-label="Limpar log" data-tip="Limpar log"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+              </div>
+            </div>
+            <div class="debug-log" role="log" aria-live="polite">
+              <div class="debug-row debug-ok"><span class="debug-ts">10:42:07</span><span class="debug-area">nostr</span><span class="debug-msg">handshake NIP-44 verificado com o host</span></div>
+              <div class="debug-row"><span class="debug-ts">10:42:06</span><span class="debug-area">relay</span><span class="debug-msg">wss://relay.damus.io conectado (42 ms)</span></div>
+              <div class="debug-row debug-warn"><span class="debug-ts">10:41:52</span><span class="debug-area">relay</span><span class="debug-msg">wss://relay.offline.example sem resposta</span><span class="debug-detail">timeout após 5 s — tentando próximo relay</span></div>
+              <div class="debug-row"><span class="debug-ts">10:41:44</span><span class="debug-area">tunnel</span><span class="debug-msg">URL publicada via DM criptografada</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 6. Component gallery ══ -->
+    <section class="proto-section" aria-labelledby="t-comp">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Componentes</span>
+        <h2 class="proto-title" id="t-comp">Biblioteca</h2>
+        <p class="proto-note">Família única de botões/input/chip, todos com estado de foco visível e toque ≥ 40px.</p>
+      </div>
+      <div class="gallery">
+        <div class="well">
+          <span class="status-label">Botões</span>
+          <div class="gallery-row">
+            <button class="btn btn-primary" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-save"></use></svg>Salvar identidade</button>
+            <button class="btn btn-tonal" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"></use></svg>Testar todos</button>
+            <button class="btn btn-ghost" type="button">Agora não</button>
+            <button class="btn btn-danger-soft" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"></use></svg>Apagar dados</button>
+            <button class="btn btn-primary" type="button" disabled>Desbloquear</button>
+            <button class="btn btn-tonal btn-sm" type="button"><span class="spinner" aria-hidden="true"></span>Conectando…</button>
+            <button class="btn-icon" type="button" aria-label="Tema"><svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg></button>
+            <button class="btn-icon on" type="button" aria-label="Relays"><svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg></button>
+          </div>
+        </div>
+        <div class="well">
+          <span class="status-label">Campos</span>
+          <div class="gallery-row">
+            <div class="field" ><span class="field-label">Npub do host</span><input type="text" class="nsid-input" placeholder="npub1…" aria-label="Npub do host" /></div>
+            <div class="field"><span class="field-label">Auto-bloqueio</span>
+              <select class="nsid-select" aria-label="Tempo"><option>15 minutos</option><option>30 minutos</option><option>1 hora</option></select>
+            </div>
+            <label class="checkbox-row"><input type="checkbox" checked /><span>Habilitar biometria</span></label>
+            <span class="pill p-primary"><span class="dot" aria-hidden="true"></span>Relay novo?</span>
+          </div>
+        </div>
+        <div class="well">
+          <span class="status-label">Badges de estado</span>
+          <div class="gallery-row">
+            <span class="pill p-ok"><span class="dot dot-good" aria-hidden="true"></span>Ativa</span>
+            <span class="pill p-warn"><span class="live-dot" aria-hidden="true"></span>Em espera</span>
+            <span class="pill p-bad"><span class="dot dot-bad" aria-hidden="true"></span>Inativo</span>
+            <span class="pill p-info"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-relays"></use></svg>excellent · 42 ms</span>
+            <span class="pill">skeleton</span>
+            <span class="mono-chip">wss://nos.lol</span>
+          </div>
+        </div>
+        <div class="well">
+          <span class="status-label">Sobreposição (QR / modais)</span>
+          <div class="gallery-row">
+            <button class="btn btn-tonal" type="button" id="btn-open-demo-modal"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-qr"></use></svg>Abrir leitor de QR (demo)</button>
+            <span class="card-sub">scrim + blur, folha elevada <code>--elev-3</code>.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 7. Notes for implementation ══ -->
+    <section class="proto-section" aria-labelledby="t-next">
+      <div class="proto-section-head">
+        <span class="proto-eyebrow">Próximos passos</span>
+        <h2 class="proto-title" id="t-next">Como isso vira o app real</h2>
+      </div>
+      <div class="well">
+        <ol class="proto-note">
+          <li><strong>Escolher 1 paleta padrão</strong> acima (mantendo as demais como opção futura de tema no toggle).</li>
+          <li>Portar os tokens + elevação para <code>web/style.css</code> (mesmos nomes de classe → diff pequeno).</li>
+          <li>Fundir <code>#vault-section</code> + KPI "Sessão" + <code>#auto-lock-section</code> no novo cartão de sessão; countdown alimentado por <code>SessionManager</code>.</li>
+          <li>Self-host dos woff2 em <code>web/vendor/fonts/</code> (subsets latin, <code>font-display: swap</code>).</li>
+          <li>Remover <code>test.html</code>/<code>test.css</code>/<code>test.js</code> e atualizar <code>docs/okf/concepts/theming.md</code> + <code>web-frontend-layout.md</code>.</li>
+        </ol>
+        <p class="proto-note">Nada aqui toca o protocolo, o CSP ou as dependências; é 100% camada de apresentação.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- QR scanner overlay (demo copy of the production dialog) -->
+  <div id="qr-overlay" class="qr-overlay hidden" role="dialog" aria-modal="true" aria-label="Leitor de QR do nsec">
+    <div class="qr-overlay-inner">
+      <div class="qr-overlay-head">
+        <h3>Ler nsec do QR</h3>
+        <button id="btn-qr-close" class="btn-icon" aria-label="Fechar leitor de QR" data-tip="Fechar"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div>
+      <video class="qr-video" playsinline muted autoplay></video>
+      <p class="status" role="status">Aponte a câmera para o QR gerado pelo <code>dl_conn keygen --qr</code>.</p>
+    </div>
+  </div>
+
+  <script type="module" src="./test.js"></script>
+</body>
+</html>
