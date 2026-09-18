@@ -543,6 +543,20 @@ import {
     el.vaultStatePill.appendChild(document.createTextNode(text));
   }
 
+  /**
+   * Foca e seleciona o input de PIN do unlock, para o usuário começar a
+   * digitar imediatamente quando a tela de desbloqueio aparece (vault já
+   * existe com PIN salvo). Usa um tick de setTimeout para garantir que o
+   * elemento esteja visível (classList.remove("hidden") sincronizado) e foco
+   * real antes da seleção — alguns navegadores recusam .select() sem .focus()
+   * prévio.
+   */
+  function focusPinInput() {
+    if (!el.pinInput) return;
+    el.pinInput.focus();
+    setTimeout(() => el.pinInput.select(), 0);
+  }
+
   function showUnlockScreen() {
     el.sessionSetup.classList.remove("hidden");
     el.sessionLive.classList.add("hidden");
@@ -557,6 +571,7 @@ import {
     state.session.canUseBiometric().then((ok) => {
       el.btnUnlockBio.classList.toggle("hidden", !ok);
     });
+    focusPinInput();
   }
 
   function showLoginScreen() {
@@ -871,6 +886,7 @@ import {
     } catch (err) {
       el.vaultStatus.textContent = err.message;
       el.pinInput.value = "";
+      focusPinInput();
     }
   }
 

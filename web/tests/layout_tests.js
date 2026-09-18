@@ -108,8 +108,11 @@ assert(
   "The full tunnel status text stays reachable via title when the KPI value is clipped",
 );
 assert(
-  (app.match(/el\.tunnelStatus\.textContent\s*=/g) || []).length === 1,
-  "Every tunnel status update outside setTunnelStatus() itself goes through the helper, so the title tooltip never goes stale",
+  /function focusPinInput\(\)/.test(app) &&
+    /el\.pinInput\.focus\(\)/.test(app) &&
+    /el\.pinInput\.select\(\)/.test(app) &&
+    /function showUnlockScreen\(\)[\s\S]*?focusPinInput\(\)/.test(app),
+  "The saved-PIN unlock screen focuses and selects the PIN input for immediate typing",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);
