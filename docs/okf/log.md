@@ -4,6 +4,15 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-09-19
+
+- **Visão geral em lista vertical.** Os quatro cartões KPI de Túnel, Expiração,
+  Relays e Sessão continuam com os mesmos IDs, tons e conteúdo, mas `.kpi-grid`
+  passou de grade responsiva para uma coluna flex vertical. A mudança reduz a
+  variação horizontal da leitura sem tocar na máquina de estados ou na lógica
+  de sessão. O teste estrutural em `web/tests/layout_tests.js` fixa o novo
+  contrato. Ver [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md#dashboard-analytics-kpis-sparklines-e-barra-de-saúde-dos-serviços).
+
 ## 2026-09-16
 
 - **Serviços personalizados no frontend (Fase 16).** O SPA passou a cadastrar

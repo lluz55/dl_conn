@@ -782,8 +782,8 @@ body {
 
 /* ── KPI overview — layered tiles, no outlines ────────────────────── */
 .kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: var(--gap-md);
 }
 

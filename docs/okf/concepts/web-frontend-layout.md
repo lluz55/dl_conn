@@ -58,8 +58,9 @@ login que só guarda a identidade não revela nada**. Por isso `onLoginNsec` cha
 ## Dashboard analytics: KPIs, sparklines e barra de saúde dos serviços
 
 `#status-section` deixou de ser uma lista rasa de 4 pares label/valor
-(`.status-grid`) e passou a ser um grid de **cartões KPI** (`.kpi-grid` >
-`.kpi-card.tone-*`): cada métrica (Túnel/Expira em/Relays/Sessão) ganha um
+(`.status-grid`) e passou a ser uma lista vertical de **cartões KPI**
+(`.kpi-grid` > `.kpi-card.tone-*`): cada métrica
+(Túnel/Expira em/Relays/Sessão) ganha um
 ícone-chip colorido e um tom de categorização (`tone-primary`/`tone-warning`/
 `tone-info`/`tone-accent`) só para leitura visual rápida — os `id`s
 (`tunnel-status`, `tunnel-expiry`, `relay-status`, `session-status`) e a
