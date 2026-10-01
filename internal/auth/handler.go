@@ -20,7 +20,10 @@ func NewAuthHandler(tokens *TokenManager, sessions *SessionManager) *AuthHandler
 
 // HandleAuth processes GET /auth?token=...&redirect=...
 // On success: issues session cookie, redirects (302) to redirect target.
-// On failure: returns 401.
+// On failure: a browser navigating to a stale link is sent to the login page
+// carrying where it was headed (see RedirectToLogin), so an expired service
+// link ends at "log in and continue" rather than on a raw error page.
+// Everything else still gets the machine-readable 400/401.
 func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	// Already authenticated in this browser (e.g. a second service link reusing
 	// the same one-time token after the first one consumed it): honor the
@@ -30,9 +33,17 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Where this link was trying to go. Kept across the failure paths below
+	// so the login page can finish the trip the user actually asked for.
+	next := r.URL.Query().Get("redirect")
+
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		log.Printf("auth failed: remote=%s reason=missing token parameter", r.RemoteAddr)
+		if IsDocumentNavigation(r) {
+			RedirectToLogin(w, r, next)
+			return
+		}
 		http.Error(w, "token parameter required", http.StatusBadRequest)
 		return
 	}
@@ -40,6 +51,16 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	if ok, reason := h.tokens.ConsumeWithReason(token); !ok {
 		log.Printf("auth failed: remote=%s reason=%s token_prefix=%s",
 			r.RemoteAddr, consumeReasonText(reason), tokenPrefix(token))
+		// An expired or already-spent token is the ordinary end of a shared
+		// link's life, not an attack: the token TTL is minutes while the
+		// link outlives it in a bookmark, a chat message, or a second tab.
+		// Sending the browser to the login page turns that into a login
+		// that resumes the trip, instead of a dead end the user can only
+		// escape by finding the SPA themselves.
+		if IsDocumentNavigation(r) {
+			RedirectToLogin(w, r, next)
+			return
+		}
 		http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 		return
 	}
@@ -67,11 +88,11 @@ func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) redirect(w http.ResponseWriter, r *http.Request) {
-	redirect := safeRedirect(r.URL.Query().Get("redirect"))
+	redirect := SafeRedirect(r.URL.Query().Get("redirect"))
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
-// safeRedirect reduces a caller-supplied redirect target to a same-origin path,
+// SafeRedirect reduces a caller-supplied redirect target to a same-origin path,
 // falling back to "/" for anything else.
 //
 // The dangerous shapes are the ones a browser resolves against a *different*
@@ -79,7 +100,7 @@ func (h *AuthHandler) redirect(w http.ResponseWriter, r *http.Request) {
 // both protocol-relative once normalized, and an absolute URL carries its own
 // host. Parsing the value and requiring an empty Scheme and Host rejects all
 // of them without having to enumerate the spellings by hand.
-func safeRedirect(redirect string) string {
+func SafeRedirect(redirect string) string {
 	const fallback = "/"
 
 	if redirect == "" {

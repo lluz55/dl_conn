@@ -181,6 +181,15 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		(rt.sessions == nil || !rt.sessions.ValidateSession(r)) {
 		log.Printf("auth denied: path=%q remote=%s reason=missing or invalid session",
 			r.URL.Path, r.RemoteAddr)
+		// A person opening a stale link (expired session, bookmarked
+		// "/frigate/") gets the login page with their destination attached
+		// instead of an error they can't act on. Everything else — XHR,
+		// assets, WebSocket upgrades — still gets the parseable 403; see
+		// auth.IsDocumentNavigation for why that split is load-bearing.
+		if auth.IsDocumentNavigation(r) {
+			auth.RedirectToLogin(w, r, auth.RequestTarget(r))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error":"forbidden: authenticate at /auth"}`))
@@ -291,14 +300,13 @@ func (rt *Router) setServiceCookie(w http.ResponseWriter, id string) {
 // page, as opposed to a sub-resource fetch, an API call, or a protocol
 // upgrade. Only a navigation says anything about which app the user is in,
 // and only a navigation can be answered with a redirect.
+//
+// Single definition shared with the auth package: the service cookie, the
+// trailing-slash redirect, and the login redirect all hinge on the same
+// question, and answering it differently in two places is how one of them
+// silently starts redirecting an XHR.
 func isDocumentNavigation(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		return false
-	}
-	return strings.Contains(r.Header.Get("Accept"), "text/html")
+	return auth.IsDocumentNavigation(r)
 }
 
 // trailingSlashRedirect returns the URL a document request for a service's

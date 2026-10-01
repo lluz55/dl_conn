@@ -110,6 +110,16 @@
 
     <main class="main">
 
+      <!-- Shown when the daemon bounced this browser here from an expired
+           link (see internal/auth/login_redirect.go): says where it was
+           going and takes it back once the session is renewed. -->
+      <div id="return-banner" class="return-banner hidden" role="status" aria-live="polite">
+        <svg class="icon" aria-hidden="true"><use href="#i-launch"></use></svg>
+        <span id="return-banner-text" class="return-banner-text"></span>
+        <a id="return-banner-link" class="btn btn-primary btn-sm" href="#">Ir agora</a>
+        <button id="btn-return-cancel" class="btn btn-ghost btn-sm" type="button">Ficar aqui</button>
+      </div>
+
       <div class="app-columns">
         <div class="col col-setup">
 

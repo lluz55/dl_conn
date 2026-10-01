@@ -769,3 +769,68 @@ func TestRootFallback_SPAFilesBeatTheServiceCookie(t *testing.T) {
 		}
 	}
 }
+
+// The point of the whole feature: an expired session on a link someone
+// clicked lands on the login page carrying the destination, not on a JSON
+// error page a person can do nothing with.
+func TestRouter_ExpiredSessionNavigationGoesToLogin(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	rt := NewRouter(testServices(), sm)
+
+	req := httptest.NewRequest("GET", "/frigate/events?camera=front", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	w := httptest.NewRecorder()
+
+	rt.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d (See Other)", w.Code, http.StatusSeeOther)
+	}
+	want := "/?next=%2Ffrigate%2Fevents%3Fcamera%3Dfront"
+	if got := w.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
+// Everything that is not a navigation keeps the 403 its caller can parse:
+// an XHR following a redirect would receive the SPA's HTML instead of the
+// JSON it asked for, and a WebSocket handshake cannot follow one at all.
+func TestRouter_ExpiredSessionNonNavigationStays403(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	rt := NewRouter(testServices(), sm)
+
+	cases := []struct {
+		name    string
+		path    string
+		headers map[string]string
+	}{
+		{"xhr", "/hass/api/states", map[string]string{
+			"Accept": "application/json", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}},
+		{"asset", "/frigate/assets/index.js", map[string]string{
+			"Accept": "*/*", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script"}},
+		{"websocket upgrade", "/hass/api/websocket", map[string]string{
+			"Accept": "text/html", "Upgrade": "websocket", "Connection": "Upgrade"}},
+		{"fetch asking for html", "/frigate/api/config", map[string]string{
+			"Accept": "text/html", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.path, nil)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			rt.ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want %d (Forbidden)", w.Code, http.StatusForbidden)
+			}
+			if loc := w.Header().Get("Location"); loc != "" {
+				t.Errorf("Location = %q, want empty (a non-navigation must not be redirected)", loc)
+			}
+		})
+	}
+}

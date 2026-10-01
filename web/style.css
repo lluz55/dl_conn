@@ -197,6 +197,35 @@ body {
   gap: var(--gap-md);
   min-width: 0;
 }
+/* ── Return banner ───────────────────────────────────────────
+   Sits above both columns because it belongs to neither: it explains a
+   navigation the user did not initiate (an expired link bounced them to
+   the login) and must be readable in the setup phase, before the live
+   column exists at all. */
+.return-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-md);
+  margin-bottom: var(--gap-md);
+  background-color: var(--color-surface);
+  border: var(--border-width) solid var(--color-primary);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.return-banner-text {
+  /* Wraps to its own line on a phone, stays inline from tablet up. */
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--color-on-surface);
+}
+.btn-sm {
+  padding: 8px 14px;
+  font-size: var(--fs-sm);
+}
+
 .col-live { display: none; }  /* revealed only in live phase */
 .app-container[data-phase="live"] .col-live { display: flex; }
 
