@@ -15,6 +15,13 @@ import {
   parseCustomServices,
   serializeCustomServices,
 } from './js/custom_services.js';
+import {
+  captureReturnTo,
+  readReturnTo,
+  clearReturnTo,
+  buildResumeURL,
+  describeTarget,
+} from './js/return_to.js';
 
 (function () {
   "use strict";
@@ -137,6 +144,10 @@ import {
     customServiceStatus: $("custom-service-status"),
     btnExportServicesYaml: $("btn-export-services-yaml"),
     btnExportServicesNix: $("btn-export-services-nix"),
+    returnBanner: $("return-banner"),
+    returnBannerText: $("return-banner-text"),
+    returnBannerLink: $("return-banner-link"),
+    btnReturnCancel: $("btn-return-cancel"),
   };
 
   let expiryTimer = null;
@@ -153,6 +164,20 @@ import {
   let lastWatchdogAlive = true;
   /** Set while a discovery request is in flight; cleared by the host reply. */
   let awaitingDiscovery = false;
+  /**
+   * Where the daemon bounced this browser from (see js/return_to.js). Read
+   * once at startup, honored once a fresh token arrives, then forgotten.
+   */
+  let returnTo = null;
+  /** Timer for the grace period before the automatic return navigation. */
+  let returnTimer = null;
+
+  /**
+   * How long the "returning to X" banner stays before navigating. Long
+   * enough to read it and cancel, short enough not to feel stuck — the user
+   * clicked a service link and is waiting to arrive.
+   */
+  const RETURN_DELAY_MS = 2500;
 
   /** Drag-and-drop state for service reordering */
   let dragSourceEl = null;
@@ -495,6 +520,9 @@ import {
 
   async function init() {
     setupTheme();
+    // Read "?next=" before anything else can navigate: this is the whole
+    // record of where the user was going when their link expired.
+    returnTo = captureReturnTo();
     await loadConfig();
     state.auth = new NostrAuth();
     state.session = new SessionManager();
@@ -522,6 +550,20 @@ import {
   function checkVaultState() {
     if (state.session.hasVault) showUnlockScreen();
     else showLoginScreen();
+    announcePendingReturn();
+  }
+
+  /**
+   * Tell the user *why* they are looking at a login screen they didn't ask
+   * for. Without this, a bounce from an expired Frigate link is
+   * indistinguishable from opening the app cold, and the automatic
+   * navigation that follows looks like the app hijacking the tab.
+   */
+  function announcePendingReturn() {
+    if (!returnTo) return;
+    const label = describeTarget(returnTo, state.services) || returnTo;
+    el.vaultStatus.textContent =
+      "Sua sessão expirou. Entre novamente para voltar para " + label + ".";
   }
 
   /**
@@ -661,6 +703,7 @@ import {
     });
     el.btnScanQr.addEventListener("click", onScanQr);
     el.btnQrClose.addEventListener("click", stopQrScan);
+    if (el.btnReturnCancel) el.btnReturnCancel.addEventListener("click", cancelReturn);
     el.autoLockTimeout.addEventListener("change", onAutoLockChange);
     el.btnEnableBiometricLater.addEventListener("click", onEnableBiometricLater);
     el.biometricPin.addEventListener("keypress", (e) => { if (e.key === "Enter") onEnableBiometricLater(); });
@@ -961,6 +1004,9 @@ import {
     // reinicia estado em memória
     state.hostServices = [];
     state.customServices = [];
+    if (returnTimer) { clearTimeout(returnTimer); returnTimer = null; }
+    returnTo = null;
+    clearReturnTo();
     state.services = [];
     state.tunnelURL = null;
     state.authToken = null;
@@ -1260,6 +1306,54 @@ import {
     // Transition session from "pending" to "active" on first successful
     // backend contact.
     state.session.setBackendActive();
+    // The token that just arrived is the missing piece of the interrupted
+    // trip — this is the earliest moment the return can actually work.
+    resumeReturnTo();
+  }
+
+  /**
+   * Finish the trip that an expired link interrupted: with a fresh one-time
+   * token in hand, send the browser back to where it was going.
+   *
+   * Announced with a short delay and a cancel button rather than navigating
+   * outright: the user may have come back for something else in the
+   * meantime, and a tab that jumps away on its own with no explanation is
+   * indistinguishable from a bug.
+   */
+  function resumeReturnTo() {
+    if (!returnTo) return;
+    const href = buildResumeURL(state.tunnelURL, state.authToken, returnTo);
+    if (!href) return; // no tunnel/token yet — a later discovery will retry
+
+    const label = describeTarget(returnTo, state.services) || returnTo;
+    // Consume it now: a second discovery (manual refresh, reconnect) must
+    // not bounce the user away again after they chose to stay.
+    returnTo = null;
+    clearReturnTo();
+
+    if (!el.returnBanner) {
+      window.location.assign(href);
+      return;
+    }
+    el.returnBannerText.textContent = "Sessão renovada. Voltando para " + label + "…";
+    el.returnBannerLink.href = href;
+    el.returnBannerLink.textContent = "Ir agora";
+    el.returnBanner.classList.remove("hidden");
+
+    if (returnTimer) clearTimeout(returnTimer);
+    returnTimer = setTimeout(() => {
+      returnTimer = null;
+      window.location.assign(href);
+    }, RETURN_DELAY_MS);
+  }
+
+  /** Stop the automatic navigation; the link stays for a manual click. */
+  function cancelReturn() {
+    if (returnTimer) { clearTimeout(returnTimer); returnTimer = null; }
+    if (el.returnBannerText) {
+      el.returnBannerText.textContent = "Retorno cancelado.";
+    }
+    if (el.btnReturnCancel) el.btnReturnCancel.classList.add("hidden");
   }
 
   function startExpiryCountdown(seconds) {

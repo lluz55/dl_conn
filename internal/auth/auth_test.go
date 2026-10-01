@@ -324,8 +324,8 @@ func TestSafeRedirect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := safeRedirect(tt.in); got != tt.want {
-				t.Errorf("safeRedirect(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := SafeRedirect(tt.in); got != tt.want {
+				t.Errorf("SafeRedirect(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}

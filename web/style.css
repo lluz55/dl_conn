@@ -487,7 +487,6 @@ body {
 .icon-lg { width: 22px; height: 22px; }
 
 .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-
 .icon-tile {
   display: inline-flex;
   align-items: center;
@@ -497,6 +496,31 @@ body {
   background: var(--color-primary-soft);
   color: var(--color-primary-ink);
   flex-shrink: 0;
+}
+
+/* ── Return banner ───────────────────────────────────────────
+   Sits above both columns because it belongs to neither: it explains a
+   navigation the user did not initiate (an expired link bounced them to
+   the login) and must be readable in the setup phase, before the live
+   column exists at all. */
+.return-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-md);
+  margin-bottom: var(--gap-md);
+  background-color: var(--color-surface);
+  border: var(--border-width) solid var(--color-primary);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.return-banner-text {
+  /* Wraps to its own line on a phone, stays inline from tablet up. */
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--color-on-surface);
 }
 
 .icon-tile.tone-accent  { background: var(--color-accent-soft);  color: color-mix(in srgb, var(--color-accent) 80%, var(--color-text)); }
