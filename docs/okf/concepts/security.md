@@ -31,6 +31,14 @@ eventos (assinatura), no máximo omitem/atrasam. Mitigar com múltiplos
 relays; preferir relays autenticados (NIP-42) para reduzir exposição de
 metadados.
 
+A cobertura de NIP-42 é **simétrica cliente↔daemon** desde S17: o cliente
+responde via `relay._onauth` (commit `ae7e3e2`), o daemon responde via
+`nostr.WithAuthHandler(c.signAuthEvent)` no `SimplePool`. Sem o lado do
+daemon, relays que endureceram para `auth-required:` (ex.: `damus.io`,
+`nostr.land`) fecham o subscribe na hora e o daemon fica surdo aos pedidos
+de descoberta — sintoma idêntico ao "relay sumiu" do log de 2026-09-10,
+mas com causa diferente (NIP-42, não SocketIdle).
+
 ## Allowlist de npubs do daemon (`dl_conn`)
 
 Quem pode falar com o host é decidido por `nostr.authorizedNpubs`

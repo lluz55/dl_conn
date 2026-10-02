@@ -4,6 +4,41 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-02
+
+- **Regressão corrigida em S17 (2026-10-02): startup travado + NIP-42 não
+  respondido pelo daemon.** O build pós-`fba5aa1` tinha dois problemas
+  sobrepostos que faziam o daemon ficar "vivo mas surdo":
+
+  1. **`authHandler.RunCleanup(ctx)` e `telHandler.RunCleanup(ctx)` chamados
+     em linha** no `main()`. `RunCleanup` é um loop `for { select { … } }`
+     que só termina em `ctx.Done()`, então bloqueava o main goroutine para
+     sempre antes de `startDiagnostics`, do goroutine do `handler.Serve` e
+     do `ListenAndServe` — daí 9099/9100 recusando conexão, com o cloudflared
+     ativo achando IP. Confirmado por SIGQUIT no pgrep'd `dl_conn` mostrando
+     `main.run … main.go:101 +0x865 → AuthHandler.RunCleanup → RateLimiter.RunCleanup
+     [select]`. Sem `sudo`, não foi possível ptrace o pid de produção
+     (user `dl-conn`); o usuário precisa reiniciar o serviço uma vez com o
+     build corrigido para sair do estado atual. Fix: ambos em `go …`.
+
+  2. **Daemon sem handler de NIP-42 AUTH.** `relay.damus.io` e
+     `wss://nostr.land` passaram a exigir `auth-required:` para kind:4 DM e/ou
+     subscribe. O cliente (`web/js/nostr_client.js:112-124`) já responde
+     desde `ae7e3e2` via `relay._onauth`; o daemon não tinha equivalente —
+     `git log -S "nip42" -- internal/` retornava vazio. O sintoma era um
+     tight subscribe/close loop nos relays problemáticos: 12.957
+     `nostr: subscribed to …` em 1h51min na sessão de produção, taxa de
+     1,8 eventos/s. Fix: `internal/nostr/client.go` ganha `signAuthEvent`
+     e o `SimplePool` é construído com `nostr.WithAuthHandler(...)` (caminho
+     oficial, não o hack `relay._onauth` que o cliente usa). Após o fix,
+     `/debug` mostra `damus.io subscribed=true`, e DM publicado em `nos.lol`
+     chega no daemon e é rejeitado pela allowlist como esperado.
+
+  Tarefa registrada em
+  [`tasks/s17-nip42-daemon-auth.md`](tasks/s17-nip42-daemon-auth.md).
+  Cobertura de NIP-42 passa a ser simétrica cliente↔daemon — ver
+  [`concepts/security.md`](concepts/security.md#modelo-de-confianca).
+
 ## 2026-09-19
 
 - **Visão geral em lista vertical.** Os quatro cartões KPI de Túnel, Expiração,

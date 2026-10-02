@@ -47,6 +47,7 @@ mesmo repositório.
 |-----|---------|--------------------------------------------------------|-----------------------------------------------------|-----------------|-----------|
 | S15 | Segurança | Endurecimento de headers e rate limiting               | [s15-security-hardening.md](s15-security-hardening.md) | ✅ concluída   | 9/9 |
 | S16 | Segurança | Autenticação avançada (POST/header, step-up, zero-on-exit) | [s16-security-auth-advanced.md](s16-security-auth-advanced.md) | ✅ concluída | 6/6 |
+| S17 | Segurança | NIP-42 AUTH no daemon + conserto do startup hung do S15 | [s17-nip42-daemon-auth.md](s17-nip42-daemon-auth.md) | ✅ concluída | 6/6 |
 | P17 | Performance | Binário Go e bundle web                              | [p17-perf-binary-web.md](p17-perf-binary-web.md)     | ⏳ pendente      | 0/9 |
 | P18 | Performance | Hot path do proxy e polling                           | [p18-perf-hotpath.md](p18-perf-hotpath.md)           | ⏳ pendente      | 0/10 |
 | U19 | Usabilidade | Feedback de descoberta e renovação                    | [u19-usability-discovery.md](u19-usability-discovery.md) | ⏳ pendente  | 0/9 |
