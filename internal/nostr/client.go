@@ -76,14 +76,39 @@ func NewClient(sk string, relays []string, authorizedNpubs []string, fallbackNip
 		stats[url] = &RelayStats{URL: url}
 	}
 
-	return &Client{
+	client := &Client{
 		sk:            sk,
-		pool:          nostr.NewSimplePool(context.Background()),
 		relays:        relays,
 		authorized:    authorized,
 		fallbackNip04: fallbackNip04,
 		stats:         stats,
-	}, nil
+	}
+	// Wire NIP-42 AUTH on the SimplePool: relays that gate kind:4 DMs and/or
+	// subscriptions behind an auth-required handshake (relay.damus.io,
+	// nostr.land, and a growing list) close the connection the moment they
+	// demand AUTH and we don't answer. Without this handler the daemon sat in
+	// a tight subscribe/close loop and stayed deaf to discovery requests —
+	// which read from the SPA as "host disappeared with no error". The pool
+	// invokes the handler once per relay whenever it sees a CLOSED with the
+	// "auth-required:" prefix (vendor/.../pool.go ~L236 for Publish, ~L379
+	// for Subscribe), retries the original operation after a successful AUTH,
+	// and remembers hasAuthed so we never re-auth in a loop.
+	client.pool = nostr.NewSimplePool(context.Background(),
+		nostr.WithAuthHandler(client.signAuthEvent))
+
+	return client, nil
+}
+
+// signAuthEvent signs a NIP-42 AUTH event (kind 22242) the relay handed to
+// us with the host key. Exposed as a method (not just a closure) so the test
+// suite can call it directly and verify the signed event checks out against
+// the host's pubkey — the pool has no other way to surface the handler back
+// to us once WithAuthHandler consumed it.
+func (c *Client) signAuthEvent(ctx context.Context, re nostr.RelayEvent) error {
+	if err := re.Event.Sign(c.sk); err != nil {
+		return fmt.Errorf("signing NIP-42 auth event for %s: %w", re.Relay.URL, err)
+	}
+	return nil
 }
 
 // RelayStats returns a snapshot of every relay's subscription state, in the

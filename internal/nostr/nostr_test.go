@@ -1,6 +1,7 @@
 package nostr
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -103,6 +104,76 @@ func TestNIP44_DecryptionWithWrongKey(t *testing.T) {
 	_, err = DecryptMessage(encrypted, senderPk, otherSk)
 	if err == nil {
 		t.Fatal("expected error decrypting with wrong key")
+	}
+}
+
+// signAuthEvent is a NIP-42 (auth) handler. The pool hands us a freshly
+// built kind:22242 event tagged with the relay URL and the per-connection
+// challenge; we just sign it with the host's key. The test signs the same
+// event the relay would have built and checks the signature against the
+// host's pubkey — the same verification go-nostr performs on receipt.
+func TestNIP42_SignAuthEvent(t *testing.T) {
+	sk := nostr.GeneratePrivateKey()
+	pk, _ := nostr.GetPublicKey(sk)
+	npub, _ := nip19.EncodePublicKey(pk)
+
+	c, err := NewClient(sk, []string{"wss://relay.example"}, []string{npub}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the same NIP-42 AUTH event go-nostr builds inside relay.Auth:
+	// kind 22242, tags [[relay, url], [challenge, challenge]], empty content.
+	const challenge = "test-challenge-abc"
+	evt := &nostr.Event{
+		Kind:      22242,
+		CreatedAt: nostr.Now(),
+		Tags: nostr.Tags{
+			{"relay", "wss://relay.example"},
+			{"challenge", challenge},
+		},
+		Content: "",
+	}
+
+	if err := c.signAuthEvent(context.Background(), nostr.RelayEvent{Event: evt, Relay: nil}); err != nil {
+		t.Fatalf("signAuthEvent: %v", err)
+	}
+
+	if evt.PubKey != pk {
+		t.Errorf("pubkey not populated: got %q, want %q", evt.PubKey, pk)
+	}
+	if evt.ID == "" || evt.Sig == "" {
+		t.Error("id or sig not populated after sign")
+	}
+
+	// The signature must verify under the host's pubkey — that's the entire
+	// point of NIP-42 from the relay's perspective.
+	ok, err := evt.CheckSignature()
+	if err != nil {
+		t.Fatalf("CheckSignature: %v", err)
+	}
+	if !ok {
+		t.Error("signature failed verification against host pubkey")
+	}
+
+	// And signing with a different key must not validate against this host,
+	// catching a regression where signAuthEvent silently reads the wrong sk.
+	otherSk := nostr.GeneratePrivateKey()
+	otherEvt := &nostr.Event{
+		Kind:      22242,
+		CreatedAt: nostr.Now(),
+		Tags:      nostr.Tags{{"relay", "wss://relay.example"}, {"challenge", challenge}},
+		Content:   "",
+	}
+	c2, err := NewClient(otherSk, []string{"wss://relay.example"}, []string{npub}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.signAuthEvent(context.Background(), nostr.RelayEvent{Event: otherEvt, Relay: nil}); err != nil {
+		t.Fatalf("signAuthEvent(other): %v", err)
+	}
+	if otherEvt.PubKey == evt.PubKey {
+		t.Error("different sk must produce a different pubkey in the signed event")
 	}
 }
 
