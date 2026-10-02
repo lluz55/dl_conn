@@ -3,6 +3,7 @@ package nostr
 import (
 	"encoding/hex"
 	"errors"
+	"runtime"
 	"strings"
 
 	nostr "github.com/nbd-wtf/go-nostr"
@@ -97,6 +98,21 @@ type KeyPair struct {
 	Npub          string `json:"npub"`
 }
 
+// wipe drops every reference the keypair holds to the private key. Installed as
+// a finalizer by DeriveKeyPair.
+//
+// What it is: the daemon stops holding the key. What it is not: a guarantee
+// that the bytes are gone. A Go string is immutable, so there is no way to
+// overwrite the heap from here without unsafe, and a copy the runtime has
+// already made for a caller that outlived this object is not ours to reach.
+// The honest scope of this mitigation is "nothing in the daemon keeps the key
+// after the keypair is unreachable", not "the key cannot be read from
+// /proc/<pid>/mem" — nothing short of never accepting the key achieves that.
+func (kp *KeyPair) wipe() {
+	kp.PrivateKeyHex = ""
+	kp.Nsec = ""
+}
+
 // GenerateKeyPair generates a new random Nostr keypair.
 func GenerateKeyPair() (*KeyPair, error) {
 	sk := nostr.GeneratePrivateKey()
@@ -125,11 +141,16 @@ func DeriveKeyPair(privateKey string) (*KeyPair, error) {
 		return nil, err
 	}
 
-	return &KeyPair{
+	kp := &KeyPair{
 		PrivateKeyHex: skHex,
 		PublicKeyHex:  pkHex,
 		Nsec:          nsec,
 		Npub:          npub,
-	}, nil
+	}
+	// Best-effort key hygiene: when nothing references the keypair any more,
+	// drop the private key from it. See KeyPair.wipe for what this does and
+	// does not promise.
+	runtime.SetFinalizer(kp, (*KeyPair).wipe)
+	return kp, nil
 }
 

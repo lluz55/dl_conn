@@ -57,6 +57,29 @@ auth:
   # Time-to-live for authenticated browser sessions.
   sessionTTL: "4h"
 
+  # Ceiling on how fast one client address may reach /auth, where a token is
+  # consumed and a session is minted. Without it, /auth is a token-guessing
+  # oracle anyone who can reach the tunnel can hammer.
+  rateLimitPerSec: 10
+  rateLimitBurst: 20
+
+  # How client addresses reach the daemon log. Absent (or true) writes them
+  # anonymized: IPv4 truncated to its network prefix, IPv6 to its first 48
+  # bits. Set false to write "[redacted]" and no address at all.
+  # logIPs: true
+
+  # Add the CHIPS "Partitioned" attribute to the cookies dl_conn issues. Every
+  # ephemeral tunnel shares the trycloudflare.com registrable domain, so an
+  # unpartitioned cookie set by one tunnel is offered to every other one.
+  # Off by default until CHIPS support is worth relying on.
+  # partitionedCookies: true
+
+  # Routes that require a step-up proof (X-Dl-Conn-StepUp, minted at
+  # POST /api/auth/stepup, 5-minute window) in addition to the session.
+  # Empty — the default — keeps today's behavior: the session alone.
+  # stepUpProtected:
+  #   - /api/host/telemetry
+
 # Local services exposed through the reverse proxy.
 #
 # Per-service keys:

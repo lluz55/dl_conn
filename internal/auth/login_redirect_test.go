@@ -175,3 +175,29 @@ func TestHandleAuth_LoginBounceRejectsOpenRedirect(t *testing.T) {
 		t.Errorf("Location = %q, want %q", got, "/")
 	}
 }
+
+
+// TestIframeIsNotDocumentNavigation is the unit behind the frame refusal: a
+// nested browsing context is not a place to put a login page. Whoever framed
+// the request gets a frame full of someone else's login HTML, and the user
+// never sees a page they can act on — so the destination must be "document"
+// and nothing else.
+func TestIframeIsNotDocumentNavigation(t *testing.T) {
+	framed := httptest.NewRequest("GET", "/frigate/", nil)
+	framed.Header.Set("Sec-Fetch-Mode", "navigate")
+	framed.Header.Set("Sec-Fetch-Dest", "iframe")
+	framed.Header.Set("Accept", "text/html")
+
+	if IsDocumentNavigation(framed) {
+		t.Error("a framed request was classified as a document navigation")
+	}
+
+	// A top-level navigation of the same shape is still a document: the
+	// distinction is the destination, not the mode.
+	top := httptest.NewRequest("GET", "/frigate/", nil)
+	top.Header.Set("Sec-Fetch-Mode", "navigate")
+	top.Header.Set("Sec-Fetch-Dest", "document")
+	if !IsDocumentNavigation(top) {
+		t.Error("a top-level navigation stopped being a document navigation")
+	}
+}

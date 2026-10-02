@@ -3,6 +3,7 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -1036,5 +1037,130 @@ func TestRouter_ExpiredSessionNonNavigationStays403(t *testing.T) {
 				t.Errorf("Location = %q, want empty (a non-navigation must not be redirected)", loc)
 			}
 		})
+	}
+}
+
+// TestRouter_Authorization_DroppedByDefault pins the header policy that keeps
+// dl_conn's own session credential from reaching a proxied backend. The
+// session cookie is one way in; "Authorization: Bearer <sessionID>" is the
+// other (auth.SessionManager.GetSessionID), and forwarding it would hand a
+// live, tunnel-wide session to whatever process sits behind the prefix.
+func TestRouter_Authorization_DroppedByDefault(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotAuth string
+	var hadAuth bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, hadAuth = r.Header["Authorization"]
+	}))
+	defer backend.Close()
+
+	services := testServices()
+	for i := range services {
+		services[i].Target = backend.URL
+	}
+	rt := NewRouter(services, sm)
+
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/hass/api/states", nil)
+	req.Header.Set("Authorization", "Bearer "+sessionID)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	rt.ServeHTTP(httptest.NewRecorder(), req)
+
+	if hadAuth || gotAuth != "" {
+		t.Errorf("backend saw Authorization %q (present=%v), want the header absent entirely", gotAuth, hadAuth)
+	}
+}
+
+// TestRouter_Authorization_PreservedWhenConfigured covers the opt-in: a backend
+// behind its own HTTP auth has to receive the caller's credential, and that is
+// the operator's call to make, not a default.
+func TestRouter_Authorization_PreservedWhenConfigured(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotAuth string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+	}))
+	defer backend.Close()
+
+	services := testServices()
+	for i := range services {
+		services[i].Target = backend.URL
+		services[i].ForwardAuthorization = true
+	}
+	rt := NewRouter(services, sm)
+
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/hass/api/states", nil)
+	req.Header.Set("Authorization", "Bearer upstream-secret")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	rt.ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotAuth != "Bearer upstream-secret" {
+		t.Errorf("backend Authorization = %q, want it forwarded when forwardAuthorization is set", gotAuth)
+	}
+}
+
+// TestDynamicPortProxy_AuthorizationAlwaysDropped checks the /local/<port>/
+// path, which has no per-service configuration to opt in through: the backend
+// is selected by port, not by an operator-declared trust decision, so the
+// header is always removed.
+func TestDynamicPortProxy_AuthorizationAlwaysDropped(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+
+	var gotAuth string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+	}))
+	defer backend.Close()
+
+	port := backendPort(t, backend.URL)
+	dp := NewDynamicPortProxy(sm, 9099, nil)
+
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/local/"+port+"/", nil)
+	req.Header.Set("Authorization", "Bearer "+sessionID)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	dp.ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotAuth != "" {
+		t.Errorf("dynamic backend saw Authorization %q, want it dropped", gotAuth)
+	}
+}
+
+// backendPort extracts the port from an httptest server URL.
+func backendPort(t *testing.T, rawURL string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parsing backend URL %q: %v", rawURL, err)
+	}
+	return parsed.Port()
+}
+
+// TestRouter_IframeNotRedirectedToLogin pins the frame case at the route it
+// actually matters on: an unauthenticated <iframe src="…/frigate/"> gets the
+// 403 every other non-navigation gets, not the login page HTML. The SPA's own
+// CSP already sets frame-ancestors 'none', so the daemon's refusal is what
+// protects the *other* services sharing this origin.
+func TestRouter_IframeNotRedirectedToLogin(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	rt := NewRouter(testServices(), sm)
+
+	req := httptest.NewRequest("GET", "/hass/api/states", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "iframe")
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+
+	rt.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (Forbidden) for a framed request", w.Code, http.StatusForbidden)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty (an iframe must not be sent to the login page)", loc)
 	}
 }

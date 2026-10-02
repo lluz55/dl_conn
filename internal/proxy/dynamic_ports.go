@@ -98,10 +98,21 @@ func (p *DynamicPortProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
-		log.Printf("dynamic proxy error: port=%d path=%q remote=%s reason=%v", port, req.URL.Path, req.RemoteAddr, err)
+		log.Printf("dynamic proxy error: port=%d path=%q remote=%s reason=%v",
+			port, req.URL.Path, p.clientIPForLog(req), err)
 		writeDynamicPortError(w, http.StatusBadGateway, "upstream service unavailable")
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// clientIPForLog renders the requesting address under the session manager's
+// log policy, so an error line about a caller is anonymized like every other
+// line the daemon writes.
+func (p *DynamicPortProxy) clientIPForLog(r *http.Request) string {
+	if p.sessions == nil {
+		return auth.Anonymize(auth.ClientIP(r))
+	}
+	return p.sessions.IPForLog(r)
 }
 
 func parseDynamicPortPath(path string) (port int, upstreamPath string, ok bool) {

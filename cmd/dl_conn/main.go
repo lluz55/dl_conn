@@ -87,11 +87,26 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// Phase 4: auth + proxy
 	tokenMgr := auth.NewTokenManager(cfg.Auth.TokenTTL)
-	sessionMgr := auth.NewSessionManager(cfg.Auth.SessionTTL)
+	sessionMgr := auth.NewSessionManagerWithOptions(cfg.Auth.SessionTTL, auth.Options{
+		AnonymizeLogs: cfg.Auth.LogsIPs(),
+		Partitioned:   cfg.Auth.PartitionedCookies,
+	})
 	tokenMgrCleanup(ctx, tokenMgr)
 	sessionMgrCleanup(ctx, sessionMgr)
 
-	authHandler := auth.NewAuthHandler(tokenMgr, sessionMgr)
+	authHandler := auth.NewAuthHandlerWithRateLimit(tokenMgr, sessionMgr,
+		cfg.Auth.RateLimitPerSec, cfg.Auth.RateLimitBurst)
+	// The rate-limit buckets are keyed by client address, which is
+	// caller-controlled, so idle ones are reclaimed on a timer.
+	authHandler.RunCleanup(ctx)
+
+	// Step-up: a per-process secret that signs short-lived proofs for the
+	// session (see auth.StepUp). Nothing is enabled unless the operator
+	// names the routes in auth.stepUpProtected.
+	stepUp, err := auth.NewStepUp()
+	if err != nil {
+		return fmt.Errorf("creating step-up verifier: %w", err)
+	}
 
 	// Map services for the Nostr response. Hidden services (extra root-level
 	// routes a backend's own frontend needs, e.g. Frigate's "/api"/"/ws")
@@ -127,6 +142,9 @@ func run(cmd *cobra.Command, _ []string) error {
 				return fmt.Errorf("reading nsec file: %w", ferr)
 			}
 			nsec = strings.TrimSpace(string(nsecBytes))
+			// The file buffer holds the key in the clear; nothing reads it
+			// again, so zero it before it becomes garbage.
+			clear(nsecBytes)
 		} else {
 			return err
 		}
@@ -135,8 +153,19 @@ func run(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("decoding nsec: %w", err)
 	}
-
-	client, err := nostr.NewClient(nsecHex, cfg.Nostr.Relays, cfg.Nostr.AuthorizedNpubs, cfg.Nostr.FallbackNip04)
+	// The decoded key is the one piece of state in this process that must not
+	// outlive its use. It is copied into a buffer this function owns, handed
+	// to the client constructor, and that buffer is zeroed the moment the
+	// constructor returns — including when it returns an error, which is the
+	// path a misconfigured key takes and the one a plain early return would
+	// have left holding the secret.
+	//
+	// The nsec strings themselves cannot be zeroed: a Go string is immutable,
+	// so the copies held by the config and the CLI flag stay in the heap until
+	// the GC collects them. This is a mitigation, not a guarantee — an
+	// attacker with ptrace reads the key whenever it is loaded.
+	nsecBytes := []byte(nsecHex)
+	client, err := newNostrClient(nsecBytes, cfg.Nostr.Relays, cfg.Nostr.AuthorizedNpubs, cfg.Nostr.FallbackNip04)
 	if err != nil {
 		return fmt.Errorf("creating nostr client: %w", err)
 	}
@@ -306,6 +335,12 @@ func run(cmd *cobra.Command, _ []string) error {
 	mux.HandleFunc("/auth/logout", authHandler.HandleLogout)
 	mux.Handle("/_static/", http.StripPrefix("/_static/", fs))
 
+	// Step-up proof endpoint. Registered unconditionally: minting a proof is
+	// only meaningful for a caller that already has a session, and a route
+	// that appears and disappears with the config would make the frontend
+	// guess whether 404 means "not enabled" or "not allowed".
+	mux.HandleFunc(auth.StepUpPath, auth.NewStepUpHandler(sessionMgr, stepUp).ServeHTTP)
+
 	// Dynamic loopback services use the same Zero-Trust session as configured
 	// services. The handler owns only /local/<port>/ and never accepts a host.
 	dynamicProxy := proxy.NewDynamicPortProxy(sessionMgr, cfg.Tunnel.ListenPort, cfg.DynamicPorts.DeniedPorts)
@@ -321,9 +356,16 @@ func run(cmd *cobra.Command, _ []string) error {
 		mux.Handle(svc.Prefix+"/", router)
 	}
 
-	// Host telemetry (requires session)
+	// Host telemetry (requires session, and a step-up proof when the
+	// operator put this route in auth.stepUpProtected)
 	if telCollector != nil {
-		mux.Handle("/api/host/telemetry", telemetry.NewHandler(telCollector, sessionMgr))
+		telHandler := telemetry.NewHandler(telCollector, sessionMgr)
+		if cfg.Auth.RequiresStepUp("/api/host/telemetry") {
+			telHandler = telHandler.WithStepUp(stepUp)
+			log.Println("Telemetry requires a step-up proof (auth.stepUpProtected)")
+		}
+		telHandler.RunCleanup(ctx)
+		mux.Handle("/api/host/telemetry", telHandler)
 	}
 
 	// Health check
@@ -407,6 +449,21 @@ const spaCSP = "default-src 'self'; " +
 	"base-uri 'none'; " +
 	"object-src 'none'"
 
+// hstsValue pins the ephemeral tunnel hostname to HTTPS for two years.
+// trycloudflare.com is served over HTTPS only and is covered by the
+// includeSubDomains preload list, so a browser that has seen this once will
+// refuse to try the origin over plain HTTP even if something in the path
+// (a captive portal, a misconfigured LAN shortcut) answers there.
+const hstsValue = "max-age=63072000; includeSubDomains"
+
+// permissionsPolicy denies every powerful device API the SPA has no use for.
+// camera=(self) stays allowed because the QR scanner calls getUserMedia when
+// the user asks to read an nsec from a QR code; everything else is off, so a
+// page that ends up loaded on this origin cannot ask for the microphone, the
+// user's location, a payment card, or a USB device.
+const permissionsPolicy = "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), " +
+	"magnetometer=(), gyroscope=(), accelerometer=()"
+
 // securityHeaders wraps the SPA file server with the response headers that
 // keep the origin holding the user's key material hard to attack.
 func securityHeaders(next http.Handler) http.Handler {
@@ -416,8 +473,25 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", permissionsPolicy)
+		// HSTS only over HTTPS. Over LAN HTTP the header is ignored by
+		// browsers, and sending it anyway would make a browser that has
+		// cached it refuse the plain-HTTP origin later — the exact downgrade
+		// the header is supposed to prevent, caused by the daemon itself.
+		if isHTTPSRequest(r) {
+			h.Set("Strict-Transport-Security", hstsValue)
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isHTTPSRequest reports whether the client reached this server over TLS,
+// directly or through the tunnel. dl_conn itself is always spoken to over
+// loopback by cloudflared, so the connection is never the client's TLS — the
+// only evidence is what the edge told us, and X-Forwarded-Proto is set by
+// cloudflared rather than by anything a client can reach past the edge.
+func isHTTPSRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // statusRecorder captures the response status code for logging.
@@ -496,6 +570,22 @@ func sessionMgrCleanup(ctx context.Context, sm *auth.SessionManager) {
 			}
 		}
 	}()
+}
+
+// newNostrClient builds the signaling client and wipes the buffer holding the
+// private key, whatever the outcome.
+//
+// The decoded key is the one piece of state in this process that must never
+// outlive its use, and the nsec string that produced it is still sitting in
+// the runtime's heap from the config read. go-nostr keeps the copy it needs;
+// this zeroes ours as soon as it has one, so a core dump or a /proc/<pid>/mem
+// read taken afterwards finds an empty buffer rather than the key. It is a
+// mitigation, not a guarantee — an attacker who can ptrace the process can
+// read the key at any point, including while it is legitimately loaded.
+func newNostrClient(secret []byte, relays, authorizedNpubs []string, fallbackNip04 bool) (*nostr.Client, error) {
+	client, err := nostr.NewClient(string(secret), relays, authorizedNpubs, fallbackNip04)
+	clear(secret)
+	return client, err
 }
 
 func main() {

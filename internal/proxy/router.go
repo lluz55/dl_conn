@@ -49,12 +49,24 @@ func (rt *Router) buildProxy(i int) {
 	stripPrefix := svc.StripPrefix
 	rootPaths := svc.RootPaths
 	forwardedFor := svc.SendsForwardedFor()
+	forwardAuthorization := svc.ForwardAuthorization
 	originHost := svc.OriginHost
 	svcID := svc.ID
 	proxy.Director = func(req *http.Request) {
 		// Captured before origDir, which is free to rewrite req.Host.
 		publicHost := req.Host
 		origDir(req)
+		// Proxy authentication and configured-service credentials belong to
+		// dl_conn, not to the proxied backend. "Authorization: Bearer
+		// <sessionID>" is a credential this daemon issued (GetSessionID
+		// accepts it as an alternative to the session cookie), so forwarding
+		// it hands a live, tunnel-wide session to whatever process sits behind
+		// the prefix — which can then replay it against dl_conn's own
+		// protected routes. A backend that is genuinely meant to receive a
+		// caller-supplied credential opts in explicitly.
+		if !forwardAuthorization {
+			req.Header.Del("Authorization")
+		}
 		// Root-relative dsh APIs need a root-scoped cookie. Never forward
 		// that credential to another proxied service on the shared origin.
 		cookies := req.Cookies()
@@ -137,7 +149,7 @@ func (rt *Router) buildProxy(i int) {
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
 		log.Printf("proxy error: service=%s target=%s path=%q remote=%s reason=%v",
-			svcID, target, req.URL.Path, req.RemoteAddr, err)
+			svcID, target, req.URL.Path, rt.clientIPForLog(req), err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		w.Write([]byte(`{"error":"upstream service unavailable"}`))
@@ -161,6 +173,18 @@ func isSPAPath(path string) bool {
 		path == "/" || path == "/index.html" ||
 		strings.HasPrefix(path, "/app.js") ||
 		strings.HasPrefix(path, "/style.css")
+}
+
+// clientIPForLog renders the requesting address under the session manager's
+// log policy, so every line the router writes about a caller is anonymized the
+// same way the auth package's own lines are. A router built without a session
+// manager (tests, and the degenerate no-auth configuration) falls back to the
+// same anonymization directly rather than logging the raw address.
+func (rt *Router) clientIPForLog(r *http.Request) string {
+	if rt.sessions == nil {
+		return auth.Anonymize(auth.ClientIP(r))
+	}
+	return rt.sessions.IPForLog(r)
 }
 
 // RootFallback handles everything that didn't match a service prefix
@@ -217,7 +241,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(r.URL.Path, ".webmanifest") &&
 		(rt.sessions == nil || !rt.sessions.ValidateSession(r)) {
 		log.Printf("auth denied: path=%q remote=%s reason=missing or invalid session",
-			r.URL.Path, r.RemoteAddr)
+			r.URL.Path, rt.clientIPForLog(r))
 		// A person opening a stale link (expired session, bookmarked
 		// "/frigate/") gets the login page with their destination attached
 		// instead of an error they can't act on. Everything else — XHR,
@@ -237,7 +261,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	svc := rt.matchService(r)
 	if svc == nil {
 		log.Printf("route not found: path=%q remote=%s reason=no configured service prefix matches",
-			r.URL.Path, r.RemoteAddr)
+			r.URL.Path, rt.clientIPForLog(r))
 		http.NotFound(w, r)
 		return
 	}
@@ -260,7 +284,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy := rt.proxies[svc.ID]
 	if proxy == nil {
 		log.Printf("proxy not initialized: service=%s path=%q remote=%s",
-			svc.ID, r.URL.Path, r.RemoteAddr)
+			svc.ID, r.URL.Path, rt.clientIPForLog(r))
 		http.Error(w, "proxy not initialized", http.StatusInternalServerError)
 		return
 	}

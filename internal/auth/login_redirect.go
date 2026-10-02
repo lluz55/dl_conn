@@ -38,8 +38,17 @@ func IsDocumentNavigation(r *http.Request) bool {
 		if !strings.EqualFold(mode, "navigate") {
 			return false
 		}
-		if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" &&
-			!strings.EqualFold(dest, "document") && !strings.EqualFold(dest, "iframe") {
+		// Dest must be "document" — the single top-level navigation of a
+		// page. "iframe" is a nested browsing context, which is how dl_conn's
+		// own login page (or any other page a user embeds) would ask for a
+		// protected resource: the answer is supposed to be a framed
+		// resource, and a redirect to the login page inside the frame is
+		// useless to whoever framed it. The SPA's CSP already sets
+		// frame-ancestors 'none', so this endpoint's own frame-denial is the
+		// only half that reaches *other* services behind the same tunnel —
+		// and an <iframe> is exactly the case where a login page would be
+		// framed rather than shown.
+		if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && !strings.EqualFold(dest, "document") {
 			return false
 		}
 		return true

@@ -15,6 +15,20 @@ type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	ttl      time.Duration
+	// anonymizeLogs and partitioned mirror the operator's auth.* settings
+	// (see config.AuthConfig). They are read-only after construction.
+	anonymizeLogs bool
+	partitioned   bool
+}
+
+// Options configures a SessionManager beyond its TTL. The zero value is the
+// hardened default: addresses anonymized in the log, no Partitioned attribute.
+type Options struct {
+	// AnonymizeLogs writes client addresses truncated to their network
+	// prefix rather than in full. See Anonymize.
+	AnonymizeLogs bool
+	// Partitioned adds the CHIPS attribute to every cookie issued.
+	Partitioned bool
 }
 
 // Session represents an authenticated user session.
@@ -32,9 +46,17 @@ type Session struct {
 
 // NewSessionManager creates a SessionManager with the given session TTL.
 func NewSessionManager(ttl time.Duration) *SessionManager {
+	return NewSessionManagerWithOptions(ttl, Options{AnonymizeLogs: true})
+}
+
+// NewSessionManagerWithOptions creates a SessionManager with an explicit TTL
+// and hardening policy.
+func NewSessionManagerWithOptions(ttl time.Duration, opts Options) *SessionManager {
 	sm := &SessionManager{
-		sessions: make(map[string]*Session),
-		ttl:      ttl,
+		sessions:      make(map[string]*Session),
+		ttl:           ttl,
+		anonymizeLogs: opts.AnonymizeLogs,
+		partitioned:   opts.Partitioned,
 	}
 	go sm.cleanupLoop()
 	return sm
@@ -87,7 +109,7 @@ func (sm *SessionManager) ValidateSession(r *http.Request) bool {
 		// genuinely changed (Wi-Fi/cellular handoff, ISP re-IP) just needs
 		// to redeem a fresh token rather than losing the session outright.
 		log.Printf("session denied: id_prefix=%s bound_ip=%s request_ip=%s reason=ip mismatch",
-			tokenPrefix(sessionID), s.IP, ip)
+			TokenPrefix(sessionID), sm.logIP(s.IP), sm.logIP(ip))
 		return false
 	}
 	s.LastSeen = time.Now() // sliding renewal
@@ -157,13 +179,14 @@ func ClientIP(r *http.Request) string {
 // SetSessionCookie writes a secure session cookie to the response.
 func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, sessionID string) {
 	cookie := &http.Cookie{
-		Name:     "dl_conn_session",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(sm.ttl.Seconds()),
+		Name:       "dl_conn_session",
+		Value:      sessionID,
+		Path:       "/",
+		HttpOnly:   true,
+		Secure:     true,
+		SameSite:   http.SameSiteLaxMode,
+		MaxAge:     int(sm.ttl.Seconds()),
+		Partitioned: sm.partitioned,
 	}
 	http.SetCookie(w, cookie)
 }
@@ -173,14 +196,24 @@ func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, sessionID stri
 // invalidated session ID on its next request.
 func (sm *SessionManager) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "dl_conn_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
+		Name:        "dl_conn_session",
+		Value:       "",
+		Path:        "/",
+		HttpOnly:    true,
+		Secure:      true,
+		SameSite:    http.SameSiteLaxMode,
+		MaxAge:      -1,
+		Partitioned: sm.partitioned,
 	})
+}
+
+// CookiesPartitioned reports whether the cookies this manager issues carry
+// the CHIPS Partitioned attribute. Callers outside the auth package use it for
+// the other credentials dl_conn hands the browser (the service cookie, the
+// dsh launch cookie), which belong to the same trust decision and must be
+// partitioned or not together.
+func (sm *SessionManager) CookiesPartitioned() bool {
+	return sm.partitioned
 }
 
 // GetSessionID extracts the session ID from the request cookie or

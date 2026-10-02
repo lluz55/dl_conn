@@ -103,6 +103,18 @@ type ServiceConfig struct {
 	// redeems it only after its own Zero-Trust session has been validated, so
 	// the token never crosses the public tunnel.
 	LaunchTokenFile string `mapstructure:"launchTokenFile"`
+	// ForwardAuthorization passes the caller's Authorization header through to
+	// this backend instead of stripping it.
+	//
+	// Stripping is the default because "Authorization: Bearer <sessionID>" is
+	// a credential dl_conn itself issued (see auth.SessionManager.GetSessionID):
+	// forwarding it verbatim hands a live, tunnel-wide session to whatever
+	// process is behind the prefix, which can then replay it against dl_conn's
+	// own protected routes. Only a backend that is *supposed* to receive a
+	// caller-supplied credential — one behind its own HTTP Basic auth, say —
+	// has any business seeing it, and the operator opting in is stating that
+	// the backend is trusted with it.
+	ForwardAuthorization bool `mapstructure:"forwardAuthorization"`
 }
 
 // SendsForwardedFor reports whether X-Forwarded-For should be passed to this
@@ -118,10 +130,59 @@ type DynamicPortsConfig struct {
 	DeniedPorts []int `mapstructure:"deniedPorts"`
 }
 
-// AuthConfig holds token and session TTLs.
+// AuthConfig holds token and session TTLs and the edge-hardening knobs that
+// bound what an unauthenticated caller can do to the daemon.
 type AuthConfig struct {
 	TokenTTL   time.Duration `mapstructure:"tokenTTL"`
 	SessionTTL time.Duration `mapstructure:"sessionTTL"`
+	// RateLimitPerSec and RateLimitBurst bound how fast a single client
+	// address may hit /auth. Redeeming a token mints a session and mutates
+	// the in-memory session map; without a ceiling, anyone who can reach the
+	// tunnel can turn the endpoint into a token-guessing oracle (or simply
+	// churn sessions) as fast as the network allows. Zero means default.
+	RateLimitPerSec float64 `mapstructure:"rateLimitPerSec"`
+	RateLimitBurst  int     `mapstructure:"rateLimitBurst"`
+	// LogIPs controls how client addresses are written to the daemon log.
+	// nil (absent) means log them anonymized — IPv4 truncated to its network
+	// and IPv6 to its /48 — which keeps the log useful for correlating a
+	// session's own requests while dropping the personally identifying tail
+	// that log shipping (journalctl → Loki/Sentry) would otherwise fan out.
+	// Explicit false writes "[redacted]" instead; true also anonymizes, it
+	// simply states the intent. See auth.Anonymize.
+	LogIPs *bool `mapstructure:"logIPs"`
+	// PartitionedCookies adds the CHIPS "Partitioned" attribute to the
+	// cookies dl_conn issues, so they are keyed by the top-level site
+	// embedding the tunnel in an iframe rather than by the shared public
+	// suffix of trycloudflare.com. This matters because every ephemeral
+	// tunnel lives under the same registrable domain: an unpartitioned
+	// cookie set by one tunnel is offered to every other tunnel a user
+	// visits. Browsers ignore the attribute when they don't implement it, so
+	// it is safe to set unconditionally — but it is opt-in here to keep
+	// older clients (which never send it back) on the plain path until
+	// CHIPS support is worth relying on.
+	PartitionedCookies bool `mapstructure:"partitionedCookies"`
+	// StepUpProtected lists the endpoints that additionally require a
+	// step-up proof. Empty (the default) keeps every route protected by the
+	// session alone, which is today's behavior.
+	StepUpProtected []string `mapstructure:"stepUpProtected"`
+}
+
+// LogsIPs reports whether client addresses are anonymized in the daemon log.
+// Absent configuration means anonymized, not plaintext.
+func (a *AuthConfig) LogsIPs() bool {
+	return a.LogIPs == nil || *a.LogIPs
+}
+
+// RequiresStepUp reports whether path is in the step-up-protected set. The
+// match is exact: the list names concrete daemon routes, and a prefix rule
+// would silently protect more than the operator wrote.
+func (a *AuthConfig) RequiresStepUp(path string) bool {
+	for _, p := range a.StepUpProtected {
+		if p == path {
+			return true
+		}
+	}
+	return false
 }
 
 // TelemetryConfig holds host telemetry collection settings.
@@ -183,6 +244,9 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("dynamicPorts.deniedPorts", []int{22})
 	v.SetDefault("auth.tokenTTL", "120s")
 	v.SetDefault("auth.sessionTTL", "4h")
+	v.SetDefault("auth.rateLimitPerSec", 10.0)
+	v.SetDefault("auth.rateLimitBurst", 20)
+	v.SetDefault("auth.partitionedCookies", false)
 	v.SetDefault("telemetry.enabled", true)
 	v.SetDefault("telemetry.intervalSeconds", 10)
 	v.SetDefault("telemetry.retentionDays", 7)
@@ -220,6 +284,12 @@ func parseDurations(cfg *Config) error {
 	}
 	if cfg.Auth.SessionTTL == 0 {
 		cfg.Auth.SessionTTL = 4 * time.Hour
+	}
+	if cfg.Auth.RateLimitPerSec <= 0 {
+		cfg.Auth.RateLimitPerSec = 10
+	}
+	if cfg.Auth.RateLimitBurst <= 0 {
+		cfg.Auth.RateLimitBurst = 20
 	}
 	if cfg.Telemetry.IntervalSeconds == 0 {
 		cfg.Telemetry.IntervalSeconds = 10
