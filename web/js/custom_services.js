@@ -12,6 +12,7 @@ export const SAFE_SERVICE_ICONS = Object.freeze([
 ]);
 
 export const CUSTOM_SERVICE_STRINGS = Object.freeze({
+  relaysCollapsed: "Sessão relays colapsada.",
   invalidName: "Informe o nome do serviço.",
   invalidPort: "Informe uma porta entre 1024 e 65535.",
   invalidIcon: "Escolha um ícone da lista.",
