@@ -96,6 +96,147 @@ de redirecionamentos e causa bootstrap repetido. O token não atravessa o túnel
 não entra no histórico do navegador e nunca é registrado pelo `dl_conn`.
 Falhas de leitura, validação, resgate ou cookie fecham o acesso (`502`/`503`).
 
+## Hardening de borda
+
+Oito controles na fronteira do daemon, todos configuráveis e todos com teste.
+Nenhum deles altera o protocolo Nostr.
+
+1. **`Authorization` nunca chega ao backend por padrão**
+   (`internal/proxy/router.go`). `Authorization: Bearer <sessionID>` é uma
+   credencial que o próprio `dl_conn` emitiu — `GetSessionID` a aceita como
+   alternativa ao cookie de sessão. Encaminhá-la entrega a uma sessão viva, de
+   escopo túnel inteiro, ao processo que estiver atrás do prefixo, que pode
+   reusá-la contra as próprias rotas protegidas. Um backend que de fato deve
+   receber a credencial do chamador declara `forwardAuthorization: true`
+   (`internal/config/config.go`); `/local/<porta>/` não tem como declarar nada
+   e sempre remove o header, porque ali o backend é escolhido por porta e não
+   por uma decisão de confiança do operador.
+
+2. **`Strict-Transport-Security`** (`max-age=63072000; includeSubDomains`) em
+   `cmd/dl_conn/main.go`, enviado **apenas** quando a requisição chegou por
+   HTTPS (`r.TLS != nil` ou `X-Forwarded-Proto: https`). Em acesso LAN em
+   HTTP o header é ignorado pelo browser, e enviá-lo assim faria o browser
+   recusar a origem em texto claro depois — exatamente o downgrade que o header
+   existe para impedir, causado pelo próprio daemon.
+
+3. **`Permissions-Policy`** com tudo negado por padrão, exceto
+   `camera=(self)`: é o que o `qr_scanner.js` precisa para `getUserMedia` quando
+   o usuário opta por ler o nsec de um QR code.
+
+4. **Cookie `Partitioned` (CHIPS)** opcional
+   (`auth.partitionedCookies`, padrão `false`). Todos os túneis efêmeros vivem
+   sob o mesmo domínio registrável (`trycloudflare.com`), então um cookie de
+   sessão sem particionamento emitido por um túnel é oferecido a todos os
+   outros que o usuário abrir. Ligado, o atributo vale para o cookie de
+   sessão, o cookie de serviço e o cookie de bootstrap do `dsh` — a mesma
+   decisão de confiança, aplicada em conjunto.
+
+5. **Rate limit em `/auth`** por endereço de cliente
+   (`Cf-Connecting-Ip`, com `RemoteAddr` como fallback — nunca
+   `X-Forwarded-For`, que qualquer um que alcance o daemon em LAN poderia
+   forjar). Padrão: 10 req/s, burst de 20 (`auth.rateLimitPerSec`,
+   `auth.rateLimitBurst`). Resgate de token consome um token **e** cria uma
+   sessão; sem teto, o endpoint é um oráculo de adivinhação que qualquer um
+   alcançando o túnel pode martelar. `429` com `Retry-After: 1`; buckets
+   inativos são reciclados a cada 5 min (`internal/auth/ratelimit.go`).
+
+6. **Telemetria com cache de 1 s e rate limit por sessão**
+   (`internal/telemetry/handler.go`). Vários dashboards consultando no mesmo
+   segundo recebiam a mesma codificação JSON refeita cada vez; a segunda
+   chamada dentro da janela devolve os mesmos bytes. O limite é por sessão
+   (1 req/s, burst de 5) — o custo é atribuível a uma sessão, e um cliente
+   pode legitimamente ter mais de uma sem que uma consuma o orçamento da outra.
+
+7. **`Sec-Fetch-Dest: iframe` deixou de ser navegação**
+   (`internal/auth/login_redirect.go`). Um contexto aninhado não é lugar para
+   uma página de login: quem emoldurou a requisição receberia um quadro com o
+   HTML de login de outra pessoa, e o usuário nunca veria uma página acionável.
+   A resposta é o `403` que toda não-navegação já recebia. O CSP da SPA já
+   traz `frame-ancestors 'none'`; o que faltava era a metade que alcança os
+   *outros* serviços da mesma origem.
+
+8. **Anonimização de IP nos logs** (`internal/auth/logip.go`, padrão ligado).
+   IPv4 truncado no prefixo de rede (`10.0.66.*`) e IPv6 nos primeiros 48 bits
+   (`2001:db8:1234:*`) — o suficiente para correlacionar as requisições de um
+   cliente, insuficiente para localizá-lo, e isso importa porque `journalctl`
+   costuma ser exportado para Loki/Datadog/Sentry. `auth.logIPs: false` grava
+   `[redacted]`. Vale para auth, proxy, portas dinâmicas e telemetria, pela
+   mesma função.
+
+## Superfície do token de autenticação
+
+Um token de uso único em uma URL é um token no histórico do navegador, no log
+de acesso do `cloudflared` e do serviço de destino, e no `Referer` de tudo que a
+página de chegada carregar. A migração é `GET → POST`:
+
+- **`POST /auth`** aceita `application/x-www-form-urlencoded` ou JSON
+  (`{"token": "...", "redirect": "..."}`) e responde `200` com
+  `{"redirect": "..."}` — um `fetch()` precisa saber para onde ir, e seguir um
+  `302` lhe entregaria o shell da SPA. A SPA redenciona via
+  `web/js/api_client.js` e então abre uma URL **sem credencial alguma**: o
+  cookie emitido pelo resgate é o que autoriza, e o link pode ser favoritado,
+  compartilhado ou aberto em nova aba sem carregar segredo.
+- **`X-Dl-Conn-Token`** (qualquer método) atende clientes sem cookie jar —
+  apps nativos, scripts. É credencial de portador, então só tem sentido sobre o
+  TLS do túnel, e nunca é encaminhada para um serviço.
+- **`GET /auth?token=…`** continua funcionando durante a janela de depreciação
+  e responde `Sunset: Wed, 01 Jul 2026 00:00:00 GMT` e
+  `Warning: 299 - "Use POST /auth or the X-Dl-Conn-Token header…"`. Quem não
+  ler `Sunset` ainda assim fica sabendo.
+
+Falha de redenção por POST não é beco sem saída: a SPA abre o destino mesmo
+assim, e sem sessão o daemon leva o browser à página de login — exatamente onde
+um clique não autenticado já levava.
+
+## Step-up auth
+
+Uma sessão roubada concede acesso de escopo túnel inteiro durante toda a janela
+(`auth.sessionTTL`, 4 h por padrão). Para rotas que o operador considerar
+sensíveis, `auth.stepUpProtected` acrescenta uma segunda prova, de vida curta:
+
+- `POST /api/auth/stepup` emite a prova **para a sessão atual** (e apenas
+  para ela; sem sessão, `401`; GET, `405` — emitir por GET deixaria um
+  `<img>` de terceiros armar o privilégio com o cookie que o browser anexa).
+- A prova é `HMAC-SHA256(sessionID ‖ segredo ‖ bucket de 5 min)`, comparada em
+  tempo constante, e válida no bucket atual e no anterior — o grace period que
+  evita um `401` por arredondamento de fronteira.
+- O segredo é sorteado por processo e **nunca persistido**: um restart invalida
+  as provas pendentes, que é o comportamento correto. (A fase 16 previa derivá-lo
+  de `nostr.daemonKeypair`; essa opção não existe na config, e sorteio por
+  processo é mais simples e igualmente sem estado em disco.)
+- Cliente (`web/js/api_client.js`): a prova fica **só em memória**, some no
+  lock/logout/troca de identidade, e é cunhada **sob demanda** — só após um
+  `401`. Um operador que nunca ligou o step-up não paga uma requisição extra por
+  poll, porque o `401` simplesmente nunca chega.
+
+## Ciclo de vida da chave
+
+A `nsec` decodificada é o único estado do processo que não deve sobreviver ao
+seu uso. `cmd/dl_conn/main.go` copia o segredo decodificado para um buffer
+próprio, entrega ao construtor do cliente e **zera esse buffer** na volta — no
+caminho de erro inclusive, que é justamente o que uma chave mal configurada
+toma. `nostr.DeriveKeyPair` instala um finalizador que descarta a referência à
+chave privada quando o keypair se torna inalcançável.
+
+**O que isso não é:** uma garantia. String em Go é imutável, então as cópias
+que a config e a flag `--nsec` deixaram no heap permanecem até o GC, e zerar
+memória exigiria `unsafe`. Contra quem tem `ptrace` nada disso vale — a chave é
+legitimamente carregada em algum momento. O escopo honesto é "o daemon deixa de
+segurar a chave depois do uso", não "a chave não pode ser lida de
+`/proc/<pid>/mem`". O mesmo vale para o lado do browser: ver
+[security.md do cofre](08-session-vault-auth.md) para o que é garantido lá.
+
+## Onde isso vive no código
+
+- `internal/auth/ratelimit.go`, `internal/auth/logip.go`,
+  `internal/auth/stepup.go`, `internal/auth/handler.go`,
+  `internal/auth/login_redirect.go`, `internal/auth/session.go`
+- `internal/proxy/router.go` (remoção de `Authorization`), `internal/proxy/dynamic_ports.go`
+- `internal/telemetry/handler.go` (cache + rate limit)
+- `cmd/dl_conn/main.go` (headers, roteamento, zeragem da chave)
+- `internal/nostr/crypto.go` (finalizador do keypair)
+- `web/js/api_client.js` (redenção via POST, prova de step-up)
+
 Relacionado: [sync.md](sync.md), [architecture.md](architecture.md),
 [environment.md](environment.md) (reprodutibilidade de build como parte da
 cadeia de suprimentos).

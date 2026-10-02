@@ -592,3 +592,39 @@ de registrar: a regra geral é que **um rótulo de contagem tem que descrever
 exatamente o predicado que ele conta** — misturar disponibilidade com
 qualidade num só número foi a origem do bug. Ver
 [tasks/07-relay-testing.md](tasks/07-relay-testing.md#correções-posteriores).
+
+## Trilha de segurança — hardening de borda e autenticação avançada
+
+Fases [s15](tasks/s15-security-hardening.md) e [s16](tasks/s16-security-auth-advanced.md),
+implementadas juntas. Oito controles de borda (remoção de `Authorization` por
+padrão, HSTS condicional, Permissions-Policy, cookie `Partitioned`, rate limit em
+`/auth`, cache+rate limit de telemetria, `iframe` fora das navegações, IP
+anonimizado no log) e três mudanças de fluxo (POST/header em vez de token na
+URL, step-up opt-in, zeragem da chave em memória).
+
+Três decisões que valem registrar porque contrariam o enunciado original das
+tarefas:
+
+1. **`Partitioned` é opt-in, não detectado por User-Agent.** A fase propunha
+   ler a versão do Chrome/Firefox do `User-Agent` para decidir. UA é spoofável e
+   é justamente o que um cliente não precisa fingir; um operador decidindo por
+   config erra no máximo uma release, um cliente decidindo por UA erra em
+   silêncio.
+
+2. **O segredo do step-up é sorteado por processo, não derivado de
+   `nostr.daemonKeypair`.** Essa chave não existe na config. Sorteio por
+   processo é mais simples, igualmente sem estado em disco, e dá a invalidação
+   correta no restart.
+
+3. **A SPA não usa `mode: "cors"` para redencionar.** A SPA é servida de outra
+   origem que o túnel efêmero e o daemon não emite headers CORS; um POST
+   cross-origin legível seria um `preflight` que falha. O pedido é
+   deliberadamente simples (form, sem headers customizados, `no-cors`) e o que
+   importa é o efeito colateral: o `Set-Cookie` da resposta cria a sessão, e a
+   navegação seguinte já a carrega. A URL aberta **não leva credencial
+   alguma** — o token nunca aparece em histórico, log de acesso ou `Referer`.
+
+A anonimização de IP altera o formato do log (`10.0.66.*`), então foi
+documentada em [security.md](concepts/security.md#hardening-de-borda) e no
+runbook antes de qualquer operador procurar por um endereço completo que não
+mais aparece.

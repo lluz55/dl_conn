@@ -1,33 +1,36 @@
 ---
 type: index
-title: "Índice de Tarefas de Implementação (OKF)"
-description: "Roteiro por fases para a implementação do dl_conn (Go Daemon + Nostr Signaling + Cloudflare Ephemeral Tunnel + GitHub Pages SPA)."
-timestamp: 2026-08-23T16:00:00Z
+title: "Índice de Tarefas (movido)"
+description: "Ponteiro para o bundle canônico de tarefas, em docs/okf/tasks/."
+timestamp: 2026-10-26T00:00:00Z
 ---
 
-# Índice de Tarefas de Implementação — `dl_conn`
+# Índice de Tarefas — movido
 
-Este diretório contém o planejamento detalhado e rastreável de implementação do projeto **`dl_conn`** seguindo o padrão **Open Knowledge Format (OKF)**.
+Este diretório **não é mais o local canônico** das tarefas do `dl_conn`. O
+conhecimento do projeto vive no bundle OKF, conforme o `AGENTS.md`, e o índice
+autoritativo está em:
 
-O objetivo do projeto é expor e acessar de forma segura serviços locais rodando no host NixOS (`n100`) — tais como Home Assistant, Frigate e Zigbee2MQTT — através de um **túnel efêmero da Cloudflare (`trycloudflare.com`)**, utilizando **Nostr (NIP-44)** para sinalização segura/descoberta, **Gatekeeper em Go com tokens/cookies** para controle de acesso Zero-Trust e uma **Single-Page Application estática no GitHub Pages** como cliente universal.
+- **[docs/okf/tasks/index.md](../okf/tasks/index.md)**
 
----
+Os arquivos de fases 1–8 que restam aqui são cópias antigas das fases
+homônimas em `docs/okf/tasks/`; os de segurança, performance e usabilidade
+(foram `15-…` a `20-…` aqui) já foram movidos para lá com prefixo de trilha:
 
-## Tabela de Fases
+| Era aqui      | Está em                                                  |
+|---------------|----------------------------------------------------------|
+| `15-security-hardening.md`  | `docs/okf/tasks/s15-security-hardening.md`  |
+| `16-security-auth-advanced.md` | `docs/okf/tasks/s16-security-auth-advanced.md` |
+| `17-perf-binary-web.md`     | `docs/okf/tasks/p17-perf-binary-web.md`     |
+| `18-perf-hotpath.md`        | `docs/okf/tasks/p18-perf-hotpath.md`        |
+| `19-usability-discovery.md` | `docs/okf/tasks/u19-usability-discovery.md` |
+| `20-usability-mobile-prf.md`| `docs/okf/tasks/u20-usability-mobile-prf.md`|
 
-| # | Fase | Arquivo | Status | Progresso |
-|---|------|---------|--------|-----------|
-| 1 | Fundação e Configuração Nix | [01-fundacao.md](01-fundacao.md) | ✅ concluída | 5/5 |
-| 2 | Gerenciador de Túnel Cloudflare | [02-tunnel-manager.md](02-tunnel-manager.md) | ✅ concluída | 5/5 |
-| 3 | Sinalização Nostr & Criptografia NIP-44 | [03-nostr-signaling.md](03-nostr-signaling.md) | ✅ concluída | 5/5 |
-| 4 | Gatekeeper Auth & Proxy Reverso Multiplexador | [04-auth-proxy.md](04-auth-proxy.md) | ✅ concluída | 6/6 |
-| 5 | Frontend Estático (GitHub Pages SPA) | [05-frontend-ghpages.md](05-frontend-ghpages.md) | ✅ concluída | 6/6 |
-| 6 | Módulo NixOS, SOPS & Validação E2E | [06-nixos-e2e.md](06-nixos-e2e.md) | ✅ concluída | 5/5 |
-| 7 | Diagnóstico e Teste de Relays no Frontend | [07-relay-testing.md](07-relay-testing.md) | ⏳ pendente | 0/6 |
-| 8 | Cofre Cifrado de Sessão (PIN / Biometria) | [08-session-vault-auth.md](08-session-vault-auth.md) | ⏳ pendente | 0/6 |
+O prefixo existe porque a numeração solta já estava ocupada no bundle canônico:
+lá, a fase 15 é o redesign do SPA e a 16 é o de serviços personalizados, ambas
+concluídas. Sem o prefixo, o repositório teria duas tabelas de fases
+contraditórias.
 
----
-
-## Convenções de Rastreamento
-* Cada sub-tarefa é representada por um item de checklist Markdown (`- [ ]` / `- [x]`).
-* Cada fase possui critérios claros de "Definição de Concluído" (*Definition of Done*) e testes de verificação empírica.
+**Próximo passo sugerido:** apagar este diretório e as cópias das fases 1–8,
+já que o bundle em `docs/okf/tasks/` é a fonte da verdade. Isso é uma remoção de
+arquivos versionados e por isso continua pendente de decisão explícita.

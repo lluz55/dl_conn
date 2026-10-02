@@ -30,6 +30,41 @@ e controle de acesso Zero-Trust.
 journalctl -u dl-conn -f --since "5 min ago"
 ```
 
+Endereços de cliente entram **anonimizados** (IPv4 truncado no prefixo de rede,
+`10.0.66.*`; IPv6 nos primeiros 48 bits, `2001:db8:1234:*`), porque este log
+costuma ser exportado para um agregador. Para nenhum endereço, use
+`auth.logIPs: false` — o log passa a gravar `[redacted]`.
+
+Linhas úteis no dia a dia:
+
+| Mensagem                              | Significado                                                                  |
+|---------------------------------------|------------------------------------------------------------------------------|
+| `auth throttled: …`                   | Um endereço bateu no teto de `/auth`. Persistente num endereço = cliente ou bot. |
+| `telemetry throttled: session_prefix=…` | Uma sessão.pollou a telemetria rápido demais.                                |
+| `auth failed: … reason=token expired` | Link de serviço compartilhado que sobreviveu ao TTL do token — rotina, não ataque. |
+| `session denied: … reason=ip mismatch` | Sessão reapresentada de outro endereço (cookie copiado, ou Wi-Fi/cellular trocando de IP). |
+
+### Autenticação HTTP sobstances
+
+Uma prova de step-up (`/api/auth/stepup`) vale 5 minutos e morre com o restart
+do daemon — o segredo que a assina é sorteado por processo. Se a telemetria
+começar a responder `401 {"error":"step-up required"}` depois de um restart, é o
+comportamento esperado: a SPA cunha uma prova nova assim que vê o `401`, e a
+primeira tentativa seguinte já passa. Se o `401` persistir, o problema é sessão —
+não step-up.
+
+Ao depurar um resgate de token, prefira a forma nova:
+
+```bash
+curl -sS -X POST https://<tunel>/auth \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'token=…&redirect=/frigate/' -i      # 200 + {"redirect": …} + cookie
+```
+
+`GET /auth?token=…` ainda responde, e traz `Sunset` e `Warning: 299` — se um
+cliente próprio continuar usando a forma antiga depois dessa data, é ele que
+precisa migrar para `POST` ou `X-Dl-Conn-Token`.
+
 ## Rotação de Chave Nostr
 
 1. Gere um novo par de chaves Nostr via CLI:

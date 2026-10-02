@@ -34,6 +34,33 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 15 | Redesign definitivo do SPA (protótipo → produção) | [15-web-redesign.md](15-web-redesign.md) | ✅ concluída | 10/10 |
 | 16 | Serviços personalizados no frontend | [16-custom-frontend-services.md](16-custom-frontend-services.md) | ✅ concluída | 9/9 |
 
+### Trilha de segurança, performance e usabilidade (2026-10-02)
+
+Análise de superfície de ataque e de custo lançou 6 fases novas. Elas recebem
+**prefixo de trilha** no nome do arquivo (`s` segurança, `p` performance, `u`
+usabilidade) porque a numeração solta já estava ocupada — a fase 15 do índice
+acima é o redesign do SPA, e a 16 é o de serviços personalizados. Manter
+`15-…`/`16-…` para as novas criaria duas tabelas de fases contraditórias no
+mesmo repositório.
+
+| #   | Trilha  | Fase                                                   | Arquivo                                             | Status          | Progresso |
+|-----|---------|--------------------------------------------------------|-----------------------------------------------------|-----------------|-----------|
+| S15 | Segurança | Endurecimento de headers e rate limiting               | [s15-security-hardening.md](s15-security-hardening.md) | ✅ concluída   | 9/9 |
+| S16 | Segurança | Autenticação avançada (POST/header, step-up, zero-on-exit) | [s16-security-auth-advanced.md](s16-security-auth-advanced.md) | ✅ concluída | 6/6 |
+| P17 | Performance | Binário Go e bundle web                              | [p17-perf-binary-web.md](p17-perf-binary-web.md)     | ⏳ pendente      | 0/9 |
+| P18 | Performance | Hot path do proxy e polling                           | [p18-perf-hotpath.md](p18-perf-hotpath.md)           | ⏳ pendente      | 0/10 |
+| U19 | Usabilidade | Feedback de descoberta e renovação                    | [u19-usability-discovery.md](u19-usability-discovery.md) | ⏳ pendente  | 0/9 |
+| U20 | Usabilidade | Mobile flow e biometria PRF                           | [u20-usability-mobile-prf.md](u20-usability-mobile-prf.md) | ⏳ pendente | 0/10 |
+
+Bloqueios cruzados: **P20 depende de P17** (o split de `app.js` em módulos ES é
+pré-requisito da reorganização dos cards em `index.html`) e **P18 depende de
+P17** (o fingerprint por hash pressupõe `web/_min/`). **S15 não bloqueia nada**
+e foi o ponto de partida natural.
+
+P17 teve dois itens deliberadamente colocados fora de escopo em 2026-10-02
+(troca do driver SQLite para CGO, e o pipeline de minify no Nix); o frontmatter
+do arquivo registra o quê e o porquê.
+
 ---
 
 ## Convenções de Rastreamento
