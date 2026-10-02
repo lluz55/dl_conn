@@ -205,6 +205,15 @@ services:
     stripPrefix: true
     websocket: true
 
+  - id: "zellij"
+    name: "Zellij Web"
+    icon: "terminal"
+    description: "Terminal web e gerenciador de sessões Zellij"
+    prefix: "/zellij"
+    target: "http://127.0.0.1:3001"
+    stripPrefix: true
+    websocket: true
+
   # About originHost: some backends fence their API on the Host header to
   # defend against DNS rebinding, accepting only their own loopback authority
   # and refusing any request whose Origin names a different origin. The
