@@ -96,6 +96,13 @@ export function clearReturnTo(storage) {
  * remembered destination, which is exactly the shape of a service card's
  * link. Returns null when any piece is missing, so callers can't produce a
  * half-formed URL that would fail at the daemon.
+ *
+ * Deprecated for new code: this puts the token in a URL, which is the thing
+ * the POST redemption in api_client.js exists to avoid. It is kept because the
+ * daemon still accepts the GET form (with a Sunset header) and because it is
+ * the fallback for a click the SPA could not intercept — a middle-click, or a
+ * browser with the module's script blocked. New call sites should redeem with
+ * redeemToken() and navigate to resumeTarget() instead.
  */
 export function buildResumeURL(tunnelURL, authToken, next) {
   const target = sanitizeNext(next);
@@ -105,6 +112,18 @@ export function buildResumeURL(tunnelURL, authToken, next) {
     "/auth?token=" + encodeURIComponent(authToken) +
     "&redirect=" + encodeURIComponent(target)
   );
+}
+
+/**
+ * The destination of a resumed trip, with no credential in it.
+ *
+ * This is what a caller navigates to *after* redeeming the token, and what a
+ * banner link can safely expose. Returns null for a destination sanitizeNext
+ * rejects, so a crafted `next` cannot turn the resume flow into a navigation
+ * off-origin.
+ */
+export function resumeTarget(next) {
+  return sanitizeNext(next);
 }
 
 /**

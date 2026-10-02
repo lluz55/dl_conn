@@ -21,7 +21,13 @@ function check(name, condition) {
 console.log("\n=== Dynamic local port UI tests ===");
 check("port input is bounded to non-privileged TCP ports", /id="local-port-input"[^>]*min="1024"[^>]*max="65535"/.test(html));
 check("open button is wired", app.includes('el.btnOpenLocalPort.addEventListener("click", onOpenLocalPort)'));
-check("URL uses the authenticated same-origin redirect", app.includes('const redirectPath = "/local/" + port + "/"') && app.includes('state.tunnelURL + "/auth?token="'));
+check("open button is wired", app.includes('el.btnOpenLocalPort.addEventListener("click", onOpenLocalPort)'));
+// The destination is the loopback service itself, and the one-time token is
+// redeemed in a POST body first — it must not appear in a URL any more.
+check("URL uses the authenticated same-origin redirect",
+  app.includes('openService("/local/" + port + "/")'));
+check("no token is placed in a URL", !app.includes('"/auth?token="'),
+  "a one-time token in a URL leaks into history, access logs and Referer");
 check("dynamic card appears only after discovery", app.includes('el.localPortSection.classList.remove("hidden")'));
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);

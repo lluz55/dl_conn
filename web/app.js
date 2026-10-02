@@ -19,9 +19,16 @@ import {
   captureReturnTo,
   readReturnTo,
   clearReturnTo,
-  buildResumeURL,
   describeTarget,
+  resumeTarget,
 } from './js/return_to.js';
+import {
+  clearStepUp,
+  getStepUpHeader,
+  redeemAndOpen,
+  requestStepUp,
+  serviceHref,
+} from './js/api_client.js';
 
 (function () {
   "use strict";
@@ -225,6 +232,8 @@ import {
   const CHART_HISTORY_MAX = 30;
   /** Refresh the host health card often enough to feel live without overlap. */
   const TELEMETRY_POLL_MS = 2000;
+  /** Host telemetry endpoint, the one route the operator can put behind step-up. */
+  const TELEMETRY_PATH = "/api/host/telemetry";
   const cpuLoadHistory = [];
   const ramPctHistory = [];
   const diskPctHistory = [];
@@ -424,7 +433,21 @@ import {
     if (telemetryFetchInFlight) return;
     telemetryFetchInFlight = true;
     try {
-      const r = await fetch("/api/host/telemetry", { credentials: "include" });
+      let r = await fetch(TELEMETRY_PATH, {
+        credentials: "include",
+        headers: getStepUpHeader() || undefined,
+      });
+      // Endpoints the operator marked sensitive need a step-up proof on top of
+      // the session. Minting one is therefore driven by the refusal, not by the
+      // poll: an operator who never enabled step-up pays nothing for this, and
+      // the request below is byte-for-byte what it has always been.
+      if (r.status === 401 && getStepUpHeader() === null) {
+        await requestStepUp(state.tunnelURL);
+        r = await fetch(TELEMETRY_PATH, {
+          credentials: "include",
+          headers: getStepUpHeader() || undefined,
+        });
+      }
       if (!r.ok) { updateLiveBadge(false); return; }
       const snap = await r.json();
       renderTelemetry(snap);
@@ -877,6 +900,7 @@ import {
       startTelemetryPolling();
     } else if (event === "locked") {
       revokeServerSession();
+      clearStepUp();
       state.pendingIdentity = null;
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
@@ -901,6 +925,7 @@ import {
       checkVaultState();
     } else if (event === "wiped") {
       revokeServerSession();
+      clearStepUp();
       el.app.setAttribute("data-phase", "setup");
       el.btnLockSession.classList.add("hidden");
       el.autoLockSection.classList.add("hidden");
@@ -1322,8 +1347,8 @@ import {
    */
   function resumeReturnTo() {
     if (!returnTo) return;
-    const href = buildResumeURL(state.tunnelURL, state.authToken, returnTo);
-    if (!href) return; // no tunnel/token yet — a later discovery will retry
+    const target = resumeTarget(returnTo);
+    if (!target || !state.tunnelURL) return; // no tunnel/target yet — a later discovery will retry
 
     const label = describeTarget(returnTo, state.services) || returnTo;
     // Consume it now: a second discovery (manual refresh, reconnect) must
@@ -1331,8 +1356,18 @@ import {
     returnTo = null;
     clearReturnTo();
 
+    // The banner's href carries no credential. The token is redeemed in a
+    // POST body before the browser leaves, so it never reaches this tab's
+    // history, the tunnel's access log, or the Referer of whatever the
+    // resumed page loads.
+    const href = serviceHref(state.tunnelURL, target);
+    const go = async () => {
+      await redeemAndOpen(state.tunnelURL, state.authToken || "", target,
+        (url) => window.location.assign(url));
+    };
+
     if (!el.returnBanner) {
-      window.location.assign(href);
+      go();
       return;
     }
     el.returnBannerText.textContent = "Sessão renovada. Voltando para " + label + "…";
@@ -1343,7 +1378,7 @@ import {
     if (returnTimer) clearTimeout(returnTimer);
     returnTimer = setTimeout(() => {
       returnTimer = null;
-      window.location.assign(href);
+      go();
     }, RETURN_DELAY_MS);
   }
 
@@ -1446,6 +1481,29 @@ import {
     opening: "Abrindo serviço local…"
   };
 
+  /**
+   * Redeems the pending one-time token, then opens a service.
+   *
+   * The token goes out in a POST body rather than in the URL, so it never
+   * reaches the browser's history, cloudflared's access log, or the Referer
+   * of anything the opened page loads. The link that is actually opened
+   * carries no credential at all — the session cookie issued by the
+   * redemption is what authorizes it.
+   *
+   * A redemption that fails still opens the destination: an already
+   * established session works, and without one the daemon sends the browser
+   * to the login page, which is where an unauthenticated click already led.
+   */
+  async function openService(redirectPath) {
+    if (!state.tunnelURL) return;
+    await redeemAndOpen(
+      state.tunnelURL,
+      state.authToken || "",
+      redirectPath,
+      (url) => window.open(url, "_blank", "noopener,noreferrer")
+    );
+  }
+
   function onOpenLocalPort() {
     const port = Number(el.localPortInput.value);
     if (!Number.isInteger(port) || port < 1024 || port > 65535 || !state.tunnelURL) {
@@ -1453,11 +1511,7 @@ import {
       return;
     }
     el.localPortStatus.textContent = localPortStrings.opening;
-    const redirectPath = "/local/" + port + "/";
-    const href = state.tunnelURL + "/auth?token=" +
-      encodeURIComponent(state.authToken || "") +
-      "&redirect=" + encodeURIComponent(redirectPath);
-    window.open(href, "_blank", "noopener,noreferrer");
+    openService("/local/" + port + "/");
   }
 
   function onClearServices() {
@@ -2086,9 +2140,10 @@ import {
       li.dataset.index = index;
 
       const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
-      const href = state.tunnelURL + "/auth?token=" +
-        encodeURIComponent(state.authToken || "") +
-        "&redirect=" + encodeURIComponent(redirectPath);
+      // No token in the href: a link that can be bookmarked, shared or
+      // middle-clicked should not carry a one-time secret, and the click
+      // handler below redeems the token before the browser leaves.
+      const href = serviceHref(state.tunnelURL, redirectPath);
 
       const status = svc.status === "up" || svc.status === "down" ? svc.status : "unknown";
       const statusMeta = svc.custom
@@ -2116,6 +2171,19 @@ import {
         '</div>' +
         '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + escapeHtml(svc.name || svc.id || "serviço") + '">' +
         '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>';
+
+      // A plain left-click redeems the token first and only then leaves, so
+      // the opened URL carries no credential. Modified clicks (new tab,
+      // new window, download) are left to the browser: they cannot be awaited,
+      // and the href is already a valid destination for anyone who already
+      // has a session.
+      const overviewLink = li.querySelector(".service-overview-link");
+      overviewLink.addEventListener("click", (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey ||
+            event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openService(redirectPath);
+      });
 
       // Drag-and-drop event listeners
       li.addEventListener("dragstart", handleDragStart);
@@ -2200,11 +2268,9 @@ import {
       // instead of under the service's own prefix. ".../frigate/" resolves
       // it correctly.
       const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
-      // Percent-encode both values: they land inside an href attribute, and
-      // the prefix arrives over the wire from the host's DM.
-      const href = state.tunnelURL + "/auth?token=" +
-        encodeURIComponent(state.authToken || "") +
-        "&redirect=" + encodeURIComponent(redirectPath);
+      // Credential-free destination; the click handler redeems the pending
+      // token first so the opened URL never carries one.
+      const href = serviceHref(state.tunnelURL, redirectPath);
       const customMeta = svc.custom
         ? '<div class="service-custom-meta"><span class="pill p-info">' + CUSTOM_SERVICE_STRINGS.customBadge + '</span>' +
           '<span class="status-sub">' + (svc.persisted ? CUSTOM_SERVICE_STRINGS.persistedBadge : CUSTOM_SERVICE_STRINGS.temporaryBadge) + '</span></div>' +
@@ -2232,6 +2298,15 @@ import {
       if (svc.custom) {
         card.querySelector(".custom-service-delete").addEventListener("click", () => onDeleteCustomService(svc.configId));
       }
+
+      // See the overview list: a plain click redeems the token first; a
+      // modified click navigates directly to the credential-free href.
+      card.querySelector(".service-link").addEventListener("click", (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey ||
+            event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openService(redirectPath);
+      });
 
       // Drag-and-drop event listeners
       card.addEventListener("dragstart", handleDragStart);
