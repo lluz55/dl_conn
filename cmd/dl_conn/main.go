@@ -97,8 +97,12 @@ func run(cmd *cobra.Command, _ []string) error {
 	authHandler := auth.NewAuthHandlerWithRateLimit(tokenMgr, sessionMgr,
 		cfg.Auth.RateLimitPerSec, cfg.Auth.RateLimitBurst)
 	// The rate-limit buckets are keyed by client address, which is
-	// caller-controlled, so idle ones are reclaimed on a timer.
-	authHandler.RunCleanup(ctx)
+	// caller-controlled, so idle ones are reclaimed on a timer. RunCleanup
+	// blocks until ctx is done, so it has to run in its own goroutine —
+	// calling it inline here would freeze the rest of main() (startDiagnostics,
+	// the handler.Serve goroutine, the HTTP server) on the rate limiter's select
+	// loop, and the daemon would never listen on anything. See fba5aa1e.
+	go authHandler.RunCleanup(ctx)
 
 	// Step-up: a per-process secret that signs short-lived proofs for the
 	// session (see auth.StepUp). Nothing is enabled unless the operator
@@ -364,7 +368,9 @@ func run(cmd *cobra.Command, _ []string) error {
 			telHandler = telHandler.WithStepUp(stepUp)
 			log.Println("Telemetry requires a step-up proof (auth.stepUpProtected)")
 		}
-		telHandler.RunCleanup(ctx)
+		// Same caveat as authHandler.RunCleanup above — RunCleanup blocks until
+		// ctx is done and would freeze the rest of startup if called inline.
+		go telHandler.RunCleanup(ctx)
 		mux.Handle("/api/host/telemetry", telHandler)
 	}
 
