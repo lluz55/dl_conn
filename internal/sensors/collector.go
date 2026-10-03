@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -51,7 +52,7 @@ func (c *Collector) Latest() *Snapshot {
 
 // CollectOnce performs a single collection.
 func (c *Collector) CollectOnce() Snapshot {
-	snap := Snapshot{SampledAt: time.Now()}
+	snap := Snapshot{SampledAt: time.Now(), NumCPU: runtime.NumCPU()}
 	if t, _ := ReadCPUTemp(c.sysRoot); t != nil {
 		snap.CPU = &CPUSnapshot{TempC: t}
 	} else {

@@ -65,3 +65,11 @@ coverage*.out
 # OS
 Thumbs.db
 Desktop.ini
+
+# Local SQLite telemetry store, created next to the config by the daemon
+# (telemetry.db). Host-local data by design — it must never be committed,
+# and an untracked *.db in a status listing is an easy accident.
+/telemetry.db
+*.db-journal
+*.db-wal
+*.db-shm

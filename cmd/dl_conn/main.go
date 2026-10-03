@@ -38,6 +38,11 @@ var (
 	configPath   string
 	nsecOverride string
 	nsecFile     string
+	// devMockAuth gates the local UI harness (web/dev.html + web/dev/*), which
+	// fakes a session and a Nostr host so the UI can be worked on without a
+	// real login. Default false, and the routes are explicitly 404'd when it
+	// is false — the files merely existing on disk is never enough.
+	devMockAuth bool
 )
 
 func init() {
@@ -49,6 +54,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "path to YAML config file")
 	rootCmd.PersistentFlags().StringVar(&nsecOverride, "nsec", "", "override Nostr nsec")
 	rootCmd.PersistentFlags().StringVar(&nsecFile, "nsec-file", "", "path to Nostr nsec secret file")
+	rootCmd.PersistentFlags().BoolVar(&devMockAuth, "dev-mock-auth", false,
+		"serve the local UI harness at /dev.html (fakes login; never enable in production)")
 }
 
 func run(cmd *cobra.Command, _ []string) error {
@@ -341,8 +348,66 @@ func run(cmd *cobra.Command, _ []string) error {
 	if webDir == "" {
 		webDir = filepath.Join(".", "web")
 	}
+	// The harness lives outside webDir on purpose — see the /dev/ block below.
+	// Overridable so an installed package can find it next to the SPA.
+	harnessDir := os.Getenv("DL_CONN_HARNESS_DIR")
+	if harnessDir == "" {
+		harnessDir = filepath.Join(".", "harness")
+	}
 	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
 	mux.Handle("/", proxy.RootFallback(router, fs, http.Dir(webDir)))
+
+	// Local UI harness — opt-in, and off by default.
+	//
+	// /dev/ serves the harness/ directory, which is deliberately *outside*
+	// webDir. That placement is the actual safety property, and it was found
+	// the hard way: with the harness inside web/, RootFallback served it to
+	// anyone, because isSPAPath() whitelists only "/", "/index.html",
+	// "/app.js", "/style.css" and "/_static/", so every *other* file present
+	// in webDir falls through to the static handler. An explicit 404 route
+	// does not fix that on its own — a binary built before this change has no
+	// such route and happily served web/dev.html without the flag. Two
+	// consequences drove the move out of web/:
+	//
+	//   - the protection holds for any binary, current or stale, because
+	//     there is simply nothing in web/ to serve;
+	//   - web/ is what ships in build/web.tar.gz, and dev-only files have no
+	//     business in a release artifact.
+	//
+	// The harness changes no security property: it fakes browser-local state
+	// only, so a daemon session is still required for anything real.
+	if devMockAuth {
+		log.Println("WARNING: --dev-mock-auth is on; /dev/ serves a faked session. Do not use in production.")
+		// Same file server and headers as the SPA, so the harness keeps the
+		// identical CSP — it must not be a way around the real policy.
+		// The prefix must be stripped before the FileServer runs, or it would
+		// look for harness/dev/<name> and 404 on every real file.
+		//
+		// No rewrite of the bare directory to index.html: http.FileServer
+		// already serves index.html for a directory that has one (and only
+		// falls back to a listing when it does not), and asking for
+		// index.html explicitly makes it 301 to "./" instead — which, with
+		// the prefix rewrite, is a loop.
+		//
+		// harness/config.json is served by the same handler, on purpose. The
+		// SPA loads "./config.json" relative to the document, so from /dev/
+		// that lands here — and startNostr() refuses to run until
+		// state.config.hostNpub is set. Aliasing web/config.json would have
+		// made the harness depend on a real npub being present, which is
+		// exactly what the harness exists to avoid. See harness/config.json.
+		mux.Handle("/dev/", securityHeaders(http.StripPrefix("/dev",
+			http.FileServer(http.Dir(harnessDir)))))
+	} else {
+		// Defense in depth on top of the directory move: even if a harness
+		// file were ever copied into web/, these routes would 404 rather
+		// than reach the static handler.
+		mux.HandleFunc("/dev/", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+		mux.HandleFunc("/dev.html", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+	}
 
 	// Auth endpoints
 	mux.HandleFunc("/auth", authHandler.HandleAuth)
@@ -374,6 +439,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	// operator put this route in auth.stepUpProtected)
 	if telCollector != nil {
 		telHandler := telemetry.NewHandler(telCollector, sessionMgr)
+		// Hand the store over so the route can also answer ?from=&to= with a
+		// real range from telemetry_samples. Without this the handler only
+		// serves the latest snapshot and answers 501 to a range request.
+		// Telemetry is opt-in, so the store may legitimately be nil.
+		if telStore != nil {
+			telHandler = telHandler.WithStore(telStore)
+		}
 		if cfg.Auth.RequiresStepUp("/api/host/telemetry") {
 			telHandler = telHandler.WithStepUp(stepUp)
 			log.Println("Telemetry requires a step-up proof (auth.stepUpProtected)")

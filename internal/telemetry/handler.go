@@ -3,13 +3,16 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"dl_conn/internal/auth"
 	"dl_conn/internal/sensors"
+	"dl_conn/internal/store"
 )
 
 // CacheTTL is how long one serialized snapshot is served to every caller
@@ -30,6 +33,11 @@ const (
 	rateLimiterIdleTTL = 5 * time.Minute
 )
 
+// defaultHistoryWindow is how far back a range request that carries no "from"
+// reaches. A dashboard asking for "the last while" should get a chart, not the
+// whole retention window at once.
+const defaultHistoryWindow = time.Hour
+
 // Handler serves GET /api/host/telemetry behind session auth.
 type Handler struct {
 	collector *sensors.Collector
@@ -38,6 +46,11 @@ type Handler struct {
 	// addition to the session (see auth.stepUp). It is opt-in via
 	// auth.stepUpProtected.
 	stepUp *auth.StepUp
+
+	// store, when non-nil, backs the ?from=/?to= history query. It is opt-in
+	// via WithStore, exactly like stepUp, because the handler can serve the
+	// latest reading straight from the collector without a DB behind it.
+	store *store.Store
 
 	mu       sync.Mutex
 	cached   []byte
@@ -65,6 +78,14 @@ func (h *Handler) WithStepUp(s *auth.StepUp) *Handler {
 	return h
 }
 
+// WithStore gives the handler a SQLite history to answer ?from=/?to= from.
+// Without it a range request is refused rather than silently answered with the
+// latest reading, which would look like a chart that lost its history.
+func (h *Handler) WithStore(s *store.Store) *Handler {
+	h.store = s
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -89,6 +110,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("telemetry throttled: session_prefix=%s remote=%s",
 			auth.TokenPrefix(sessionID), h.sessions.IPForLog(r))
 		auth.AllowTooManyRequests(w)
+		return
+	}
+
+	// A range request is a different question from a poll — it wants a series
+	// rather than the point in time — so it is answered from SQLite and never
+	// from the single-snapshot cache. With no ?from= and no ?to= the poll
+	// below is served exactly as before.
+	from, to, wantRange, err := parseRange(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if wantRange {
+		h.serveRange(w, from, to)
 		return
 	}
 
@@ -134,4 +169,73 @@ func (h *Handler) snapshot() ([]byte, bool) {
 	h.cached, h.cachedAt = body, now
 	h.mu.Unlock()
 	return body, true
+}
+
+// parseRange reads the ?from= / ?to= bounds, both Unix seconds to match the
+// resolution telemetry_samples.ts is stored with. The bool reports whether a
+// range was asked for at all; with neither bound present the caller keeps the
+// original single-snapshot behaviour.
+//
+// A bound that is present but unparseable is an error rather than a fallback:
+// silently answering a chart request with "the latest reading" would look like
+// a history that emptied itself.
+//
+// A missing bound defaults so that a partial request is still bounded: without
+// "from" the window is the last defaultHistoryWindow (a whole retention window
+// would be an unbounded response for one query), and without "to" the window
+// ends now, so an open-ended "from" follows the live edge.
+func parseRange(r *http.Request) (from, to time.Time, want bool, err error) {
+	rawFrom, rawTo := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	if rawFrom == "" && rawTo == "" {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	now := time.Now()
+	if rawFrom == "" {
+		from = now.Add(-defaultHistoryWindow)
+	} else if secs, perr := strconv.ParseInt(rawFrom, 10, 64); perr != nil {
+		return time.Time{}, time.Time{}, true, errors.New(`invalid "from": want unix seconds`)
+	} else {
+		from = time.Unix(secs, 0)
+	}
+	if rawTo == "" {
+		to = now
+	} else if secs, perr := strconv.ParseInt(rawTo, 10, 64); perr != nil {
+		return time.Time{}, time.Time{}, true, errors.New(`invalid "to": want unix seconds`)
+	} else {
+		to = time.Unix(secs, 0)
+	}
+	return from, to, true, nil
+}
+
+// serveRange writes the samples in [from, to] as a JSON array, oldest first. An
+// empty window is a 200 with [] — unlike the latest-snapshot path, "nothing was
+// recorded in that range" is an answer, not a missing reading.
+func (h *Handler) serveRange(w http.ResponseWriter, from, to time.Time) {
+	if h.store == nil {
+		writeJSONError(w, http.StatusNotImplemented, "telemetry history is not available")
+		return
+	}
+	snaps, err := h.store.Range(from, to)
+	if err != nil {
+		log.Printf("telemetry range query failed: from=%d to=%d err=%v", from.Unix(), to.Unix(), err)
+		writeJSONError(w, http.StatusInternalServerError, "telemetry history unavailable")
+		return
+	}
+	body, err := json.Marshal(snaps)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "telemetry history unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+// writeJSONError answers with a small JSON body so a client parsing errors as
+// JSON never trips over the plain-text form http.Error writes.
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

@@ -11,6 +11,11 @@ type Snapshot struct {
 	GPU       *GPUSnapshot    `json:"gpu,omitempty"`
 	Battery   *BatterySnapshot `json:"battery,omitempty"`
 	UptimeSec int64 `json:"uptime_s"`
+	// NumCPU is the logical core count at sample time. Load averages are
+	// only interpretable relative to it, so a dashboard needs both to turn
+	// a bare load1 into a percentage. Zero on platforms that cannot report
+	// it, in which case clients should fall back to showing raw load.
+	NumCPU int `json:"num_cpu,omitempty"`
 }
 
 type CPUSnapshot struct {

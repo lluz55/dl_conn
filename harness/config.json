@@ -1,0 +1,10 @@
+{
+  "_comment": "Config for the local UI harness. Deliberately self-contained: the SPA loads ./config.json relative to the document, and startNostr() refuses to run until state.config.hostNpub is set — so without a config here the harness would need a real npub from web/config.json just to boot. These npubs are the secp256k1 generator points for k=1 and k=2: valid bech32 so every client-side parser accepts them, impossible to confuse with a real key, and not derived from anything of yours. The relay list is public infrastructure only, and the mocked NostrClient never opens a socket to it.",
+  "host_npub": "npub1ccz8l9zpa47k6vz9gphftsrumpw80rjt3nhnefat4symjhrsnmjs38mnyd",
+  "relays": [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://relay.primal.net"
+  ]
+}

@@ -72,6 +72,48 @@ func (s *Store) Latest() (*sensors.Snapshot, error) {
 	return &snap, nil
 }
 
+// Range returns the samples recorded in the inclusive window [from, to],
+// oldest first. The window is resolved with the same Unix-second resolution the
+// rows are stored with, so callers get every sample whose ts falls in the
+// window and no sample outside it.
+//
+// The returned slice is always non-nil — an empty window yields an empty slice
+// rather than nil, so a caller that encodes it as JSON emits [] and not null.
+// A from after to is treated as an empty window rather than an error: it is a
+// caller mistake worth rendering as "no data", not as a failed request.
+func (s *Store) Range(from, to time.Time) ([]sensors.Snapshot, error) {
+	snaps := make([]sensors.Snapshot, 0)
+	if from.After(to) {
+		return snaps, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT ts, data FROM telemetry_samples WHERE ts >= ? AND ts <= ? ORDER BY ts ASC`,
+		from.Unix(), to.Unix())
+	if err != nil {
+		return nil, err
+	}
+	// A read-only Rows close cannot fail in a way the caller can act on —
+	// the result set is already drained or the query errored — but the
+	// unchecked return still has to be silenced explicitly for errcheck.
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var ts int64
+		var data string
+		if err := rows.Scan(&ts, &data); err != nil {
+			return nil, err
+		}
+		var snap sensors.Snapshot
+		if err := json.Unmarshal([]byte(data), &snap); err != nil {
+			return nil, err
+		}
+		snaps = append(snaps, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return snaps, nil
+}
+
 // Prune removes samples older than d.
 func (s *Store) Prune(olderThan time.Duration) error {
 	cutoff := time.Now().Add(-olderThan).Unix()

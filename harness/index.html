@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-palette="azure" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Local UI harness. The CSP is deliberately identical to index.html's:
+       the harness exists to run the *real* SPA against fake data, and a
+       looser policy here would mean anything verified in the harness is not
+       verified at all. Nothing inlined, nothing third-party. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self';
+    img-src 'self' data: blob:;
+    media-src 'self' blob:;
+    connect-src 'self' https: wss:;
+    font-src 'self';
+    form-action 'self' https:;
+    base-uri 'none';
+    object-src 'none'" />
+  <title>dl_conn · HARNESS (dados simulados)</title>
+  <!-- Absolute, not relative: the harness is served from /dev/ and lives
+       outside web/, so "./style.css" would resolve to /dev/style.css. -->
+  <link rel="stylesheet" href="/style.css" />
+  <!-- Dev-only rules, kept out of web/ so they do not ship in the release. -->
+  <link rel="stylesheet" href="/dev/harness.css" />
+  <!-- No import map on purpose. An import map must live in an inline
+       <script type="importmap">, and `script-src 'self'` here has no
+       'unsafe-inline' — the one inline script the SPA may not have. Adding
+       it for the harness would mean the harness stops running under the real
+       policy, so dev/dev_boot.js patches the real classes instead. See
+       web/dev/mock_session.js. -->
+</head>
+<body>
+  <!-- The body is filled from /index.html at runtime by /dev/dev_boot.js, so
+       there is exactly one copy of the markup. If you see an empty page, the
+       console will say why. -->
+  <script type="module" src="/dev/dev_boot.js"></script>
+</body>
+</html>

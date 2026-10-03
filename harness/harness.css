@@ -1,0 +1,29 @@
+/* harness/harness.css — local UI harness only.
+ *
+ * Deliberately its own file rather than a block at the end of web/style.css:
+ * web/ is what ships in build/web.tar.gz, and dev-only rules should not be
+ * in the release artifact. Loaded by harness/index.html from /dev/harness.css.
+ */
+
+.harness-banner {
+  padding: var(--gap-sm) var(--gap-md);
+  background-color: #d2691e;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  text-align: center;
+  line-height: var(--lh-snug);
+}
+
+.harness-error {
+  margin: var(--gap-lg);
+  padding: var(--gap-md);
+  border-radius: var(--radius-md);
+  background-color: var(--color-error-soft);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
