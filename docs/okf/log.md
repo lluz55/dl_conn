@@ -6,6 +6,50 @@ type: log
 
 ## 2026-10-03
 
+- **`noopener` no pré-open quebrava a redenção: abas de serviço em branco.** O
+  login por nsec funcionava, mas clicar em "Abrir" num card de serviço abria
+  uma aba `about:blank` em branco e **nunca resgatava o token** — sem POST em
+  `/auth`, sem `Set-Cookie`, sem sessão, sem página do serviço. Reportado como
+  "as páginas dos serviços não estão sendo mostradas, estão em branco".
+
+  Causa raiz, medida e não deduzida: `redeemToken` pré-abria a aba com
+  `window.open("", nome, "noopener,noreferrer")` e depois submete o form com
+  `form.target = nome`. O Chromium **não registra no mapa de nomes de contextos
+  de navegação uma janela aberta com `noopener`**, então o `target` do form não
+  resolve para nada; um form cujo `target` nomeia janela inexistente é uma
+  navegação para nova janela, o popup blocker descarta, e a redenção
+  desaparece em silêncio. Reproduzido no Chromium 152 (o POST não chega ao
+  túnel; sobra uma aba `about:blank`), **e não no Firefox 155**, que executa o
+  POST normalmente — por isso a falha é silenciosa e específica de navegador,
+  e por isso os testes de unidade não pegavam: eles só verificavam a *forma*
+  do código (features, target, campos) contra um stub de `window.open`, que
+  nunca exercita o comportamento real do browser.
+
+  Fix em `web/js/api_client.js`: o pré-open não pede mais `noopener`/
+  `noreferrer`, e o isolamento que essas flags deviam dar é restaurado
+  explicitamente com `severOpener()` — `opener` é atributo gravável
+  cross-origin, então atribuir `null` no proxy devolvido corta o caminho de
+  volta da página do serviço para a SPA, que era o objetivo real do `noopener`.
+  Bônus de robustez: se o popup blocker recusar a janela (`window.open`
+  devolvendo `null`), a redenção cai para a aba atual em vez de o clique não
+  ter efeito nenhum.
+
+  Verificado ponta a ponta com o **módulo real** em browser real, com clique
+  confiável (CDP `Input.dispatchMouseEvent` no Chromium, Marionette
+  `WebDriver:ElementClick` no Firefox): antes → `NOTHING — redemption dropped`
+  e aba `about:blank`; depois → `POST /auth` com o token no body, `Set-Cookie`
+  establishing a sessão, 303 seguido para `/hass/` e a página do serviço
+  renderizada. Passa nos dois navegadores. `node web/tests/api_client_tests.js`
+  passa, com a asserção que fixava `noopener` invertida e um caso novo para o
+  popup bloqueado.
+
+  Registrado porque corrige uma decisão registrada na entrada abaixo — a
+  hipótese original ("`form.submit()` com `target="_blank"` não é reconhecido
+  como user-initiated") apontava para o alvo errado: o que o Chromium não
+  reconhece é o `target` por nome quando a janela foi aberta com `noopener`.
+  O `window.open` primeiro e o form fora de `display: none` continuam válidos e
+  foram mantidos.
+
 - **Release `v0.2.0` — primeira release com tag.** A `0.1.0` nunca foi publicada:
   era o valor inicial de `version` em `dl-conn.nix`, escrito no commit `62806bb`
   junto com o flake, e 111 commits de funcionalidade se acumularam sobre ele sem
