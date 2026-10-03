@@ -38,10 +38,16 @@ const TUNNEL = "https://demo.trycloudflare.com";
  *  - `openedWindows`: every (name, features) tuple the test fed into
  *    window.open, so the test can confirm a target="_blank" redemption
  *    pre-opens a window.
+ *  - `openedProxies`: the WindowProxy each successful window.open returned,
+ *    so the test can confirm the opener link is severed.
+ *  - `setBlockPopups`: makes window.open return null, the way a real popup
+ *    blocker does.
  */
 function installDomStub() {
   const forms = [];
   const openedWindows = [];
+  const openedProxies = [];
+  let blockPopups = false;
 
   function makeInput() {
     return {
@@ -96,20 +102,25 @@ function installDomStub() {
   const FormProto = Object.getPrototypeOf(makeForm());
   FormProto.submit = function noop() {};
 
+  // The pre-open must return a WindowProxy: a null return is how a real
+  // browser reports "popup blocked", and the helper degrades to the current
+  // tab on that signal (see the popup-blocked test below).
   globalThis.window = {
     open(url, name, features) {
       openedWindows.push({ url, name, features });
-      // Real browsers return a WindowProxy; the helper ignores the return
-      // value (it targets by name, not by reference), so returning null is
-      // faithful to the test's needs.
-      return null;
+      if (blockPopups) return null;
+      const proxy = { opener: { id: "the-spa-window" } };
+      openedProxies.push(proxy);
+      return proxy;
     },
   };
 
-  return { forms, openedWindows };
+  const setBlockPopups = (value) => { blockPopups = value; };
+
+  return { forms, openedWindows, openedProxies, setBlockPopups };
 }
 
-const { forms, openedWindows } = installDomStub();
+const { forms, openedWindows, openedProxies, setBlockPopups } = installDomStub();
 
 /** Records every call and answers with a scripted response (step-up only). */
 function stubFetch(responses) {
@@ -173,6 +184,7 @@ console.log("  [redeemToken — form submission]");
   // popup blocker (or spawning a sibling window).
   forms.length = 0;
   openedWindows.length = 0;
+  openedProxies.length = 0;
   const ok = redeemToken(TUNNEL, "secret-token", "/hass/", "_blank");
   assert.equal(ok, true);
   assert.equal(forms.length, 1);
@@ -181,9 +193,17 @@ console.log("  [redeemToken — form submission]");
   const opened = openedWindows[0];
   assert.equal(opened.url, "", "the pre-opened window is about:blank");
   assert.match(opened.name, /^dl_conn_/, "the pre-opened window has a generated name");
+  // noopener/noreferrer must NOT be requested here. Chromium keeps a window
+  // opened with noopener out of the browsing-context name map, so the form's
+  // target resolves to nothing, the submission is dropped as an unrequested
+  // popup, and the user gets a blank tab with no session — see js/api_client.js.
   assert.ok(
-    opened.features && opened.features.includes("noopener") && opened.features.includes("noreferrer"),
-    "no opener/noreferrer so the SPA can't poke the service's window"
+    !opened.features,
+    "the pre-open must not ask for noopener, or the form cannot reach the window by name"
+  );
+  assert.equal(
+    openedProxies[0].opener, null,
+    "the new tab's handle back to the SPA is severed, which is what noopener was for"
   );
 
   const form = forms[0];
@@ -192,6 +212,25 @@ console.log("  [redeemToken — form submission]");
   assert.equal(form.target, opened.name, "the form targets the pre-opened window by name");
   const fields = {};
   for (const input of form.querySelectorAll("input")) fields[input.name] = input.value;
+  assert.equal(fields.token, "secret-token");
+  assert.equal(fields.redirect, "/hass/");
+}
+{
+  // Popup blocked: window.open answers null, so there is no window for the
+  // form to target. Redeeming in the current tab is the only outcome the user
+  // can act on — the alternative is a click with no visible effect.
+  forms.length = 0;
+  openedWindows.length = 0;
+  openedProxies.length = 0;
+  setBlockPopups(true);
+  const ok = redeemToken(TUNNEL, "secret-token", "/hass/", "_blank");
+  setBlockPopups(false);
+  assert.equal(ok, true, "the redemption still happens when the popup is blocked");
+  assert.equal(openedWindows.length, 1, "the blocked pre-open was attempted");
+  assert.equal(forms.length, 1, "and the fallback still submits a form");
+  assert.equal(forms[0].target, "", "the fallback navigates the current tab");
+  const fields = {};
+  for (const input of forms[0].querySelectorAll("input")) fields[input.name] = input.value;
   assert.equal(fields.token, "secret-token");
   assert.equal(fields.redirect, "/hass/");
 }

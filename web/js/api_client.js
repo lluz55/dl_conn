@@ -58,6 +58,26 @@ export function serviceHref(tunnelURL, redirectPath) {
 }
 
 /**
+ * Drops the new tab's handle back to this page.
+ *
+ * `window.open` is called without `noopener` so the window stays in the
+ * name map and the form submission can reach it (see redeemToken), which
+ * would otherwise leave the service page with a live `window.opener` into
+ * the SPA — a cross-origin page can still *navigate* its opener even when
+ * it cannot read it, so that is a real handle and not a formality.
+ * `opener` is a cross-origin-writable attribute, so assigning null severs
+ * the link in both directions. Best effort by design: a browser that
+ * refuses the write is not a reason to skip the redemption.
+ */
+function severOpener(win) {
+  try {
+    win.opener = null;
+  } catch {
+    /* the browser refused the write; the navigation still has to happen */
+  }
+}
+
+/**
  * Redeem a one-time token by submitting a hidden <form method="POST"> to
  * /auth, so the token never appears in a URL and the Set-Cookie on the
  * response lands in a first-party context.
@@ -93,6 +113,19 @@ export function serviceHref(tunnelURL, redirectPath) {
  *     window `window.open` already opened, instead of spawning a second
  *     one.
  *
+ * The pre-open MUST NOT ask for `noopener`/`noreferrer`, even though the
+ * opened window ends up on the tunnel's origin. Chromium does not put a
+ * window opened with `noopener` into the browsing-context name map, so the
+ * form's `target` resolves to nothing; a form submission naming a window
+ * that does not exist is a new-window navigation, the popup blocker drops
+ * it, and the redemption silently never happens — the user gets a blank
+ * about:blank tab, no Set-Cookie, and no service. Measured: Chromium 152
+ * drops the POST entirely while Firefox 155 performs it, so the failure is
+ * silent and browser-specific. The isolation `noopener` was meant to
+ * provide is restored explicitly by severing `opener` on the returned
+ * proxy (see severOpener) — that leaves the service page no handle back to
+ * the SPA, which is what the feature was actually for.
+ *
  * The form is positioned off-screen rather than display:none: browsers
  * refuse to submit a form whose computed display is none in some paths
  * (even with target="_blank"), and the form's inputs are all hidden
@@ -118,7 +151,16 @@ export function redeemToken(tunnelURL, token, redirectPath, target) {
   let targetName = target || "";
   if (target === "_blank") {
     targetName = "dl_conn_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-    window.open("", targetName, "noopener,noreferrer");
+    const opened = window.open("", targetName);
+    if (!opened) {
+      // The popup blocker refused the window, so there is nothing for the
+      // form to target and the submission would be dropped for the same
+      // reason as above. Redeem in the current tab instead: leaving the
+      // click with no visible effect is the one outcome the user cannot
+      // act on.
+      return redeemToken(tunnelURL, token, redirectPath);
+    }
+    severOpener(opened);
   }
 
   const form = document.createElement("form");

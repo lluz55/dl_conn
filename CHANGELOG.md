@@ -9,7 +9,16 @@ arquivo não é lido por nenhum código.
 
 ## [Não publicado]
 
-Nada ainda.
+### Corrigido
+
+- Páginas de serviço em branco ao clicar em "Abrir" depois de um login por nsec
+  bem-sucedido. A aba nova abria em `about:blank` e o token nunca era resgatado:
+  `redeemToken` pré-abria a janela com `noopener`, e o Chromium não registra uma
+  janela aberta com `noopener` no mapa de nomes, então o `form.target` não
+  resolvia, o popup blocker descartava a submissão e não havia sessão nem
+  página. O pré-open não pede mais `noopener`/`noreferrer`; o isolamento é
+  garantido cortando `opener` no proxy da janela. Se o popup for bloqueado, a
+  redenção cai para a aba atual em vez de não ter efeito.
 
 ## [0.2.0] — 2026-10-03
 
