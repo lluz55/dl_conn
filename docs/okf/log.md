@@ -6,6 +6,21 @@ type: log
 
 ## 2026-10-03
 
+- **CSP `form-action` bloqueava redenção cross-origin, e `api.trycloudflare.com` capturada em erro.**
+  Três causas convergiam para abrir páginas em branco para todos os serviços:
+  1. A política de CSP em `web/index.html` e `cmd/dl_conn/main.go` definia `form-action 'self'`.
+     Com a migração da redenção do token para `<form method="POST">` (para suporte a cookies
+     cross-origin), a submissão a partir do GitHub Pages para a URL do túnel (`https://*.trycloudflare.com`)
+     era bloqueada pelo CSP do navegador, deixando a nova aba permanentemente travada em `about:blank`.
+     Ajustado para `form-action 'self' https:`, espelhando a diretiva de conexões seguras.
+  2. Em erros de inicialização ou rate-limit do `cloudflared`, o daemon capturava
+     `https://api.trycloudflare.com` das mensagens de erro do utilitário e anunciava via Nostr,
+     fazendo os links apontarem para a API interna da Cloudflare. `extractTunnelURL` agora
+     ignora explicitamente `https://api.trycloudflare.com`.
+  3. No reaproveitamento de sessão em `POST /auth`, o destino `redirect` agora é lido do corpo
+     do formulário em vez de apenas da query string da URL, garantindo que o redirecionamento
+     não caia para a raiz `"/"` em acessos subsequentes.
+
 - **`noopener` no pré-open quebrava a redenção: abas de serviço em branco.** O
   login por nsec funcionava, mas clicar em "Abrir" num card de serviço abria
   uma aba `about:blank` em branco e **nunca resgatava o token** — sem POST em

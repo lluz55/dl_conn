@@ -198,6 +198,33 @@ func TestAuthPostFlow_FormSubmissionRedirects(t *testing.T) {
 	}
 }
 
+// A form POST arriving with an already-valid session cookie honors the session
+// and preserves the redirect destination in the form body, rather than falling
+// back to "/" due to an empty URL query.
+func TestAuthPostFlow_FormSubmissionSessionReuse(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(4 * time.Hour)
+	ah := NewAuthHandler(tm, sm)
+
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	form := url.Values{"token": {"already-consumed-or-empty"}, "redirect": {"/frigate/"}}
+	req := httptest.NewRequest("POST", "/auth", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	ah.HandleAuth(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusSeeOther)
+	}
+	if got, want := w.Header().Get("Location"), "/frigate/"; got != want {
+		t.Errorf("Location = %q, want %q (session reuse must preserve destination from form body)", got, want)
+	}
+}
+
 // An invalid-token POST that is a top-level form submission is a navigation
 // the same way an expired GET is: the browser should land on the login page
 // carrying its destination, not on a JSON 401 the browser can't render.

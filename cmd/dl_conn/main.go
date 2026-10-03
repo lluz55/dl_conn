@@ -460,7 +460,7 @@ const spaCSP = "default-src 'self'; " +
 	"media-src 'self' blob:; " +
 	"font-src 'self'; " +
 	"connect-src 'self' https: wss:; " +
-	"form-action 'self'; " +
+	"form-action 'self' https:; " +
 	"frame-ancestors 'none'; " +
 	"base-uri 'none'; " +
 	"object-src 'none'"

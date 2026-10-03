@@ -95,7 +95,13 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	// this daemon issued and mutates nothing, and the SPA re-entering /auth
 	// with a live session is normal traffic, not something to throttle.
 	if h.sessions.ValidateSession(r) {
-		h.issue(w, r, r.URL.Query().Get("redirect"), true)
+		redirect := r.URL.Query().Get("redirect")
+		if r.Method == http.MethodPost {
+			if _, postRedirect, err := postCredentials(r); err == nil && postRedirect != "" {
+				redirect = postRedirect
+			}
+		}
+		h.issue(w, r, redirect, true)
 		return
 	}
 

@@ -17,6 +17,16 @@ import (
 
 var tunnelURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
 
+// extractTunnelURL finds an ephemeral trycloudflare.com URL in line, excluding
+// Cloudflare internal endpoints like api.trycloudflare.com.
+func extractTunnelURL(line string) string {
+	match := tunnelURLRegex.FindString(line)
+	if match == "https://api.trycloudflare.com" {
+		return ""
+	}
+	return match
+}
+
 // DefaultReadyTimeout bounds how long WaitReady waits for a freshly minted
 // ephemeral URL to actually route traffic before giving up.
 //
@@ -222,7 +232,7 @@ func (m *Manager) scanOutput(ctx context.Context, r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		match := tunnelURLRegex.FindString(line)
+		match := extractTunnelURL(line)
 		if match == "" {
 			continue
 		}
