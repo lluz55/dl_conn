@@ -3,11 +3,13 @@
  *
  * Run with: node web/tests/api_client_tests.js
  *
- * fetch is injected throughout, so these are assertions about the requests the
- * SPA builds (method, mode, credentials, body, headers) rather than about a
- * browser. What matters here is that a one-time token travels in a body and
- * never in a URL, and that a step-up proof is only minted when the daemon
- * actually asks for one.
+ * The redemption path is now a hidden <form method="POST"> submit, not a
+ * fetch(): the form submission is a top-level navigation so the Set-Cookie
+ * on /auth lands in a first-party context (see js/api_client.js for why a
+ * fetch() can't do that when the SPA isn't on the tunnel origin). These
+ * tests assert what the form looks like — method, action, fields, target
+ * — and skip the actual submit() call (which would navigate a real
+ * browser, and in node there is no navigation to follow).
  */
 import assert from "node:assert/strict";
 import {
@@ -23,7 +25,80 @@ import {
 
 const TUNNEL = "https://demo.trycloudflare.com";
 
-/** Records every call and answers with a scripted response. */
+/**
+ * Install a minimum stub of the DOM the redemption path uses. Node has no
+ * DOM globals by default; the helpers here only touch createElement,
+ * appendChild, querySelectorAll, and submit(), so a hand-rolled stub is
+ * cheaper than pulling jsdom. Returns a `dispose` to restore the originals
+ * (none yet — the stub is permanent for the test process) and a `forms`
+ * array of every <form> created during the test, so the assertions can
+ * inspect what would have been submitted.
+ */
+function installDomStub() {
+  const forms = [];
+
+  function makeInput() {
+    return {
+      type: "",
+      name: "",
+      value: "",
+      // appendChild is a no-op for inputs — the form walks children by
+      // appending into a list, not a tree.
+    };
+  }
+
+  function makeForm() {
+    const children = [];
+    return {
+      method: "GET",
+      action: "",
+      target: "",
+      style: {},
+      appendChild(node) {
+        children.push(node);
+        return node;
+      },
+      querySelectorAll(selector) {
+        if (selector !== "input") return [];
+        return children.filter((c) => c && typeof c === "object" && "name" in c);
+      },
+    };
+  }
+
+  const body = {
+    children: [],
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    },
+  };
+
+  globalThis.document = {
+    createElement(tag) {
+      const t = String(tag).toLowerCase();
+      if (t === "form") {
+        const f = makeForm();
+        forms.push(f);
+        return f;
+      }
+      if (t === "input") return makeInput();
+      return {};
+    },
+    body,
+  };
+
+  // submit() would navigate in a real browser; in node there's no
+  // navigation, so stub it. Defining it on the stub prototype is enough
+  // since the stub form isn't an HTMLFormElement.
+  const FormProto = Object.getPrototypeOf(makeForm());
+  FormProto.submit = function noop() {};
+
+  return { forms };
+}
+
+const { forms } = installDomStub();
+
+/** Records every call and answers with a scripted response (step-up only). */
 function stubFetch(responses) {
   const calls = [];
   const impl = async (url, init) => {
@@ -54,58 +129,77 @@ assert.equal(serviceHref(null, undefined), "/", "no arguments at all still yield
   assert.ok(!href.includes("token"), "the opened URL must never carry a token");
 }
 
-console.log("  [redeemToken]");
+console.log("  [redeemToken — form submission]");
 {
-  const fetchStub = stubFetch([{ ok: true, status: 200 }]);
-  const ok = await redeemToken(TUNNEL, "secret-token", "/frigate/", fetchStub);
-  assert.equal(ok, true, "a completed redemption resolves true");
+  forms.length = 0;
+  const ok = redeemToken(TUNNEL, "secret-token", "/frigate/");
+  assert.equal(ok, true, "submitting a valid form returns true");
+  assert.equal(forms.length, 1, "one form is built");
 
-  const call = fetchStub.calls[0];
-  assert.equal(call.url, TUNNEL + "/auth", "posts to /auth");
-  assert.equal(call.init.method, "POST", "the token travels in a body, not a query string");
-  assert.ok(!call.url.includes("secret-token"), "the token is absent from the URL");
-  assert.ok(call.init.body.includes("token=secret-token"), "the token is in the form body");
-  assert.ok(call.init.body.includes("redirect=%2Ffrigate%2F"), "the destination is in the body");
-  assert.equal(
-    call.init.headers["Content-Type"],
-    "application/x-www-form-urlencoded",
-    "a CORS-simple content type keeps this a preflight-free request"
-  );
-  assert.equal(call.init.mode, "no-cors", "the tunnel sends no CORS headers, so the response is opaque");
-  assert.equal(call.init.credentials, "include", "the session cookie must be accepted from the response");
+  const form = forms[0];
+  assert.equal(form.method, "POST", "the token travels in a body, not a query string");
+  assert.equal(form.action, TUNNEL + "/auth", "posts to /auth");
+  assert.ok(!form.action.includes("secret-token"), "the action URL does not carry the token");
+
+  const fields = {};
+  for (const input of form.querySelectorAll("input")) fields[input.name] = input.value;
+  assert.equal(fields.token, "secret-token", "the token is in the form body");
+  assert.equal(fields.redirect, "/frigate/", "the destination is in the form body");
 }
 {
-  const fetchStub = stubFetch([
-    () => { throw new TypeError("Failed to fetch"); },
-  ]);
-  assert.equal(
-    await redeemToken(TUNNEL, "secret-token", "/frigate/", fetchStub),
-    false,
-    "a network failure resolves false instead of throwing"
-  );
+  // A new tab is requested via target="_blank": the same form, but the
+  // browser will spawn a fresh browsing context for the navigation. The
+  // field set is unchanged.
+  forms.length = 0;
+  const ok = redeemToken(TUNNEL, "secret-token", "/hass/", "_blank");
+  assert.equal(ok, true);
+  const form = forms[0];
+  assert.equal(form.method, "POST");
+  assert.equal(form.action, TUNNEL + "/auth");
+  assert.equal(form.target, "_blank", "target=_blank opens a new tab on submit");
+  const fields = {};
+  for (const input of form.querySelectorAll("input")) fields[input.name] = input.value;
+  assert.equal(fields.token, "secret-token");
+  assert.equal(fields.redirect, "/hass/");
 }
 {
-  assert.equal(await redeemToken("", "tok", "/x/", stubFetch([])), false, "no tunnel URL: nothing to do");
-  assert.equal(await redeemToken(TUNNEL, "", "/x/", stubFetch([])), false, "no token: nothing to do");
-  assert.equal((await redeemToken(TUNNEL, "", "/x/", stubFetch([]))) === false, true, "and no request is made");
+  // A trailing slash on the tunnel origin is not doubled in the action.
+  forms.length = 0;
+  redeemToken(TUNNEL + "/", "tok", "/x/");
+  assert.equal(forms[0].action, TUNNEL + "/auth", "action URL never doubles the slash");
+}
+{
+  // No redirect is fine: the form still submits with just the token. The
+  // daemon falls back to "/" for an empty redirect parameter (see
+  // SafeRedirect), which is the SPA itself.
+  forms.length = 0;
+  redeemToken(TUNNEL, "tok", "");
+  const fields = {};
+  for (const input of forms[0].querySelectorAll("input")) fields[input.name] = input.value;
+  assert.equal(fields.token, "tok");
+  assert.equal(fields.redirect, undefined, "no redirect field when none was supplied");
+}
+{
+  assert.equal(redeemToken("", "tok", "/x/"), false, "no tunnel URL: nothing to do");
+  assert.equal(redeemToken(TUNNEL, "", "/x/"), false, "no token: nothing to do");
 }
 
-console.log("  [redeemAndOpen]");
+console.log("  [redeemAndOpen — thin wrapper]");
 {
-  const fetchStub = stubFetch([{ ok: true, status: 200 }]);
-  let opened = null;
-  await redeemAndOpen(TUNNEL, "secret-token", "/hass/", (url) => { opened = url; });
-  assert.equal(opened, TUNNEL + "/hass/", "opens the credential-free destination");
-  assert.ok(!opened.includes("token"), "the opened URL carries no token");
+  forms.length = 0;
+  const ok = redeemAndOpen(TUNNEL, "secret-token", "/hass/", "_blank");
+  assert.equal(ok, true);
+  assert.equal(forms.length, 1, "the helper builds the same form as redeemToken");
+  assert.equal(forms[0].method, "POST");
+  assert.equal(forms[0].action, TUNNEL + "/auth");
+  assert.equal(forms[0].target, "_blank");
 }
 {
-  // A redemption that fails must still open the destination: an existing
-  // session authorizes it, and without one the daemon answers with the login
-  // page, which is where an unauthenticated click already led.
-  const fetchStub = stubFetch([() => { throw new Error("offline"); }]);
-  let opened = null;
-  await redeemAndOpen(TUNNEL, "secret-token", "/hass/", (url) => { opened = url; });
-  assert.equal(opened, TUNNEL + "/hass/", "a failed redemption still opens the service");
+  // Same tab when no target is supplied: the form's default target is the
+  // current window, so the navigation lands here.
+  forms.length = 0;
+  redeemAndOpen(TUNNEL, "secret-token", "/hass/");
+  assert.equal(forms[0].target, "", "no target defaults to the current window");
 }
 
 console.log("  [step-up]");

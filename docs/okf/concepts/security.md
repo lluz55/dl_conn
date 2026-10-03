@@ -178,12 +178,24 @@ de acesso do `cloudflared` e do serviço de destino, e no `Referer` de tudo que 
 página de chegada carregar. A migração é `GET → POST`:
 
 - **`POST /auth`** aceita `application/x-www-form-urlencoded` ou JSON
-  (`{"token": "...", "redirect": "..."}`) e responde `200` com
-  `{"redirect": "..."}` — um `fetch()` precisa saber para onde ir, e seguir um
-  `302` lhe entregaria o shell da SPA. A SPA redenciona via
-  `web/js/api_client.js` e então abre uma URL **sem credencial alguma**: o
-  cookie emitido pelo resgate é o que autoriza, e o link pode ser favoritado,
-  compartilhado ou aberto em nova aba sem carregar segredo.
+  (`{"token": "...", "redirect": "..."}`). A bifurcação importa porque a
+  redenção agora é uma navegação top-level (form submission), não um
+  `fetch()`:
+  - **Form-POST** (a SPA monta `<form method="POST">` e chama
+    `form.submit()`, `Sec-Fetch-Mode: navigate` + `Dest: document`) →
+    `303 See Other` para o destino. O `Set-Cookie` da resposta cai em
+    contexto first-party — o que importa é a navegação em si: o
+    Chrome moderno descarta o `Set-Cookie` cross-origin de um `fetch()`,
+    e sem isso a sessão não é estabelecida e o clique no card volta
+    para o login. O token continua no corpo, nunca na URL.
+  - **fetch-POST** (`Sec-Fetch-Mode` ≠ `navigate`) → `200` com
+    `{"redirect": "..."}`, para que `fetch()` saiba para onde ir sem
+    seguir um `302` que lhe entregaria o shell da SPA.
+
+  A SPA redenciona via `web/js/api_client.js` e o navegador termina em
+  uma URL **sem credencial alguma**: o cookie emitido pelo resgate é
+  o que autoriza, e o link pode ser favoritado, compartilhado ou
+  aberto em nova aba sem carregar segredo.
 - **`X-Dl-Conn-Token`** (qualquer método) atende clientes sem cookie jar —
   apps nativos, scripts. É credencial de portador, então só tem sentido sobre o
   TLS do túnel, e nunca é encaminhada para um serviço.

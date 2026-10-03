@@ -89,11 +89,19 @@ Implementado com três divergências em relação ao enunciado:
   `nsec`, `nsecFile`, `relays`, `authorizedNpubs`, `fallbackNip04`).
   `crypto/rand` no boot é mais simples, igualmente sem estado em disco, e a
   invalidação no restart é o comportamento desejado.
-- **A SPA redenciona com `mode: "no-cors"`, não com um CORS comum.** A SPA é
-  servida de outra origem que o túnel e o daemon não emite headers CORS; o que
-  importa é o `Set-Cookie` da resposta, não a leitura do corpo. A URL que a SPA
-  abre **não leva token nenhum** — melhor que o `fetch('/auth')` pedido, que só
-  tiraria o token da URL e manteria tudo o resto igual.
+- **A SPA redenciona via form-POST, não via `fetch()`.** A SPA é servida de
+  outra origem que o túnel, e o Chrome moderno bloqueia o `Set-Cookie`
+  cross-origin vindo de um `fetch()` (sub-resource request cai no bucket
+  de cookie de terceiro); sem cookie, a sessão não é estabelecida e o
+  clique no card volta para a tela de login. A redenção hoje monta um
+  `<form method="POST">` oculto, com `token`/`redirect` em `hidden`,
+  e chama `form.submit()` — uma navegação top-level, contexto
+  first-party para cookie no destino, `303 See Other` do daemon
+  carrega o cookie até o serviço. A URL aberta **não leva token
+  nenhum**. (Antes desta correção a redenção era
+  `fetch(..., {mode: "no-cors"})`; o `no-cors` continua valendo para
+  qualquer outro caller que use `fetch`, mas o caminho nativo da SPA é
+  o form.)
 - **Zero-on-exit cobre o buffer que o daemon controla.** O texto pedia também
   `clear()` sobre a string da `nsec`; string em Go é imutável, então
   atribuir `""` não zera memória — e o `ineffassign` foi o sinal correto de que

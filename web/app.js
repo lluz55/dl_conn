@@ -1359,11 +1359,12 @@ import {
     // The banner's href carries no credential. The token is redeemed in a
     // POST body before the browser leaves, so it never reaches this tab's
     // history, the tunnel's access log, or the Referer of whatever the
-    // resumed page loads.
+    // resumed page loads. The redemption is a form submission so the
+    // Set-Cookie on the response lands in a first-party context — see
+    // api_client.js for why this can't be a fetch().
     const href = serviceHref(state.tunnelURL, target);
-    const go = async () => {
-      await redeemAndOpen(state.tunnelURL, state.authToken || "", target,
-        (url) => window.location.assign(url));
+    const go = () => {
+      redeemAndOpen(state.tunnelURL, state.authToken || "", target);
     };
 
     if (!el.returnBanner) {
@@ -1482,25 +1483,29 @@ import {
   };
 
   /**
-   * Redeems the pending one-time token, then opens a service.
+   * Redeems the pending one-time token, then opens a service in a new tab.
    *
    * The token goes out in a POST body rather than in the URL, so it never
    * reaches the browser's history, cloudflared's access log, or the Referer
-   * of anything the opened page loads. The link that is actually opened
-   * carries no credential at all — the session cookie issued by the
-   * redemption is what authorizes it.
+   * of anything the opened page loads. The form submission is itself the
+   * navigation (target="_blank"), so the new tab navigates to /auth, the
+   * daemon answers 303 to the service URL with the Set-Cookie, and the
+   * browser follows the redirect — landing on the service with a live
+   * session. No follow-up window.open is needed and would just race the
+   * navigation.
    *
-   * A redemption that fails still opens the destination: an already
-   * established session works, and without one the daemon sends the browser
-   * to the login page, which is where an unauthenticated click already led.
+   * A redemption that fails still opens the destination: an already-
+   * established session works, and without one the daemon sends the
+   * browser to the login page, which is where an unauthenticated click
+   * already led.
    */
-  async function openService(redirectPath) {
+  function openService(redirectPath) {
     if (!state.tunnelURL) return;
-    await redeemAndOpen(
+    redeemAndOpen(
       state.tunnelURL,
       state.authToken || "",
       redirectPath,
-      (url) => window.open(url, "_blank", "noopener,noreferrer")
+      "_blank"
     );
   }
 

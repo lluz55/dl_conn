@@ -15,6 +15,43 @@ const NextParam = "next"
 // fresh one-time token — depends on.
 const LoginPath = "/"
 
+// isTopLevelDocumentNavigation reports whether a request looks like a
+// browser navigating to a page (not as a sub-resource fetch, an API call, or
+// a protocol upgrade) regardless of HTTP method. It is the shared backbone
+// of IsDocumentNavigation and IsFormSubmission, which restrict it to the
+// method each caller wants.
+//
+// Fetch metadata is authoritative when present (browsers set it on every
+// request and it cannot be forged by page script): only a top-level
+// navigation of a document is one. Dest must be "document" — "iframe" is a
+// nested browsing context, which is how dl_conn's own login page (or any
+// other page a user embeds) would ask for a protected resource: the answer
+// is supposed to be a framed resource, and a redirect inside the frame is
+// useless to whoever framed it. The SPA's CSP already sets
+// frame-ancestors 'none', so this endpoint's own frame-denial is the only
+// half that reaches *other* services behind the same tunnel — and an
+// <iframe> is exactly the case where a login page would be framed rather
+// than shown.
+//
+// Falls back to Accept: text/html for browsers that don't send fetch
+// metadata (anything still on the legacy path). WebSocket upgrades are
+// never navigations, regardless of method.
+func isTopLevelDocumentNavigation(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
+		if !strings.EqualFold(mode, "navigate") {
+			return false
+		}
+		if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && !strings.EqualFold(dest, "document") {
+			return false
+		}
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
 // IsDocumentNavigation reports whether a request is a browser navigating to
 // a page, as opposed to a sub-resource fetch, an API call, or a protocol
 // upgrade.
@@ -28,32 +65,27 @@ func IsDocumentNavigation(r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
-	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+	return isTopLevelDocumentNavigation(r)
+}
+
+// IsFormSubmission reports whether a POST is a top-level form submission
+// (browser navigating to /auth with a real <form>), as opposed to a fetch()
+// or XHR. The two have to be answered differently: a fetch() needs the
+// target as JSON because following a 302 would hand it the SPA shell; a
+// form submission is a real navigation and has to follow a 303 to the
+// service URL, both so the user's browser stays on the destination and so
+// the Set-Cookie on that response is processed in a first-party context —
+// the latter is why this distinction exists: the SPA on GitHub Pages (or
+// any origin other than the tunnel) cannot store a cross-origin
+// Set-Cookie from a fetch() at all, because the fetch() is a sub-resource
+// request and lands in the third-party cookie bucket. A form submission
+// is a top-level navigation, so the destination origin becomes first-party
+// for cookie purposes and the Set-Cookie sticks.
+func IsFormSubmission(r *http.Request) bool {
+	if r.Method != http.MethodPost {
 		return false
 	}
-	// Fetch metadata is authoritative when present (browsers set it on every
-	// request and it cannot be forged by page script): only a top-level
-	// navigation of a document is one.
-	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
-		if !strings.EqualFold(mode, "navigate") {
-			return false
-		}
-		// Dest must be "document" — the single top-level navigation of a
-		// page. "iframe" is a nested browsing context, which is how dl_conn's
-		// own login page (or any other page a user embeds) would ask for a
-		// protected resource: the answer is supposed to be a framed
-		// resource, and a redirect to the login page inside the frame is
-		// useless to whoever framed it. The SPA's CSP already sets
-		// frame-ancestors 'none', so this endpoint's own frame-denial is the
-		// only half that reaches *other* services behind the same tunnel —
-		// and an <iframe> is exactly the case where a login page would be
-		// framed rather than shown.
-		if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && !strings.EqualFold(dest, "document") {
-			return false
-		}
-		return true
-	}
-	return strings.Contains(r.Header.Get("Accept"), "text/html")
+	return isTopLevelDocumentNavigation(r)
 }
 
 // LoginRedirect builds the URL an unauthenticated navigation is sent to:

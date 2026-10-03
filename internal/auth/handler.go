@@ -77,9 +77,11 @@ const getTokenSunset = "Wed, 01 Jul 2026 00:00:00 GMT"
 // release the Sunset header promises, and answers with a Warning so a client
 // that ignores Sunset still learns it is on a deprecated path.
 //
-// On success: GET/HEAD redirect (302) to the redirect target; POST answers
-// 200 with the target as JSON, because a fetch() caller has to be told where
-// to go — following a 302 would just hand it the SPA shell.
+// On success: GET/HEAD redirect (302) to the redirect target; a form-POST
+// submission redirects (303) the same way, so the Set-Cookie on that
+// response lands in a first-party context (see IsFormSubmission for the
+// why); a fetch() POST answers 200 with the target as JSON because
+// following a redirect would hand it the SPA shell.
 // On failure: a browser navigating to a stale link is sent to the login page
 // carrying where it was headed (see RedirectToLogin), so an expired service
 // link ends at "log in and continue" rather than on a raw error page.
@@ -124,11 +126,14 @@ func (h *AuthHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 		// Sending the browser to the login page turns that into a login
 		// that resumes the trip, instead of a dead end the user can only
 		// escape by finding the SPA themselves.
-		if r.Method == http.MethodPost {
+		// POST as a top-level form submission is a real navigation and gets
+		// the same login bounce as GET. fetch() POSTs stay on the machine-
+		// readable 401 path.
+		if r.Method == http.MethodPost && !IsFormSubmission(r) {
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 			return
 		}
-		if IsDocumentNavigation(r) {
+		if IsDocumentNavigation(r) || IsFormSubmission(r) {
 			RedirectToLogin(w, r, redirect)
 			return
 		}
@@ -175,11 +180,16 @@ func (h *AuthHandler) readCredentials(r *http.Request) (token, redirect string, 
 //
 // A browser navigating to a broken or stale link is sent to the login page
 // with its destination attached, so the trip it was making can be resumed
-// after a fresh redemption; a POST gets the machine-readable status instead,
-// because a fetch() following a redirect would be handed the SPA shell where
+// after a fresh redemption; a top-level form POST is a navigation too and
+// gets the same bounce. A plain POST (fetch/XHR) keeps the machine-readable
+// status, because following a redirect would be handed the SPA shell where
 // it asked for a status.
 func (h *AuthHandler) reject(w http.ResponseWriter, r *http.Request, redirect string, status int, message string) {
 	if r.Method != http.MethodPost && IsDocumentNavigation(r) {
+		RedirectToLogin(w, r, redirect)
+		return
+	}
+	if r.Method == http.MethodPost && IsFormSubmission(r) {
 		RedirectToLogin(w, r, redirect)
 		return
 	}
@@ -230,13 +240,24 @@ func postCredentials(r *http.Request) (token, redirect string, err error) {
 	}
 }
 
-// issue finishes a successful redemption: a redirect for a browser, a JSON
-// body for a fetch(). reuse is true when the caller already had a valid session
-// and no new token was spent.
+// issue finishes a successful redemption: a redirect for a browser
+// navigation, a JSON body for a fetch(). reuse is true when the caller
+// already had a valid session and no new token was spent.
 func (h *AuthHandler) issue(w http.ResponseWriter, r *http.Request, redirectParam string, reuse bool) {
+	// A real browser navigation (GET, HEAD, or a top-level form POST) gets a
+	// redirect; the only other POST caller is a fetch() that needs the target
+	// as JSON because following a 302 would hand it the SPA shell. 303 on the
+	// form-POST path is what makes the Set-Cookie on the response land in a
+	// first-party context, which is the only way the SPA on a non-tunnel
+	// origin can establish a session in modern Chrome.
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		markDeprecatedGet(w)
 		http.Redirect(w, r, SafeRedirect(redirectParam), http.StatusFound)
+		return
+	}
+	if IsFormSubmission(r) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, SafeRedirect(redirectParam), http.StatusSeeOther)
 		return
 	}
 	target := SafeRedirect(redirectParam)

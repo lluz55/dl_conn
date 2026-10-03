@@ -23,6 +23,35 @@ type: log
   pré-existentes (35 `errcheck`, 7 `staticcheck`) em código que não mudou nesta
   release; `go test`, `go vet` e as 12 suítes de `web/tests/` passam.
 
+- **Redenção de token agora é form-POST, não `fetch()` cross-origin.** A SPA
+  redencionava o token via `fetch(..., {mode: "no-cors"})` e dependia do
+  `Set-Cookie` da resposta para abrir o serviço (`web/js/api_client.js`).
+  Quando a SPA vive em uma origem diferente do túnel (deploy no GitHub
+  Pages), o Chrome moderno trata esse `Set-Cookie` como cookie de
+  terceiro e o descarta — o navegador abre a URL do serviço sem sessão,
+  o daemon redireciona para o login, e o usuário "perde" o login recém
+  feito. Sintoma reportado: *apos o login todos os serviços estão sendo
+  redirecionados para a pagina inicial novamente sem os dados de login
+  previamente salvos*.
+
+  Fix: a redenção agora monta um `<form method="POST">` oculto, com
+  `token` e `redirect` em campos `hidden`, e chama `form.submit()`
+  programaticamente — uma navegação top-level. O daemon (`internal/auth`
+  /`handler.go` e `internal/auth/login_redirect.go`) detecta o form-POST
+  via `Sec-Fetch-Mode: navigate` + `Sec-Fetch-Dest: document` (helper
+  novo `IsFormSubmission`) e responde `303 See Other` em vez de JSON;
+  o `Set-Cookie` da resposta cai em contexto first-party (a origem de
+  destino da navegação), o token continua no corpo (nunca na URL), e
+  o `JSON` antigo segue valendo para qualquer `fetch()`-based caller
+  que ainda dependa dele — `POST /auth` agora bifurca: form-POST → 303,
+  fetch-POST → `200 {"redirect": …}`.
+
+  Decisão registrada porque contraria o que o item 3 das decisões S15/S16
+  acima diz: o `no-cors` continua (não há `preflight`), mas o que importa
+  não é mais o efeito colateral de um `fetch()` — é a navegação em si.
+  `go test ./...`, `go vet` e as 12 suítes de `web/tests/` passam;
+  lint não introduz warnings novos.
+
 - **SPA 404 após o rebuild S17.** Login continuou respondendo porque Nostr
   e `/auth` vivem em memória; `/` e `/config.json` voltaram 404 porque
   o pacote Nix do `dl_conn` só embute `bin/dl_conn` — o `web/` que o daemon

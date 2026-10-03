@@ -18,6 +18,9 @@ func TestIsDocumentNavigation(t *testing.T) {
 		{"html navigation", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml"}, true},
 		{"head navigation", "HEAD", map[string]string{"Accept": "text/html"}, true},
 		{"xhr asking for json", "GET", map[string]string{"Accept": "application/json"}, false},
+		// POST is no longer a document navigation by default: a top-level
+		// form POST is its own class (see IsFormSubmission), and a fetch()
+		// POST must not be answered with a redirect.
 		{"post form", "POST", map[string]string{"Accept": "text/html"}, false},
 		{"websocket upgrade", "GET", map[string]string{"Accept": "text/html", "Upgrade": "websocket"}, false},
 
@@ -40,6 +43,63 @@ func TestIsDocumentNavigation(t *testing.T) {
 			}
 			if got := IsDocumentNavigation(req); got != tt.want {
 				t.Errorf("IsDocumentNavigation() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// IsFormSubmission distinguishes a real top-level form POST (a browser
+// navigation to /auth) from a fetch()/XHR POST, so /auth can answer each
+// the right way: a redirect for form (which puts the cookie in a first-
+// party context — the whole reason this exists), JSON for fetch.
+func TestIsFormSubmission(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		headers map[string]string
+		want    bool
+	}{
+		// A GET is not a form submission regardless of headers: the method
+		// is what makes the redirect-vs-JSON split.
+		{"get navigation is not a form", "GET", map[string]string{
+			"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, false},
+
+		// Real top-level form POST: Sec-Fetch-Mode: navigate + Dest: document.
+		{"form submission with metadata", "POST", map[string]string{
+			"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document",
+			"Accept": "text/html", "Content-Type": "application/x-www-form-urlencoded"}, true},
+		// Same without metadata: Accept: text/html is the legacy fallback.
+		{"form submission via accept header", "POST", map[string]string{
+			"Accept": "text/html,application/xhtml+xml",
+			"Content-Type": "application/x-www-form-urlencoded"}, true},
+
+		// fetch() POSTs: mode is no-cors / cors, not navigate.
+		{"fetch no-cors", "POST", map[string]string{
+			"Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "empty",
+			"Accept": "*/*", "Content-Type": "application/x-www-form-urlencoded"}, false},
+		{"fetch cors", "POST", map[string]string{
+			"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty",
+			"Accept": "application/json", "Content-Type": "application/json"}, false},
+
+		// An iframe POST: even though it's a navigation request, the
+		// destination is wrong — a redirect to the login page inside a
+		// frame is useless to whoever framed it.
+		{"framed post", "POST", map[string]string{
+			"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe"}, false},
+
+		// WebSocket upgrade on POST is not a form submission either.
+		{"websocket upgrade", "POST", map[string]string{
+			"Upgrade": "websocket", "Accept": "text/html"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/auth", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			if got := IsFormSubmission(req); got != tt.want {
+				t.Errorf("IsFormSubmission() = %v, want %v", got, tt.want)
 			}
 		})
 	}

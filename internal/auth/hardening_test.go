@@ -168,6 +168,60 @@ func TestAuthPostFlow_JSON(t *testing.T) {
 	}
 }
 
+// A top-level form POST is a real browser navigation, not a fetch(): the
+// /auth response has to be a redirect so the Set-Cookie on it lands in a
+// first-party context (the SPA on a non-tunnel origin cannot store a
+// cross-origin Set-Cookie from a fetch() at all in modern Chrome). The
+// destination is the same place GET would have gone to.
+func TestAuthPostFlow_FormSubmissionRedirects(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(4 * time.Hour)
+	ah := NewAuthHandler(tm, sm)
+
+	token, _, _ := tm.Issue()
+	form := url.Values{"token": {token}, "redirect": {"/hass/"}}
+	req := httptest.NewRequest("POST", "/auth", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	w := httptest.NewRecorder()
+	ah.HandleAuth(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusSeeOther, w.Body.String())
+	}
+	if got, want := w.Header().Get("Location"), "/hass/"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+	if len(w.Result().Cookies()) == 0 {
+		t.Error("no session cookie issued on a successful POST")
+	}
+}
+
+// An invalid-token POST that is a top-level form submission is a navigation
+// the same way an expired GET is: the browser should land on the login page
+// carrying its destination, not on a JSON 401 the browser can't render.
+func TestAuthPostFlow_InvalidTokenFormSubmissionGoesToLogin(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	sm := NewSessionManager(4 * time.Hour)
+	ah := NewAuthHandler(tm, sm)
+
+	form := url.Values{"token": {"not-a-real-token"}, "redirect": {"/hass/"}}
+	req := httptest.NewRequest("POST", "/auth", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	w := httptest.NewRecorder()
+	ah.HandleAuth(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusSeeOther, w.Body.String())
+	}
+	if got, want := w.Header().Get("Location"), "/?next=%2Fhass%2F"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
 // TestAuthPostFlow_Invalid keeps the GET semantics: a bad token is an
 // authentication failure, not a navigation, so there is no login redirect to
 // answer with.

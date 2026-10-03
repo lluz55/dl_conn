@@ -8,8 +8,17 @@
  *     query string, which put it in the browser's history, in cloudflared's
  *     and the backend's access logs, and in the Referer of whatever the
  *     landing page loaded. The daemon still accepts that form (with a Sunset
- *     header) but the SPA posts the token in a body instead, and then opens a
- *     URL that carries no secret at all.
+ *     header) but the SPA's own redemption path does neither: it submits a
+ *     hidden <form method="POST"> whose body carries the token, and the
+ *     daemon answers 303 to the destination — a top-level navigation, so
+ *     the Set-Cookie on that response lands in a first-party context and
+ *     travels with the redirect to the service. That first-party property
+ *     is the whole reason this is a form submission and not a fetch():
+ *     modern Chrome blocks the cross-origin Set-Cookie from a fetch() when
+ *     the SPA is hosted on a different origin than the tunnel (e.g. GitHub
+ *     Pages), which is what made a click on a service card bounce the user
+ *     back to the login page after a successful login. The URL the browser
+ *     ends up on still carries no credential at all.
  *
  *  2. Step-up proofs. Endpoints the operator marks as sensitive want a
  *     short-lived proof in addition to the session (see
@@ -49,52 +58,89 @@ export function serviceHref(tunnelURL, redirectPath) {
 }
 
 /**
- * Redeem a one-time token with a POST, so it never appears in a URL.
+ * Redeem a one-time token by submitting a hidden <form method="POST"> to
+ * /auth, so the token never appears in a URL and the Set-Cookie on the
+ * response lands in a first-party context.
  *
- * The request is deliberately a CORS-simple one: form-encoded body, no custom
- * headers, `mode: "no-cors"`. The SPA is served from a different origin than
- * the ephemeral tunnel, and dl_conn serves no CORS headers, so a readable
- * cross-origin response is not available — and it is not needed. What matters
- * is the side effect: a `Set-Cookie` on the response establishes the session,
- * and the opaque response still carries it. The next top-level navigation then
- * presents the session cookie, which is what actually opens the service.
+ * The form is submitted programmatically: that is a top-level navigation,
+ * the same way a clicked link is, so the browser navigates this tab (or the
+ * new tab named by `target`) to the daemon, the response carries a
+ * Set-Cookie that establishes the session, and a 303 follows to the
+ * destination. The token stays in the form body — not in the action URL —
+ * so it never reaches browser history, cloudflared's access log, or the
+ * Referer of whatever the landing page loads.
  *
- * @returns {Promise<boolean>} true when the request completed without a
- *   network error. A false means the caller should fall back to navigating
- *   without a session — the daemon answers that with the login page, which is
- *   the same place an unauthenticated click already landed.
+ * A fetch() with `mode: "no-cors"` was the previous shape of this helper,
+ * and it works when the SPA and the tunnel live on the same origin (the
+ * daemon-served copy of the SPA). It breaks when they don't, because
+ * modern Chrome blocks the cross-origin Set-Cookie from a fetch(): the
+ * fetch() is a sub-resource request, the response lands in the third-party
+ * cookie bucket, and the next navigation to the service has no session —
+ * the symptom was a click on a service card bouncing back to the login
+ * page right after a successful login. The form submission is a real
+ * navigation, so the destination origin becomes first-party for cookie
+ * purposes and the Set-Cookie sticks.
+ *
+ * @param {string} tunnelURL   tunnel origin (e.g. "https://x.trycloudflare.com")
+ * @param {string} token        one-time token to redeem
+ * @param {string} redirectPath same-origin destination (e.g. "/hass/")
+ * @param {string} [target]     form target; "_blank" opens a new tab,
+ *                              anything else (or omitted) navigates the
+ *                              current tab.
+ * @returns {boolean} true when the form was submitted; false when no token
+ *   or no tunnelURL was supplied, so a caller can early-out without
+ *   triggering a navigation that has nothing to do.
  */
-export async function redeemToken(tunnelURL, token, redirectPath, fetchImpl) {
+export function redeemToken(tunnelURL, token, redirectPath, target) {
   if (!tunnelURL || !token) return false;
-  const body = new URLSearchParams();
-  body.set("token", token);
-  if (redirectPath) body.set("redirect", redirectPath);
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = tunnelURL.replace(/\/+$/, "") + "/auth";
+  // Submission happens before the user could see it, but display:none keeps
+  // the brief flicker away too — same as the rest of the SPA.
+  form.style.display = "none";
+  if (target) form.target = target;
 
-  try {
-    await (fetchImpl || fetch)(tunnelURL.replace(/\/+$/, "") + "/auth", {
-      method: "POST",
-      mode: "no-cors",
-      credentials: "include",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-    return true;
-  } catch {
-    // A tunnel that just rotated, a captive portal, an offline device: the
-    // navigation that follows still works if a session already exists.
-    return false;
+  const tokenInput = document.createElement("input");
+  tokenInput.type = "hidden";
+  tokenInput.name = "token";
+  tokenInput.value = token;
+  form.appendChild(tokenInput);
+
+  if (redirectPath) {
+    const redirectInput = document.createElement("input");
+    redirectInput.type = "hidden";
+    redirectInput.name = "redirect";
+    redirectInput.value = redirectPath;
+    form.appendChild(redirectInput);
   }
+
+  document.body.appendChild(form);
+  // form.submit() initiates the navigation synchronously; the form is then
+  // attached to a discarded document. Leaving it in place is safe and avoids
+  // racing the navigation in browsers that tear down the document on submit.
+  form.submit();
+  return true;
 }
 
 /**
- * Redeem the token, then open the service.
+ * Redeem the token by submitting the form, opening the service in a new
+ * tab (when `target === "_blank"`) or in the current tab (default).
  *
- * open receives the credential-free URL, so no caller can reintroduce the
- * token by accident.
+ * The form submission is itself the navigation, so the caller does not
+ * need to follow up with window.open / window.location.assign — the
+ * browser navigates to /auth, the daemon answers 303 to the destination,
+ * and the browser follows the redirect. `redirectPath` is for the daemon
+ * only; it never reaches the URL the browser ends up on.
+ *
+ * Kept as a separate function for symmetry with the old fetch-based
+ * redeemAndOpen — it exists so callers that want a new tab can write
+ * `redeemAndOpen(tunnel, token, "/hass/", "_blank")` and callers that
+ * want the same tab can write `redeemAndOpen(tunnel, token, "/hass/")`,
+ * without having to know that the implementation is a form submit.
  */
-export async function redeemAndOpen(tunnelURL, token, redirectPath, open, fetchImpl) {
-  await redeemToken(tunnelURL, token, redirectPath, fetchImpl);
-  open(serviceHref(tunnelURL, redirectPath));
+export function redeemAndOpen(tunnelURL, token, redirectPath, target) {
+  return redeemToken(tunnelURL, token, redirectPath, target);
 }
 
 /**
