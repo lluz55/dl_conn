@@ -1,14 +1,14 @@
 # dl_conn
 
-Daemon Go que expõe serviços locais (Home Assistant, Frigate, Zigbee2MQTT) através de um túnel efêmero da Cloudflare, com sinalização via Nostr (NIP-44) e controle de acesso Zero-Trust.
+Daemon Go que expõe serviços locais (Frigate, Zigbee2MQTT, Agent of Empires) através de um túnel efêmero da Cloudflare, com sinalização via Nostr (NIP-44) e controle de acesso Zero-Trust.
 
 ## Arquitetura
 
 ```
 [Cliente Web] → [Cloudflare Tunnel] → [dl_conn:9099]
      ↑                                ↓
-   Nostr DM (NIP-44)          [Reverse Proxy] → [HASS:8123]
-     ↓                            [Frigate:5000]
+   Nostr DM (NIP-44)          [Reverse Proxy] → [Frigate:5000]
+     ↓                            [Agent of Empires:25809]
 [Daemon no host]              [Zigbee2MQTT:8080]
 ```
 

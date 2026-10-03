@@ -105,52 +105,33 @@ auth:
 # About forwardedFor: by default dl_conn forwards the visitor's real IP down
 # the chain (cloudflared → dl_conn → backend), which is what a reverse proxy
 # should do. Some backends refuse the header unless the proxy is on an
-# allowlist they keep, and fail every request rather than ignoring it — Home
-# Assistant answers "400: Bad Request" to everything when
-# "use_x_forwarded_for" is on and dl_conn's address isn't in its
-# "trusted_proxies". The proper fix is on the backend, e.g. in Home
-# Assistant's configuration.yaml:
-#
-#   http:
-#     use_x_forwarded_for: true
-#     trusted_proxies:
-#       - 10.0.66.1        # the address the backend sees dl_conn coming from
+# allowlist they keep, and fail every request rather than ignoring it — a
+# backend answering "400: Bad Request" to everything when its
+# "use_x_forwarded_for"-style option is on and dl_conn's address isn't in its
+# trusted-proxy list. The proper fix is on the backend: allowlist the address
+# it sees dl_conn coming from.
 #
 # When that config is out of reach, "forwardedFor: false" makes dl_conn omit
 # the header (and drop any the client sent). The cost is that the backend
 # sees every request as coming from dl_conn itself, so its logs, rate limits,
 # and IP bans all act on that single address instead of on the real visitor.
 #
-# Backends that don't support a subpath at all (Home Assistant is the case
-# here) serve their whole frontend from the origin root — "/static/…",
-# "/frontend_latest/…", "/onboarding.html", "/api/websocket" — and send
-# Referrer-Policy: no-referrer, so neither the prefix nor the Referer can say
-# who those requests belong to. The proxy tracks which service each browser is
-# currently looking at (a "dl_conn_svc" cookie, written when it serves a page
-# under a service's prefix) and attributes unmatched root paths to it. That is
-# also what settles "/api/…" between Home Assistant and Frigate's hidden route
-# below: it follows whichever of the two the browser is in. Files dl_conn's own
-# frontend has always win, and an explicit prefix always wins over the cookie,
-# so opening /frigate/ in another tab keeps working.
+# Backends that don't support a subpath at all (Agent of Empires is the case
+# here) serve their whole frontend from the origin root — "/assets/…",
+# "/manifest.json", "/theme-bootstrap.js", "/api/…" — so the browser asks for
+# those at the root, unaware of the prefix. The proxy tracks which service each
+# browser is currently looking at (a "dl_conn_svc" cookie, written when it
+# serves a page under a service's prefix) and attributes unmatched root paths to
+# it. That is also what settles "/api/…" between Agent of Empires and Frigate's
+# hidden route below: it follows whichever of the two the browser is in. Files
+# dl_conn's own frontend has always win, and an explicit prefix always wins over
+# the cookie, so opening /frigate/ in another tab keeps working.
 #
 # Available icon names: home, video, camera, router, wifi, server, database,
 # dashboard, activity, terminal, code, shield, cloud, globe, music, film, tv,
 # hard-drive, cpu, zap, sliders, bell, thermometer, printer, download, lightbulb,
 # docker, eye, folder, package (or custom emojis like 🏠, 📹, 💡).
 services:
-  - id: "hass"
-    name: "Home Assistant"
-    icon: "home"
-    description: "Automação e controle da casa"
-    prefix: "/hass"
-    target: "http://10.0.66.1:8123"
-    stripPrefix: true
-    websocket: true
-    # Home Assistant rejects X-Forwarded-For from a proxy it doesn't trust
-    # (400 on every request). Either list dl_conn in its trusted_proxies, or
-    # uncomment this to stop sending the header.
-    # forwardedFor: false
-
   - id: "frigate"
     name: "Frigate"
     icon: "video"
@@ -216,15 +197,17 @@ services:
 
   # About originHost: some backends fence their API on the Host header to
   # defend against DNS rebinding, accepting only their own loopback authority
-  # and refusing any request whose Origin names a different origin. The
-  # DeepSeek Harness (`dsh web`) is the known case. Behind this proxy the
-  # browser sends the public tunnel hostname in both headers, so the HTML
-  # loads but every API call and the WebSocket upgrade get 403.
+  # and refusing any request whose Origin names a different origin. Agent of
+  # Empires (`aoe serve`) is the known case: its gate trusts loopback, routable
+  # IP literals and a non-wildcard --host, so the ephemeral tunnel hostname — a
+  # name, and a different one after every restart — is refused. Behind this
+  # proxy the browser sends the public tunnel hostname in both headers, so the
+  # HTML loads but every API call and the WebSocket upgrade get 403.
   #
   # Naming the backend's own authority satisfies that fence without pinning
   # the tunnel hostname anywhere, which is what makes it work with the
   # ephemeral trycloudflare.com URLs that change on every restart (the
-  # alternative, the backend's own --trusted-host flag, would have to be
+  # alternative, the backend's own --allowed-host flag, would have to be
   # resynced and the backend restarted on every rotation).
   #
   # Dropping Origin is safe for the same reason the backend accepts its
@@ -232,25 +215,30 @@ services:
   # which is SameSite and never rides along on a cross-site request. The
   # public hostname still reaches the backend in X-Forwarded-Host.
   #
-  # A backend mounted under a prefix may also redirect to its own root
-  # (`dsh` answers the token exchange with 303 Location: /); the proxy
-  # rewrites such root-absolute Location headers back into the prefix.
-  #
-  # launchTokenFile optionally contains the local launch URL printed by the
-  # backend. After dl_conn authenticates the caller, it redeems that URL over
-  # loopback and forwards only a secure cookie. Root-relative dsh APIs require
-  # Path=/; the proxy strips dsh auth cookies when forwarding to other services
-  # and uses a prefix-scoped marker to migrate legacy cookies. The launch token
-  # therefore never appears in the public tunnel URL or browser history.
-  - id: "dsh"
-    name: "DeepSeek Harness"
-    icon: "terminal"
-    prefix: "/dsh"
-    target: "http://127.0.0.1:3080"
+  # A backend mounted under a prefix may also redirect to its own root (with a
+  # 30x answering the token exchange, for instance); the proxy rewrites such
+  # root-absolute Location headers back into the prefix.
+  - id: "aoe"
+    name: "Agent of Empires"
+    icon: "👑"
+    description: "Gerenciador web/TUI de sessões do Agent of Empires"
+    prefix: "/aoe"
+    target: "http://127.0.0.1:25809"
     stripPrefix: true
+    # The dashboard streams session state over a WebSocket.
     websocket: true
-    originHost: "127.0.0.1:3080"
-    launchTokenFile: "/run/dsh/web-url"
+    # The gate above answers 403 to the tunnel hostname without this.
+    originHost: "127.0.0.1:25809"
+
+  # launchTokenFile is the other knob for a backend that prints its own
+  # authenticated launch URL: the file holds that URL (token included), and once
+  # dl_conn has authenticated the caller it redeems the URL over loopback and
+  # forwards only a secure cookie, so the token never crosses the public tunnel
+  # nor lands in browser history. Backends with root-relative APIs need Path=/;
+  # the proxy strips those auth cookies when forwarding to other services and
+  # uses a prefix-scoped marker to migrate legacy cookies. No service below uses
+  # it — see ServiceConfig.LaunchTokenFile in internal/config/config.go.
+  # launchTokenFile: "/run/<service>/web-url"
 
 # Host telemetry (CPU/RAM/disk/GPU/battery). Disabled by default.
 telemetry:

@@ -86,16 +86,18 @@ denylist qualquer porta sensível específica do host.
 
 ## Bootstrap de sessão de serviços internos
 
-Serviços com uma segunda autenticação de lançamento, como `dsh web`, podem
-configurar `launchTokenFile`. O arquivo contém a URL local impressa pelo
+Serviços com uma segunda autenticação de lançamento — um processo que imprime
+uma URL de acesso própria, com token, em vez de confiar na sessão do proxy —
+podem configurar `launchTokenFile`. O arquivo contém a URL local impressa pelo
 processo. Somente depois de validar a sessão Zero-Trust do `dl_conn`, o proxy
 confere que a URL pertence exatamente ao `target`, resgata o token via loopback
 e devolve apenas o cookie assinado com `Path=/`, necessário para APIs absolutas
-como `/api/directoryPicker/list`, e reforçado com `Secure`, `HttpOnly` e
+na raiz (`/api/...`), e reforçado com `Secure`, `HttpOnly` e
 `SameSite=Lax`. O proxy remove cookies `dsh-auth-*` antes de encaminhar a outros
 serviços; somente o serviço configurado recebe o cookie de sua autoridade.
 Um marcador `HttpOnly` restrito ao prefixo identifica que o cookie raiz já foi
-emitido pelo proxy; assim, cookies legados restritos a `/dsh/` não impedem a
+emitido pelo proxy; assim, cookies legados restritos ao prefixo do serviço
+(`/dsh/` no caso que originou o recurso) não impedem a
 migração automática no próximo acesso. Isso reduz exposição entre backends,
 mas não isola aplicações que compartilham
 a mesma origem no navegador. `Lax` permite a navegação GET

@@ -6,6 +6,41 @@ type: log
 
 ## 2026-10-03
 
+- **Registro de serviços: Home Assistant e `dsh` removidos, Agent of Empires
+  entrou.** O `config.example.yaml` (rastreado) e o `config.yaml` local perderam
+  as entradas `hass` e `dsh` e ganharam `aoe` (`Agent of Empires`,
+  `http://127.0.0.1:25809`, prefixo `/aoe`, ícone 👑). Motivo do registro: o
+  `dsh` era o único serviço configurado que usava `originHost`, e o `hass` era
+  o exemplo canônico do backend que não suporta subpath — trocar de serviço
+  deixaria as duas features sem caso vivo na config e a documentação
+  apontando para serviços inexistentes.
+  - `originHost: "127.0.0.1:25809"` é obrigatório para o `aoe`, não
+    cosmético. O `aoe serve` tem um guard de DNS-rebinding que confia apenas em
+    loopback, IP literal roteável e no próprio `--host`; verificado
+    empiricamente que `Host: <hostname>.trycloudflare.com` devolve **403** em
+    `/` e em `/api/…`, enquanto `Host: 127.0.0.1:25809` devolve 200 — e
+    continua 403 se o `Origin` público acompanhá-lo, o que o `originHost`
+    resolve ao remover `Origin`/`Sec-Fetch-Site`. A alternativa
+    (`--allowed-host` no `aoe`) exigiria ressincronizar e reiniciar o serviço a
+    cada rotação de URL efêmera.
+  - O `aoe` não tem flag de base path (só `--host`/`--port`/`--remote`), e seu
+    HTML referencia `/assets/…`, `/manifest.json`, `/theme-bootstrap.js` e
+    `/api/…` na raiz. É o caso do frontend que não conhece o prefixo: os
+    assets são reescritos pelo `rewriteAssetPaths` e o resto cai na atribuição
+    pelo cookie `dl_conn_svc` — inclusive o `/api/…`, que conflita com a rota
+    oculta do Frigate e é resolvido pelo mesmo cookie, na ordem de
+    `matchService`. Esse raciocínio passou a ser documentado em função do `aoe`,
+    e a doc do `launchTokenFile` ficou genérica (o recurso segue suportado e
+    testado, só não está mais em uso por serviço configurado).
+  - O `aoe serve` roda com `--no-auth` (permitido só em bind loopback). Atrás da
+    sessão Zero-Trust do `dl_conn` isso é aceitável, mas é uma segunda
+    credencial a considerar: o `aoe` pode executar comandos no host, então
+    `--auth=passphrase` seria a postura mais forte se o proxy deixar de ser a
+    única barreira.
+  - Prosa de `README.md` (descrição + diagrama), `AGENTS.md` e
+    `concepts/architecture.md` passou a citar Agent of Empires no lugar de Home
+    Assistant. O histórico datado em `log.md` e nos `tasks/` foi preservado.
+
 - **Harness de UI local (`/dev.html`), atrás de `--dev-mock-auth`.**
   Sobe a SPA real contra sessão, host Nostr e telemetria falsas, para
   trabalhar na interface sem nsec real, relay real ou túnel no ar.
@@ -118,7 +153,6 @@ type: log
   Restrições mantidas: sem framework, sem bundler, sem CDN, CSP
   `style-src self` sem `unsafe-inline` (toda barra e polyline é atributo de
   geometria SVG escrito por `setAttribute`), zero gradiente, tudo tokenizado.
-
 
 - **Redirecionamento direto em sessões já ativas e suporte a `?next=` autenticado no `RootFallback`.**
   Ao abrir múltiplos serviços a partir do frontend SPA cross-origin (ex.: GitHub Pages):

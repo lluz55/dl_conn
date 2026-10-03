@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-O daemon `dl_conn` expõe serviços locais (Home Assistant, Frigate, Zigbee2MQTT)
+O daemon `dl_conn` expõe serviços locais (Frigate, Zigbee2MQTT, Agent of Empires)
 através de um túnel efêmero da Cloudflare, com sinalização via Nostr (NIP-44)
 e controle de acesso Zero-Trust.
 
@@ -11,18 +11,18 @@ e controle de acesso Zero-Trust.
 ```
 [Cliente Web] → [Cloudflare Tunnel] → [dl_conn:9099]
      ↑                                ↓
-   Nostr DM (NIP-44)          [Reverse Proxy] → [HASS:8123]
-     ↓                            [Frigate:5000]
-[Daemon no host]              [Zigbee2MQTT:8080]
+   Nostr DM (NIP-44)          [Reverse Proxy] → [Frigate:5000]
+     ↓                            [Zigbee2MQTT:8080]
+[Daemon no host]              [Agent of Empires:25809]
 ```
 
 ## Serviços Gerenciados
 
 | Serviço     | Porta local    | Prefixo       |
 |-------------|----------------|---------------|
-| Home Assistant | 10.0.66.1:8123 | `/hass`     |
 | Frigate      | 10.0.66.1:5000 | `/frigate`   |
 | Zigbee2MQTT  | 10.1.1.10:8080 | `/zigbee2mqtt`|
+| Agent of Empires | 127.0.0.1:25809 | `/aoe`   |
 
 ## Logs
 
@@ -111,7 +111,21 @@ precisa migrar para `POST` ou `X-Dl-Conn-Token`.
 ### WebSocket falha no proxy
 - O proxy encaminha `Upgrade: websocket` automaticamente para serviços
   com `websocket: true` na configuração.
-- Home Assistant WebSocket: `wss://[tunnel]/hass/api/websocket`
+- WebSocket do Agent of Empires: `wss://[tunnel]/aoe/api/...` (o caminho
+  exato é montado em runtime pelo dashboard; o proxy atribui a requisição ao
+  serviço pelo cookie `dl_conn_svc`).
+
+### 403 do Agent of Empires através do túnel
+- Sintoma: a página do `/aoe/` carrega, mas toda chamada de API e o upgrade de
+  WebSocket respondem 403; o painel fica vazio.
+- Causa: o `aoe serve` tem um guard de DNS-rebinding que aceita apenas
+  loopback, IP literal roteável e o próprio `--host`. O hostname efêmero
+  `*.trycloudflare.com` é um nome, então é recusado.
+- Correção: `originHost: "127.0.0.1:25809"` na entrada do serviço. Confirme
+  com `curl -H 'Host: 127.0.0.1:25809' http://127.0.0.1:25809/api/...`
+  (200) contra o hostname do túnel (403).
+- Não troque por `--allowed-host` no lado do `aoe`: a URL do túnel muda a cada
+  reinício, e a flag exigiria ressincronizar e reiniciar o serviço por rotação.
 
 ### Cookie de sessão expirado
 - TTL padrão: 4h (configurável via `auth.sessionTTL`)
@@ -175,17 +189,20 @@ Para utilizar o `dl_conn` como serviço em outro flake (ex: `nixos-config`):
       };
       services = [
         {
-          id = "hass";
-          name = "Home Assistant";
-          prefix = "/hass";
-          target = "http://10.0.66.1:8123";
-          websocket = true;
-        }
-        {
           id = "frigate";
           name = "Frigate";
           prefix = "/frigate";
           target = "http://10.0.66.1:5000";
+        }
+        {
+          id = "aoe";
+          name = "Agent of Empires";
+          prefix = "/aoe";
+          target = "http://127.0.0.1:25809";
+          websocket = true;
+          # Obrigatório: o guard de DNS-rebinding do `aoe serve` responde 403
+          # ao hostname efêmero do túnel sem esta linha.
+          originHost = "127.0.0.1:25809";
         }
       ];
     };

@@ -18,7 +18,7 @@ de fora para dentro:
    os serviços locais diretamente — o proxy do daemon é o único caminho.
 2. **Proxy reverso + acesso Zero-Trust (`internal/proxy`, `internal/auth`):**
    recebe as requisições tuneladas, valida a sessão/token e encaminha para o
-   serviço local alvo (Home Assistant, Frigate, Zigbee2MQTT). Serviços fixos
+   serviço local alvo (Frigate, Zigbee2MQTT, Agent of Empires). Serviços fixos
    suportam upgrade de WebSocket e cookies de launch. A rota dinâmica
    `/local/<porta>/` encaminha HTTP exclusivamente para `127.0.0.1`, sem
    WebSocket, e aplica uma política de portas bloqueadas.

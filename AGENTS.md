@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Offline-first tunnel daemon for exposing local services (Home Assistant,
-Frigate, Zigbee2MQTT) via a Cloudflare tunnel with Nostr (NIP-44) signaling
+Offline-first tunnel daemon for exposing local services (Frigate,
+Zigbee2MQTT, Agent of Empires) via a Cloudflare tunnel with Nostr (NIP-44) signaling
 and Zero-Trust access control. The source specification is
 [README.md](/README.md) and the operational runbook is
 [docs/runbook.md](/docs/runbook.md) — read them before any architectural
