@@ -157,7 +157,7 @@ context), do it in the OKF bundle in `docs/okf/` (see
 
 ## Versioning and releases
 
-- The version is single-sourced in `dl-conn.nix` (`version = "0.1.0"`); do not
+- The version is single-sourced in `dl-conn.nix` (`version = "0.2.0"`); do not
   hardcode it elsewhere.
 - Releases use the **`gh` CLI**, attaching the binary and `checksums.txt` (see
   [docs/runbook.md](/docs/runbook.md)):

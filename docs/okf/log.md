@@ -6,6 +6,23 @@ type: log
 
 ## 2026-10-03
 
+- **Release `v0.2.0` — primeira release com tag.** A `0.1.0` nunca foi publicada:
+  era o valor inicial de `version` em `dl-conn.nix`, escrito no commit `62806bb`
+  junto com o flake, e 111 commits de funcionalidade se acumularam sobre ele sem
+  bump. A escolha por **minor** e não major se apoia em
+  [protocol.md](concepts/protocol.md): `ResponsePayload` só ganhou campos
+  `omitempty` novos (`description`, `host_telemetry`), nada foi removido ou
+  renomeado, então nenhum cliente existente quebra. O intervalo coberto vai das
+  fases 1–16 do [tasks/index.md](tasks/index.md) mais as trilhas S15/S16/S17.
+  `CHANGELOG.md` foi criado agora — o comando de release documentado em
+  `AGENTS.md` usa `--notes-file CHANGELOG.md`, ou seja, o arquivo era exigido
+  por esse fluxo e nunca tinha existido. Registrado aqui porque a release
+  carrega duas decisões que não estão em nenhum outro lugar: por que minor, e
+  por que o `CHANGELOG.md` é a fonte das notas de release.
+  **Pendente de decisão do operador:** `golangci-lint run` reporta 42 avisos
+  pré-existentes (35 `errcheck`, 7 `staticcheck`) em código que não mudou nesta
+  release; `go test`, `go vet` e as 12 suítes de `web/tests/` passam.
+
 - **SPA 404 após o rebuild S17.** Login continuou respondendo porque Nostr
   e `/auth` vivem em memória; `/` e `/config.json` voltaram 404 porque
   o pacote Nix do `dl_conn` só embute `bin/dl_conn` — o `web/` que o daemon

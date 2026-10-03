@@ -29,7 +29,7 @@ que vem de nixpkgs (`pkgs.cloudflared`) e é injetado no `PATH` do binário via
 - `flake.nix`: inputs `nixpkgs`, `flake-utils`; `devShells.default` com Go,
   gopls, golangci-lint, cloudflared, git; `packages.default`/`apps.default`
   constrói `dl_conn` via `dl-conn.nix`.
-- `dl-conn.nix`: `buildGoModule` (version `0.1.0`, `subPackages: cmd/dl_conn`,
+- `dl-conn.nix`: `buildGoModule` (version `0.2.0`, `subPackages: cmd/dl_conn`,
   `vendorHash` fixo), `nativeBuildInputs: [cloudflared makeWrapper]`, `wrapProgram`
   injetando o `cloudflared` no `PATH`.
 - `.envrc` (opcional): `use flake` para integração com direnv.
