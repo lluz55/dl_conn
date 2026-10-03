@@ -204,3 +204,119 @@ func TestHandler_Range_WithoutStore_501(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// TestHandler_Range_CapsResponseSize is the regression guard for the chart that
+// would not load: the 7-day window is the one the SPA opens with, and at the
+// default 10s collection interval it holds ~60k samples. Answering that with
+// every row meant ~25 MB per request and a read that pinned the store's single
+// connection for the whole transfer. The response must stay bounded whatever
+// the window holds.
+func TestHandler_Range_CapsResponseSize(t *testing.T) {
+	h, sid := historyHandler(t)
+	now := time.Now()
+	// One row per minute for 7 days: 10081 samples, same order of magnitude
+	// as the real 10s cadence without paying for 60k inserts in a unit test.
+	const window = 7 * 24 * time.Hour
+	base := now.Add(-window).Truncate(time.Second)
+	for i := range 10081 {
+		if err := h.store.Insert(sensors.Snapshot{SampledAt: base.Add(time.Duration(i) * time.Minute), UptimeSec: int64(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, q := range []struct{ query string; want int }{
+		{"?from=" + itoa(base.Unix()) + "&to=" + itoa(now.Unix()), maxRangePoints},
+		{"?from=" + itoa(base.Unix()) + "&to=" + itoa(now.Unix()) + "&points=240", 240},
+		{"?from=" + itoa(base.Unix()) + "&to=" + itoa(now.Unix()) + "&points=1", 1},
+	} {
+		rr := get(t, h, sid, q.query)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d, want 200, body=%s", q.query, rr.Code, rr.Body.String())
+		}
+		var snaps []sensors.Snapshot
+		if err := json.Unmarshal(rr.Body.Bytes(), &snaps); err != nil {
+			t.Fatalf("%s: decode: %v", q.query, err)
+		}
+		if len(snaps) > q.want {
+			t.Errorf("%s: got %d samples, want at most %d", q.query, len(snaps), q.want)
+		}
+		if len(snaps) == 0 {
+			t.Errorf("%s: got 0 samples, want a bounded non-empty series", q.query)
+		}
+		// The bytes are what the browser actually pays: unfiltered, this same
+		// window is ~4 MB at one row per minute.
+		if rr.Body.Len() > 512*1024 {
+			t.Errorf("%s: response is %d bytes, want well under 512 KB", q.query, rr.Body.Len())
+		}
+	}
+}
+
+// TestHandler_Range_PointsParam pins the ?points= contract: an integer asks for
+// that many, anything larger than the ceiling is capped rather than refused
+// (a client that does not know the cap yet is not making a mistake worth a
+// failed request), and a value that is not an integer is a 400 like the
+// other params.
+func TestHandler_Range_PointsParam(t *testing.T) {
+	h, sid := historyHandler(t)
+	now := time.Now()
+	base := now.Add(-time.Hour).Truncate(time.Second)
+	for i := range 60 {
+		if err := h.store.Insert(sensors.Snapshot{SampledAt: base.Add(time.Duration(i) * time.Minute), UptimeSec: int64(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	span := "?from=" + itoa(base.Unix()) + "&to=" + itoa(now.Unix())
+
+	t.Run("above the ceiling is capped", func(t *testing.T) {
+		rr := get(t, h, sid, span+"&points=999999")
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200, body=%s", rr.Code, rr.Body.String())
+		}
+		var snaps []sensors.Snapshot
+		if err := json.Unmarshal(rr.Body.Bytes(), &snaps); err != nil {
+			t.Fatal(err)
+		}
+		if len(snaps) > maxRangePoints {
+			t.Errorf("got %d samples, want at most %d", len(snaps), maxRangePoints)
+		}
+	})
+
+	t.Run("nonsense is a 400", func(t *testing.T) {
+		for _, q := range []string{"&points=abc", "&points=1.5", "&points="} {
+			rr := get(t, h, sid, span+q)
+			if q == "&points=" {
+				// An empty value is an absent param, not a malformed one.
+				if rr.Code != http.StatusOK {
+					t.Errorf("%q: status=%d, want 200 (absent param)", q, rr.Code)
+				}
+				continue
+			}
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("%q: status=%d, want 400, body=%s", q, rr.Code, rr.Body.String())
+			}
+		}
+	})
+}
+
+// TestParseRange_PointsAloneIsNotARange guards the compatibility contract: a
+// ?points= with no window has nothing to bound, so the route must still answer
+// the single-snapshot poll rather than switching to the array shape.
+func TestParseRange_PointsAloneIsNotARange(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/host/telemetry?points=240", nil)
+	_, _, _, want, err := parseRange(req)
+	if err != nil {
+		t.Fatalf("parseRange: %v", err)
+	}
+	if want {
+		t.Error("want=false: ?points= alone must not make it a range request")
+	}
+
+	h, sid := historyHandler(t)
+	rr := get(t, h, sid, "?points=240")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200, body=%s", rr.Code, rr.Body.String())
+	}
+	if body := strings.TrimSpace(rr.Body.String()); strings.HasPrefix(body, "[") {
+		t.Errorf("body=%s, want a single snapshot object", body)
+	}
+}

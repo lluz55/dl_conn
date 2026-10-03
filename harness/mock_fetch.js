@@ -6,7 +6,8 @@
  *
  * It answers two routes:
  *   /api/host/telemetry             → one snapshot (the live poll)
- *   /api/host/telemetry?from=&to=   → an array (the history range)
+ *   /api/host/telemetry?from=&to=   → an array (the history range), bucketed
+ *                                       down to ?points= the way the daemon does
  *
  * That mirrors the daemon's real contract exactly, including the shape the
  * frontend branches on: no query params means an object, query params mean an
@@ -55,9 +56,17 @@ export function installMockFetch() {
     if ((from != null && !Number.isFinite(fromTs)) || (to != null && !Number.isFinite(toTs))) {
       return Promise.resolve(jsonResponse({ error: "invalid timestamp" }, 400));
     }
+    const points = params.get("points");
 
     const span = (toTs ?? Date.now() / 1000) - (fromTs ?? Date.now() / 1000 - 3600);
-    const count = Math.max(2, Math.min(400, Math.round(span / 60)));
+    // The daemon buckets a window down to the requested number of points
+    // (capped server-side); the harness honours ?points= so the frontend is
+    // exercised against the same bounded shape it gets in production.
+    const wanted = points == null ? Infinity : Number(points);
+    if (points != null && !Number.isFinite(wanted)) {
+      return Promise.resolve(jsonResponse({ error: "invalid points" }, 400));
+    }
+    const count = Math.max(2, Math.min(400, Math.round(span / 60), wanted));
     return Promise.resolve(jsonResponse(mockHistory(count, span)));
   };
 

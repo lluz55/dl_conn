@@ -38,6 +38,17 @@ const (
 // whole retention window at once.
 const defaultHistoryWindow = time.Hour
 
+// maxRangePoints caps how many samples one range request may return, and is
+// also the ceiling for the ?points= override. It exists because a chart draws
+// a fixed number of pixels across the window: at the default 10s collection
+// interval the 7-day window holds ~60k samples, and answering a chart with all
+// of them meant ~25 MB of JSON per request, ~200 ms of main-thread parse in
+// the browser, and a read that pinned the store's single connection for the
+// whole transfer — stalling the very inserts that feed the chart. 720 keeps
+// several multiples of what the SPA draws (240) at a payload a phone over a
+// tunnel opens instantly.
+const maxRangePoints = 720
+
 // Handler serves GET /api/host/telemetry behind session auth.
 type Handler struct {
 	collector *sensors.Collector
@@ -117,13 +128,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// rather than the point in time — so it is answered from SQLite and never
 	// from the single-snapshot cache. With no ?from= and no ?to= the poll
 	// below is served exactly as before.
-	from, to, wantRange, err := parseRange(r)
+	from, to, points, wantRange, err := parseRange(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if wantRange {
-		h.serveRange(w, from, to)
+		h.serveRange(w, from, to, points)
 		return
 	}
 
@@ -172,9 +183,11 @@ func (h *Handler) snapshot() ([]byte, bool) {
 }
 
 // parseRange reads the ?from= / ?to= bounds, both Unix seconds to match the
-// resolution telemetry_samples.ts is stored with. The bool reports whether a
+// resolution telemetry_samples.ts is stored with, plus the optional ?points=
+// cap on how many samples the answer may hold. The bool reports whether a
 // range was asked for at all; with neither bound present the caller keeps the
-// original single-snapshot behaviour.
+// original single-snapshot behaviour. ?points= alone does not make it a range
+// request — a cap with no window has nothing to bound.
 //
 // A bound that is present but unparseable is an error rather than a fallback:
 // silently answering a chart request with "the latest reading" would look like
@@ -184,40 +197,66 @@ func (h *Handler) snapshot() ([]byte, bool) {
 // "from" the window is the last defaultHistoryWindow (a whole retention window
 // would be an unbounded response for one query), and without "to" the window
 // ends now, so an open-ended "from" follows the live edge.
-func parseRange(r *http.Request) (from, to time.Time, want bool, err error) {
-	rawFrom, rawTo := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+//
+// ?points= is clamped rather than rejected: asking for more than the ceiling
+// is a client that does not know the cap yet, and the honest answer is the cap
+// itself, not a failed request. Only a value that is not an integer at all is
+// a 400, matching the other params.
+func parseRange(r *http.Request) (from, to time.Time, points int, want bool, err error) {
+	query := r.URL.Query()
+	rawFrom, rawTo := query.Get("from"), query.Get("to")
+	points = maxRangePoints
+	if rawPoints := query.Get("points"); rawPoints != "" {
+		n, perr := strconv.Atoi(rawPoints)
+		if perr != nil {
+			return time.Time{}, time.Time{}, 0, true, errors.New(`invalid "points": want an integer`)
+		}
+		points = n
+	}
 	if rawFrom == "" && rawTo == "" {
-		return time.Time{}, time.Time{}, false, nil
+		return time.Time{}, time.Time{}, points, false, nil
 	}
 	now := time.Now()
 	if rawFrom == "" {
 		from = now.Add(-defaultHistoryWindow)
 	} else if secs, perr := strconv.ParseInt(rawFrom, 10, 64); perr != nil {
-		return time.Time{}, time.Time{}, true, errors.New(`invalid "from": want unix seconds`)
+		return time.Time{}, time.Time{}, 0, true, errors.New(`invalid "from": want unix seconds`)
 	} else {
 		from = time.Unix(secs, 0)
 	}
 	if rawTo == "" {
 		to = now
 	} else if secs, perr := strconv.ParseInt(rawTo, 10, 64); perr != nil {
-		return time.Time{}, time.Time{}, true, errors.New(`invalid "to": want unix seconds`)
+		return time.Time{}, time.Time{}, 0, true, errors.New(`invalid "to": want unix seconds`)
 	} else {
 		to = time.Unix(secs, 0)
 	}
-	return from, to, true, nil
+	return from, to, clampPoints(points), true, nil
 }
 
-// serveRange writes the samples in [from, to] as a JSON array, oldest first. An
-// empty window is a 200 with [] — unlike the latest-snapshot path, "nothing was
-// recorded in that range" is an answer, not a missing reading.
-func (h *Handler) serveRange(w http.ResponseWriter, from, to time.Time) {
+// clampPoints folds a requested cap into [1, maxRangePoints].
+func clampPoints(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > maxRangePoints {
+		return maxRangePoints
+	}
+	return n
+}
+
+// serveRange writes the samples in [from, to] as a JSON array, oldest first,
+// bucketed down to at most `points` samples. An empty window is a 200 with []
+// — unlike the latest-snapshot path, "nothing was recorded in that range" is
+// an answer, not a missing reading.
+func (h *Handler) serveRange(w http.ResponseWriter, from, to time.Time, points int) {
 	if h.store == nil {
 		writeJSONError(w, http.StatusNotImplemented, "telemetry history is not available")
 		return
 	}
-	snaps, err := h.store.Range(from, to)
+	snaps, err := h.store.RangeBucketed(from, to, points)
 	if err != nil {
-		log.Printf("telemetry range query failed: from=%d to=%d err=%v", from.Unix(), to.Unix(), err)
+		log.Printf("telemetry range query failed: from=%d to=%d points=%d err=%v", from.Unix(), to.Unix(), points, err)
 		writeJSONError(w, http.StatusInternalServerError, "telemetry history unavailable")
 		return
 	}

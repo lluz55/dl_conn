@@ -30,7 +30,7 @@ property holds for any binary — and keeps dev-only code out of
 |---|---|---|
 | `SessionManager` | vault, PIN, WebAuthn, auto-lock | `hasVault` is true, any PIN unlocks, a placeholder identity is used. `lock()`, `wipe()` and `setBackendActive()` are the real ones. |
 | `NostrClient` | WebSockets to relays, NIP-44 sign/decrypt, signature checks | answers a fixture discovery payload. No signature is verified and nothing is decrypted — there is no event to verify. |
-| `/api/host/telemetry` | live poll + `?from=&to=` range | synthetic snapshots and a deterministic 7-day history |
+| `/api/host/telemetry` | live poll + `?from=&to=&points=` range | synthetic snapshots and a deterministic 7-day history, bucketed down to `?points=` like the daemon |
 | Daemon session | cookie-gated routes | **not faked** — every real route still needs a real cookie |
 
 That last row is the important one. The harness fakes browser-local state only,

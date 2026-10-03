@@ -41,6 +41,31 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
   visibilitychange handler is registered exactly once to avoid leaking
   listeners or duplicate intervals.
 
+### O gráfico de histórico (front)
+
+O painel tem duas camadas sobre o mesmo snapshot: medidores ao vivo e o
+gráfico de série (`#hist-*`). Três decisões o mantêm utilizável:
+
+1. **O front pede `?points=240`**, exatamente o que `HISTORY_MAX_POINTS`
+   desenha. O `downsample()` do cliente continua existindo como rede de
+   segurança, mas o parse de 25 MB na main thread — os ~200 ms que travavam a
+   aba a cada carga — não acontece mais.
+2. **`fetchHistory()` se autolimita** em vez de ser rearmado pelo poll de 2s.
+   Dois relógios: `lastAttempt` (cooldown de 30 s após **qualquer** tentativa,
+   então uma falha não vira uma tempestade de uma requisição de janela
+   inteira a cada 2 s) e `lastSuccess` (cadência de 5 min, para a série
+   acompanhar a borda viva em vez de congelar no carregamento da página). O
+   botão de janela passa `force`, porque um intervalo novo invalida a resposta
+   anterior por definição.
+3. **Falhar não apaga o desenho.** Uma carga que dá erro mantém a série na
+   tela e registra o motivo em `historyState.error`, que vira a linha de status.
+   E os quatro estados vazios são distintos — carregando, erro do daemon, host
+   sem a métrica, janela sem amostras — porque "sem amostras" para uma GPU que
+   o host nunca reportou lia como gráfico quebrado. `missingMetricReason()`
+   consulta o último snapshot ao vivo para essa distinção; no caso da GPU ele
+   diz que a coleta usa `nvidia-smi`, que é a razão real em qualquer host sem
+   NVIDIA.
+
 ## Consulta de intervalo (histórico)
 
 `telemetry_samples` já era criada com `CREATE INDEX telemetry_samples_ts ON
@@ -67,6 +92,40 @@ que **zerava a cada reload**. Agora:
   compartilhado com o poll de 2s). Mais seguro que uma superfície de banco
   nova e desprotegida, mas significa que a SPA deve pedir poucas janelas por
   carga de página.
+
+### A resposta é sempre limitada (`Store.RangeBucketed`)
+
+`Range()` é a primitiva crua e continua existindo, mas **quem serve gráfico
+usa `RangeBucketed(from, to, maxPoints)`**: a janela é cortada em no máximo
+`maxPoints` buckets de tempo de largura igual e devolve a amostra **mais nova**
+de cada bucket. O motivo é medido, não teórico — a janela de 7 dias que a SPA
+abre por padrão, com o intervalo padrão de 10s, guarda ~60k amostras:
+
+| | antes | depois |
+|---|---|---|
+| payload de `?from=&to=` (7d) | **25,3 MB** (60 480 amostras) | **0,10 MB** com `?points=240` |
+| payload sem `?points=` (cliente antigo) | 25,3 MB | **0,30 MB** (teto de 720) |
+| tempo da requisição | 1,06 s | 118 ms |
+| `Insert` concorrente (o writer do coletor) | **820 ms** de espera | 98 ms |
+
+O detalhe que faz a consulta ser barata não é o `MAX(ts)` e sim o fato de só
+decodificar/marshalar `maxPoints` linhas: o store é `SetMaxOpenConns(1)`, então
+uma leitura longa congela os `Insert` — que são justamente o que alimenta o
+gráfico. `?points=N` é opcional e fica entre 1 e `maxRangePoints` (720);
+acima do teto é **limitado, não recusado** (cliente que não conhece o teto não
+cometeu erro que valha um pedido falhado); `?points=` não inteiro é `400`, como
+os outros params. `?points=` sozinho não torna o pedido um intervalo — um teto
+sem janela não tem o que limitar.
+
+O bucket é um divisor da janela em segundos Unix e o `GROUP BY` é
+`(ts - from) / bucket`, então um bucket é exatamente um intervalo alinhado e
+nenhuma amostra é contada duas vezes. A divisão é sobre os **offsets inteiros**
+da janela (`span+1`, de 0 a `span`), não sobre `span`: dividir `span` devolveria
+`maxPoints+1` grupos exatamente quando a janela divide por `maxPoints`, e o teto
+tem de ser um teto. Dentro do bucket vence a linha mais nova porque o SQLite
+devolve uma coluna "nua" a partir da linha do extremum de um único
+`min()`/`max()` agregado — um grupo é um snapshot coerente, não uma mistura de
+colunas de linhas diferentes.
 
 **Decisão de carga:** `Snapshot.NumCPU` (`num_cpu`, `runtime.NumCPU()`) é
 emitido porque *load average* só se interpreta relativo ao número de núcleos —

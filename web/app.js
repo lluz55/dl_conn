@@ -178,6 +178,8 @@ import {
   let telemetryFetchInFlight = false;
   let liveTicker = null;
   let lastTelemetryAt = 0;
+  /** Newest live snapshot; the history panel consults it to explain a gap. */
+  let lastSnapshot = null;
   let visibilityListenerAdded = false;
   /** Debug console: capped ring buffer of structured log entries. */
   const debugLog = [];
@@ -372,8 +374,33 @@ import {
   const BATTERY_METER = "battery";
   /** The busiest mountpoint stands in for "disk" in the history chart. */
   const HISTORY_METRICS = ["cpu", "ram", "disk", "gpu"];
-  /** Cap on drawn points: more than this is indistinguishable at 1px. */
+  /**
+   * Cap on drawn points: more than this is indistinguishable at 1px — and it
+   * is also what we ask the daemon for. The two are the same number on
+   * purpose. The chart draws a fixed number of pixels across the window, so
+   * asking for every stored sample bought nothing: the 7-day window holds
+   * ~60k rows at the default 10s cadence, which came back as ~25 MB of JSON
+   * and blocked the main thread for ~200 ms on every load. The daemon caps
+   * the answer too (maxRangePoints), so an older client asking for the whole
+   * window still gets a bounded series.
+   */
   const HISTORY_MAX_POINTS = 240;
+  /**
+   * How long a failed history load waits before the 2s poll tries again. The
+   * poll re-checks on every tick, so without a cooldown one bad response
+   * meant one full-window request every two seconds, for as long as the page
+   * stayed open.
+   */
+  const HISTORY_RETRY_MS = 30000;
+  /**
+   * How old the loaded series may get before the live poll refreshes it. The
+   * chart follows the live edge, so a series loaded once at page open went
+   * stale while the meters next to it kept moving — a frozen line next to
+   * live numbers reads as a broken chart. Five minutes keeps the window's
+   * leading edge moving at one request per 300 polls, which the 1 req/s
+   * limiter never notices.
+   */
+  const HISTORY_REFRESH_MS = 5 * 60 * 1000;
 
   /** Cached meter shells, keyed by resource, built on first sight. */
   const meterRefs = new Map();
@@ -578,7 +605,22 @@ import {
 
   /* ── History chart ──────────────────────────────────────────────── */
 
-  const historyState = { windowSec: 604800, metric: "cpu", samples: null, inFlight: false };
+  /**
+   * `samples` is the last series that actually loaded, kept on screen across a
+   * failed reload: a transient error should not wipe a chart the user is
+   * reading. `lastAttempt` is the cooldown that keeps the 2s live poll from
+   * re-firing a failed range request on every tick, and `lastSuccess` (0 =
+   * never loaded) is what tells a fresh load from a loaded-but-empty window.
+   */
+  const historyState = {
+    windowSec: 604800,
+    metric: "cpu",
+    samples: null,
+    inFlight: false,
+    lastAttempt: 0,
+    lastSuccess: 0,
+    error: null,
+  };
 
   /** Extract one chartable percentage from a snapshot; null if unavailable. */
   function historyValue(snap, metric) {
@@ -666,9 +708,20 @@ import {
       }
       if (el.histUnit) el.histUnit.textContent = "";
       if (el.histStatus) {
-        el.histStatus.textContent = historyState.samples
-          ? "Sem amostras para esta métrica na janela selecionada."
-          : "Histórico indisponível neste host.";
+        // Four different empty states, and collapsing them into one "no
+        // samples" line is what made a broken chart look like a quiet host.
+        const hostMissing = missingMetricReason(key);
+        if (historyState.error) {
+          el.histStatus.textContent = "Não foi possível ler o histórico: " + historyState.error + ".";
+        } else if (!historyState.lastSuccess) {
+          el.histStatus.textContent = "Carregando histórico…";
+        } else if (hostMissing) {
+          el.histStatus.textContent = hostMissing;
+        } else if (historyState.samples && historyState.samples.length) {
+          el.histStatus.textContent = "Sem amostras para esta métrica na janela selecionada.";
+        } else {
+          el.histStatus.textContent = "Nenhuma amostra gravada nesta janela.";
+        }
       }
       return;
     }
@@ -707,26 +760,73 @@ import {
   }
 
   /**
-   * Load the selected window from the daemon. Falls back to "no history"
-   * rather than erroring, so an older daemon that ignores the query
-   * params still leaves the rest of the panel working.
+   * Load the selected window from the daemon, at most every HISTORY_REFRESH_MS
+   * unless forced. Falls back to an empty series rather than erroring, so an
+   * older daemon that ignores the query params still leaves the rest of the
+   * panel working.
+   *
+   * `force` bypasses both gates and is what a window change uses: the user
+   * asked for a different range, so the previous answer is stale by
+   * definition, not a reason to skip the request.
    */
-  async function fetchHistory() {
+  async function fetchHistory(force) {
     if (historyState.inFlight) return;
+    const now = Date.now();
+    if (!force) {
+      if (now - historyState.lastAttempt < HISTORY_RETRY_MS) return;
+      if (historyState.lastSuccess && now - historyState.lastSuccess < HISTORY_REFRESH_MS) return;
+    }
     historyState.inFlight = true;
-    const to = Math.floor(Date.now() / 1000);
+    historyState.lastAttempt = now;
+    const to = Math.floor(now / 1000);
     const from = to - historyState.windowSec;
     try {
-      const r = await telemetryGet(TELEMETRY_PATH + "?from=" + from + "&to=" + to);
-      if (!r.ok) throw new Error("telemetry history: " + r.status);
+      // `points` is what the chart can actually draw, so it is all we ask
+      // for; the daemon caps it again on its side.
+      const r = await telemetryGet(
+        TELEMETRY_PATH + "?from=" + from + "&to=" + to + "&points=" + HISTORY_MAX_POINTS
+      );
+      if (!r.ok) throw new Error(historyErrorLabel(r.status));
       const data = await r.json();
-      historyState.samples = Array.isArray(data) ? data : null;
-    } catch (_) {
-      historyState.samples = null;
+      if (!Array.isArray(data)) throw new Error("resposta fora do contrato do histórico");
+      historyState.samples = data;
+      historyState.lastSuccess = Date.now();
+      historyState.error = null;
+    } catch (err) {
+      // The previous series stays on screen. `error` drives the status line
+      // and the retry cooldown, never the data.
+      historyState.error = (err && err.message) || "falha desconhecida";
     } finally {
       historyState.inFlight = false;
       renderHistory();
     }
+  }
+
+  /** A readable reason for a history response that was not usable. */
+  function historyErrorLabel(status) {
+    if (status === 401) return "sessão expirada — recarregue a página";
+    if (status === 429) return "limite de requisições do daemon, tente de novo em instantes";
+    if (status === 501) return "histórico indisponível neste daemon";
+    return "o daemon respondeu HTTP " + status;
+  }
+
+  /**
+   * Why a metric has no series on this host at all, or "" when the absence is
+   * just an empty window. Without it the chart says "sem amostras" for a GPU
+   * the host never had, which reads as a broken chart rather than as a host
+   * that does not report one (GPU collection goes through nvidia-smi).
+   */
+  function missingMetricReason(key) {
+    const snap = lastSnapshot;
+    if (!snap) return "";
+    const gpu = snap.gpu || null;
+    if (key === "gpu" && !(gpu && (gpu.util_pct != null || gpu.temp_c != null))) {
+      return "Este host não reporta GPU — a coleta usa nvidia-smi.";
+    }
+    if (key === "gpu" && gpu && gpu.util_pct == null) {
+      return "A GPU deste host não expõe utilização, só temperatura.";
+    }
+    return "";
   }
 
   /** Wire the window and metric segmented controls. */
@@ -744,7 +844,9 @@ import {
     };
     pick(el.histWindowGroup, "window", (v) => {
       historyState.windowSec = Number(v) || 604800;
-      fetchHistory();
+      // Forced: a new window invalidates whatever is already loaded, and
+      // until it arrives the chart is showing the previous range.
+      fetchHistory(true);
     });
     pick(el.histMetricGroup, "metric", (v) => {
       historyState.metric = HISTORY_METRICS.indexOf(v) >= 0 ? v : "cpu";
@@ -808,12 +910,18 @@ import {
       const r = await telemetryGet(TELEMETRY_PATH);
       if (!r.ok) { updateLiveBadge(false); return; }
       const snap = await r.json();
+      // Kept for the history panel: it needs to tell "this host has no such
+      // metric" apart from "this window has no samples".
+      lastSnapshot = snap;
       renderTelemetry(snap);
       lastTelemetryAt = Date.now();
       updateLiveBadge(true);
-      // Load the history window once the live route has proven reachable,
+      // Kick the history window off once the live route has proven reachable,
       // so the chart never fires before a session is actually established.
-      if (historyState.samples === null && !historyState.inFlight) fetchHistory();
+      // fetchHistory gates itself from here on: it refreshes when the loaded
+      // series goes stale and backs off while the last attempt failed, so this
+      // call costs one request every HISTORY_REFRESH_MS, not one per tick.
+      fetchHistory();
     } catch (_) {
       updateLiveBadge(false);
     } finally {

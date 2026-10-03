@@ -11,6 +11,24 @@ arquivo não é lido por nenhum código.
 
 ### Corrigido
 
+- Os gráficos de CPU, memória, disco e GPU do painel de saúde do host não
+  carregavam. `GET /api/host/telemetry?from=&to=` respondia com **todas** as
+  amostras gravadas na janela, e a janela padrão do painel é 7 dias com coleta
+  a cada 10 s — cerca de 60 mil amostras, **25,3 MB** por carregamento e 1,06 s
+  de leitura, que travavam a aba por ~200 ms no `JSON.parse` e ainda
+  bloqueavam o `INSERT` do coletor por 820 ms (o store tem uma única conexão).
+  Agora a resposta é limitada: `Store.RangeBucketed` corta a janela em buckets
+  e devolve a amostra mais nova de cada um, e `?points=N` (limitado a 720)
+  deixa o cliente pedir exatamente o que desenha. A mesma janela responde com
+  **0,10 MB** em 118 ms. No cliente, `fetchHistory` parou de repetir a
+  requisição de janela inteira a cada tick do poll de 2 s quando uma carga
+  falhava, passou a recarregar a série a cada 5 min (o gráfico não congela mais
+  no carregamento da página) e deixou de apagar o desenho quando uma
+  atualização falha. Os quatro estados vazios foram separados — carregando,
+  erro do daemon, host sem a métrica e janela sem amostras —, então uma GPU
+  ausente agora explica que a coleta usa `nvidia-smi` em vez de dizer "sem
+  amostras".
+
 - Páginas de serviço em branco ao clicar em "Abrir" depois de um login por nsec
   bem-sucedido. A aba nova abria em `about:blank` e o token nunca era resgatado:
   `redeemToken` pré-abria a janela com `noopener`, e o Chromium não registra uma

@@ -56,9 +56,27 @@ function extractFunction(src, name) {
   return src.slice(m.index + m[0].length, i - 1);
 }
 
+/**
+ * Like extractFunction, but returns the whole `function name(...) { ... }`
+ * text (with its `async` prefix when it has one) instead of just the body.
+ * Needed to re-declare one extracted function inside another's scope — the
+ * body alone is a bare statement sequence that runs immediately.
+ */
+function extractDeclaration(src, name) {
+  const re = new RegExp('(async\\s+)?function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{');
+  const m = re.exec(src);
+  if (!m) throw new Error("function " + name + " not found");
+  return src.slice(m.index, m.index + m[0].length) + extractFunction(src, name) + "}";
+}
+
 const formatUptimeBody = extractFunction(appJs, 'formatUptime');
 const formatCapacityBody = extractFunction(appJs, 'formatCapacity');
 const renderTelemetryBody = extractFunction(appJs, 'renderTelemetry');
+const historyValueBody = extractFunction(appJs, 'historyValue');
+const downsampleBody = extractFunction(appJs, 'downsample');
+const historyErrorLabelBody = extractFunction(appJs, 'historyErrorLabel');
+const missingMetricReasonBody = extractFunction(appJs, 'missingMetricReason');
+const fetchHistoryBody = extractFunction(appJs, 'fetchHistory');
 
 console.log("\n=== Telemetry Polling Tests ===");
 assert(/const TELEMETRY_POLL_MS = 2000;/.test(appJs), "host health refreshes every 2 seconds");
@@ -189,6 +207,153 @@ assert(el.telDisk.textContent.includes("/"), "multi-disk: root shown");
 assert(el.telDisk.textContent.includes("/data"), "multi-disk: data mount shown");
 assert(el.telDisk.textContent.includes("195.3 GB"), "multi-disk: / used 200000 MB → 195.3 GB");
 assert(el.telDisk.textContent.includes("976.6 GB"), "multi-disk: /data total 1000000 MB → 976.6 GB");
+
+console.log("\n=== History series tests ===");
+
+// Each of these bodies ends in a `return`, so the value built by new Function
+// answers with exactly what the production function returns. cpuPercent is
+// prepended as a declaration (not a parameter, which would shadow nothing and
+// collide with nothing) because historyValue calls it.
+const historyValue = new Function('snap', 'metric',
+  'const cpuPercent = ' + extractDeclaration(appJs, 'cpuPercent') + ';\n' + historyValueBody);
+const downsample = new Function('points', 'maxPoints', downsampleBody);
+const missingMetricReason = new Function('lastSnapshot', 'key', missingMetricReasonBody);
+const historyErrorLabel = new Function('status', historyErrorLabelBody);
+
+assert(historyValue({ cpu: { load1: 0.8 }, num_cpu: 4 }, 'cpu') === 20,
+  "cpu: carga normalizada pelos núcleos (0.8/4 = 20%)");
+assert(historyValue({ cpu: { load1: 1 }, num_cpu: 0 }, 'cpu') === null,
+  "cpu: sem num_cpu não há percentual inventado");
+assert(historyValue({ memory: { used_pct: 50 } }, 'ram') === 50, "ram: percentual direto");
+assert(historyValue({ gpu: { util_pct: 22, temp_c: 60 } }, 'gpu') === 22, "gpu: utilização");
+assert(historyValue({ gpu: { temp_c: 60 } }, 'gpu') === null,
+  "gpu: só temperatura não vira série em um eixo de 0..100%");
+assert(historyValue({ disks: [{ used_pct: 40 }, { used_pct: 60 }] }, 'disk') === 60,
+  "disco: o mountpoint mais cheio representa a série");
+
+const dense = Array.from({ length: 60480 }, (_, i) => [i, i % 100]);
+assert(downsample(dense, 240).length === 240,
+  "60k amostras reduzem ao que o desenho comporta");
+assert(downsample([[1, 5], [2, 6]], 240).length === 2,
+  "abaixo do cap a série sai intacta");
+
+// missingMetricReason tells a host that never reports the metric apart from a
+// window that happens to be empty — the difference between "GPU não existe
+// aqui" and "o gráfico quebrou".
+const reasonFor = (snap, key) => missingMetricReason(snap, key);
+assert(reasonFor({ cpu: { load1: 1 }, num_cpu: 4 }, 'cpu') === "",
+  "cpu presente: nenhuma desculpa inventada");
+assert(/nvidia-smi/.test(reasonFor({}, 'gpu')),
+  "host sem GPU explica que a coleta usa nvidia-smi");
+assert(/utilização/.test(reasonFor({ gpu: { temp_c: 60 } }, 'gpu')),
+  "GPU só com temperatura explica por que não há série");
+assert(reasonFor({ gpu: { util_pct: 5 } }, 'gpu') === "",
+  "GPU com utilização não é tratada como ausente");
+assert(reasonFor(null, 'gpu') === "", "sem snapshot ainda: nada a concluir");
+
+console.log("\n=== historyErrorLabel ===");
+assert(/limite/.test(historyErrorLabel(429)), "429 → limite de requisições");
+assert(/indisponível/.test(historyErrorLabel(501)), "501 → histórico indisponível");
+assert(/sessão/.test(historyErrorLabel(401)), "401 → sessão expirada");
+assert(/HTTP 500/.test(historyErrorLabel(500)), "outro status → HTTP explícito");
+
+console.log("\n=== fetchHistory: request shape and refresh gates ===");
+
+async function makeHistoryFetch(respond) {
+  const state = {
+    windowSec: 604800, metric: "cpu", samples: null, inFlight: false,
+    lastAttempt: 0, lastSuccess: 0, error: null,
+  };
+  const calls = [];
+  // The body is async and new Function bodies are not, so the whole
+  // declaration goes inside an async IIFE that hands the function back.
+  const fetchHistory = await new Function('deps', `
+    const { historyState, TELEMETRY_PATH, HISTORY_MAX_POINTS, HISTORY_RETRY_MS,
+            HISTORY_REFRESH_MS, renderHistory, historyErrorLabel, telemetryGet } = deps;
+    return (async () => {
+      ${extractDeclaration(appJs, 'fetchHistory')}
+      return fetchHistory;
+    })();
+  `)({
+    historyState: state,
+    TELEMETRY_PATH: "/api/host/telemetry",
+    HISTORY_MAX_POINTS: 240,
+    HISTORY_RETRY_MS: 30000,
+    HISTORY_REFRESH_MS: 300000,
+    renderHistory: () => {},
+    historyErrorLabel,
+    telemetryGet: (url) => { calls.push(url); return respond(url, calls); },
+  });
+  return { state, calls, fetchHistory };
+}
+
+const SAMPLE = { sampled_at: "2026-10-03T00:00:00Z", cpu: { load1: 1 }, num_cpu: 4, memory: { used_pct: 50 } };
+const respondOk = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([SAMPLE]) });
+
+// The default window is 7 days, which at the 10s collection cadence holds ~60k
+// samples. Asking for all of them is what made the chart unusable: 25 MB per
+// load and ~200 ms of main-thread parse, for pixels the chart never draws.
+{
+  const h = await makeHistoryFetch(respondOk);
+  await h.fetchHistory();
+  assert(h.calls.length === 1, "primeira carga: um request");
+  const url = h.calls[0];
+  assert(url.startsWith("/api/host/telemetry?from="), "usa ?from=: " + url);
+  assert(url.includes("&to="), "usa ?to=: " + url);
+  assert(url.includes("&points=240"), "pede só os pontos que desenha: " + url);
+  assert(h.state.samples.length === 1, "guarda a série");
+  assert(h.state.error === null, "carga bem-sucedida não deixa erro");
+  assert(h.state.lastSuccess > 0, "marca a série como carregada");
+
+  await h.fetchHistory();
+  assert(h.calls.length === 1, "série fresca não recarrega a cada tick do poll");
+}
+
+// A failed load used to re-fire on every 2s tick, forever.
+{
+  const h = await makeHistoryFetch(() => Promise.resolve({ ok: false, status: 429 }));
+  await h.fetchHistory();
+  assert(/limite/.test(h.state.error), "erro do daemon vira status legível: " + h.state.error);
+  assert(h.state.samples === null, "sem resposta, nenhum dado é inventado");
+  for (let i = 0; i < 20; i++) await h.fetchHistory();
+  assert(h.calls.length === 1,
+    "20 ticks do poll de 2s não viram 20 requests de janela inteira");
+  await h.fetchHistory(true);
+  assert(h.calls.length === 2, "trocar de janela força a carga mesmo após falha");
+}
+
+// A transient failure must not wipe a chart the user is reading.
+{
+  let n = 0;
+  const h = await makeHistoryFetch(() => {
+    n++;
+    return n === 1 ? respondOk() : Promise.resolve({ ok: false, status: 500 });
+  });
+  await h.fetchHistory();
+  const drawn = h.state.samples.length;
+  await h.fetchHistory(true);
+  assert(h.state.samples.length === drawn, "uma falha não apaga a série já carregada");
+  assert(h.state.error !== null, "a falha fica registrada para a linha de status");
+}
+
+// The chart follows the live edge instead of freezing at page load.
+{
+  const h = await makeHistoryFetch(respondOk);
+  await h.fetchHistory();
+  // Both clocks have to age: the retry cooldown gates every attempt, and the
+  // refresh cadence gates the ones that already succeeded.
+  h.state.lastSuccess -= 299999;
+  h.state.lastAttempt -= 299999;
+  await h.fetchHistory();
+  assert(h.calls.length === 1, "dentro de HISTORY_REFRESH_MS não recarrega");
+  h.state.lastSuccess -= 2;
+  h.state.lastAttempt -= 2;
+  await h.fetchHistory();
+  assert(h.calls.length === 2, "série envelhecida é recarregada pelo poll");
+}
+
+assert(/fetchHistory\(true\)/.test(appJs),
+  "trocar a janela força a recarga mesmo com série já carregada");
 
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");
 if (failed > 0) process.exit(1);

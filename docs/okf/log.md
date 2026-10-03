@@ -6,6 +6,43 @@ type: log
 
 ## 2026-10-03
 
+- **Os gráficos de CPU/memória/disco/GPU não carregavam.** O gráfico de
+  histórico (`#hist-*`) é alimentado por `?from=&to=`, e a resposta vinha com
+  **toda** amostra gravada na janela. A janela padrão da SPA é 7 dias e o
+  intervalo padrão de coleta é 10 s — ou seja, ~60 480 amostras. Medido antes
+  da correção: **25,3 MB** por carregamento, 1,06 s de leitura e **820 ms**
+  bloqueando um `Insert` concorrente, porque o store é `SetMaxOpenConns(1)` e
+  os `Insert` são justamente o que alimenta o gráfico. No cliente, o
+  `JSON.parse` dos 25 MB travava a main thread por ~198 ms a cada carga.
+  - `Store.RangeBucketed(from, to, maxPoints)` corta a janela em no máximo
+    `maxPoints` buckets e devolve a amostra mais nova de cada um, com
+    `GROUP BY (ts - from) / bucket`. O bucket é um **divisor da janela** e não
+    um tamanho fixo, para os buckets serem intervalos alinhados e nenhuma
+    amostra ser contada duas vezes. Depois: **0,10 MB** com `?points=240`,
+    118 ms, e espera do writer em 98 ms. Sem `?points=` (SPA antiga) a resposta
+    fica em 0,30 MB, porque `maxRangePoints` (720) é o teto padrão.
+  - A divisão é sobre os offsets inteiros da janela (`span+1`), não sobre
+    `span`. Com `span` a janela que divide exatamente por `maxPoints` devolvia
+    `maxPoints+1` grupos, e o teto tem de ser um teto — o teste
+    `TestStore_RangeBucketed_CapsRowCount` existe para isso.
+  - `?points=N` é limitado a `[1, 720]`, e só um valor não inteiro é `400`:
+    pedir mais que o teto é um cliente que ainda não conhece o teto, não um
+    erro que valha falhar o pedido. `?points=` sozinho não transforma o pedido
+    em intervalo (um teto sem janela não tem o que limitar), o que preserva o
+    contrato de compatibilidade da rota sem params.
+  - No front, `fetchHistory` parou de ser rearmado a cada tick do poll de 2s:
+    hoje tem cooldown de 30 s após qualquer tentativa e cadência de 5 min após
+    sucesso. Antes, uma falha repetia a requisição de janela inteira **a cada
+    2 s** enquanto a aba ficasse aberta — o defeito se multiplicava sozinho. O
+    gráfico também parou de congelar: ele recarrega quando a série envelhece.
+  - Falhar não apaga mais a série desenhada, e os quatro estados vazios foram
+    separados (carregando / erro do daemon / host sem a métrica / janela sem
+    amostras). A GPU é o caso que mais confundia: num host sem `nvidia-smi` o
+    gráfico dizia "sem amostras para esta métrica", que é indistinguível de um
+    gráfico quebrado. Agora `missingMetricReason()` diz que a coleta usa
+    `nvidia-smi`.
+  - Registrado em [host-telemetry.md](concepts/host-telemetry.md).
+
 - **Registro de serviços: Home Assistant e `dsh` removidos, Agent of Empires
   entrou.** O `config.example.yaml` (rastreado) e o `config.yaml` local perderam
   as entradas `hass` e `dsh` e ganharam `aoe` (`Agent of Empires`,

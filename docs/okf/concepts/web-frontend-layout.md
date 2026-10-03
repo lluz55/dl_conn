@@ -118,7 +118,7 @@ O card Saúde do host tem três blocos, nesta ordem:
    360px.
 3. **Histórico** (`#hist-*`) — gráfico de série com seletor de janela
    (1h/24h/7d) e de métrica (CPU/Memória/Disco/GPU), mais mín/méd/máx.
-   Alimentado por `?from=&to=` (ver
+   Alimentado por `?from=&to=&points=` (ver
    [host-telemetry.md](host-telemetry.md)), então **sobrevive a reload**.
    Decisões que importam:
    - O eixo y é **sempre 0..100**. Um eixo auto-escalado faz uma linha plana
@@ -127,10 +127,17 @@ O card Saúde do host tem três blocos, nesta ordem:
      deve ler como lacuna, e uma espalhadura uniforme mantém a linha contínua.
    - A série é *bucket-averaged* para no máximo 240 pontos
      (`HISTORY_MAX_POINTS`). 7 dias de amostras desenham-se como borrão, e
-     por serem sub-pixel, não como linha.
-   - Sem dado, o painel diz **"Histórico indisponível neste host"** e segue
-     funcionando: um daemon antigo que ignora os params devolve objeto, não
-     array, e cai nesse caminho.
+     por serem sub-pixel, não como linha. Esse 240 é também o `?points=` que o
+     front pede: o daemon já entrega a janela limitada, então o `downsample()`
+     do cliente é só rede de segurança.
+   - Sem dado o painel distingue **quatro** estados — carregando, erro do
+     daemon, host sem a métrica e janela sem amostras. A métrica ausente é o
+     caso da GPU: `missingMetricReason()` diz que a coleta usa `nvidia-smi` em
+     vez de repetir "sem amostras", que é indistinguível de um gráfico
+     quebrado.
+   - A carga é autolimitada (cooldown de 30 s por tentativa, cadência de 5 min
+     por sucesso) e falha **não** apaga a série já desenhada. O botão de janela
+     passa `force`, porque um intervalo novo invalida a resposta anterior.
 
 Os medidores têm um equivalente textual em `.sr-only` (`#tel-cpu` e afins,
 preenchido por `renderTelemetry`). Uma barra comunica "quanto está cheio" de
