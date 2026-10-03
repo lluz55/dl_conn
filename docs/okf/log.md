@@ -6,6 +6,120 @@ type: log
 
 ## 2026-10-03
 
+- **Harness de UI local (`/dev.html`), atrás de `--dev-mock-auth`.**
+  Sobe a SPA real contra sessão, host Nostr e telemetria falsas, para
+  trabalhar na interface sem nsec real, relay real ou túnel no ar.
+
+  1. **A propriedade de segurança é o diretório, não a flag — e isso só
+     apareceu quando testei de verdade.** A primeira versão punha o harness em
+     `web/dev.html` + `web/dev/` e protegia com uma rota 404 explícita.
+     Compilei um binário *anterior* a essa rota e ele serviu o harness
+     inteiro, funcional, **sem a flag**: `proxy.RootFallback` só encaminha
+     para o roteador caminhos que casam com prefixo de serviço, e o resto vai
+     para o handler estático — e `isSPAPath()` lista apenas `/`,
+     `/index.html`, `/app.js`, `/style.css` e `/_static/`. Qualquer
+     *outro* arquivo presente em `webDir` é servido. Movido para `harness/`,
+     fora de `web/`: agora não há o que servir, a garantia vale para
+     qualquer binário, e `build/web.tar.gz` (montado de `web/`) deixa de
+     embarcar código de dev. A flag e o aviso no boot continuam, como
+     defesa em profundidade.
+  2. **Não fura autenticação.** O harness falsifica estado local do browser;
+     toda rota real continua exigindo cookie de verdade. A identidade é
+     `k = 1` do secp256k1 — o ponto gerador, uma "null key" conhecido e
+     impossível de confundir com a chave de alguém — e nunca é persistida.
+  3. **Import map não serve aqui**, e areasono vale registrado: ele exige
+     `<script type="importmap">` inline, que `script-src self` bloqueia.
+     Afrouxar a CSP na página de dev faria o harness parar de validar o que a
+     página real valida. A solução é patchar `SessionManager.prototype` e
+     `NostrClient.prototype` — classes, construtores e estado privado reais,
+     só os métodos que a SPA chama trocados.
+  4. **O harness não precisa de nsec nem npub reais.** A primeira versão
+     servia um alias de `web/config.json` em `/dev/config.json`, o que na
+     prática obrigava a ter o npub real do host presente só para o harness
+     subir — `startNostr()` aborta com "Host npub não configurado" antes de
+     qualquer mock. Agora `harness/config.json` é servido pelo mesmo file
+     server e usa os pontos geradores do secp256k1 (k=1 identidade, k=2 host),
+     bech32 válido e derivado de nada real.
+  6. **O corpo vem de `/index.html` em runtime**, para não haver duas cópias
+     do markup. O `<script src="./app.js">` do próprio `index.html` é
+     removido na injeção: de `/dev/` ele resolveria para `/dev/app.js`, e o
+     `dev_boot` já importa o app ele mesmo depois de aplicar os patches. O
+     daemon serve também um alias de `config.json` em `/dev/`, porque a SPA
+     busca `"./config.json"` relativo ao documento e, sem o alias, o harness
+     nasce sem host npub e `startNostr()` aborta antes do mock.
+
+  Dois bugs encontrados **usando** o harness, ambos reais e um deles de
+  produção: `setBackendActive()` só emite `"active"` se `_pendingBackend` já
+  for true, e quem liga essa flag é o `unlockWithPin` —olvidar disso deixa o
+  app travado em "Em espera" sem erro nenhum, porque `startTelemetryPolling()`
+  só dispara no evento `"active"`. Ver
+  [concepts/testing.md](concepts/testing.md).
+
+
+- **Passagem do SPA para painel de monitoramento (dashboard industrial).**
+  A UI tinha peças de design system prontas que nunca chegaram à tela, e um
+  backend que já persistia histórico que ninguém lia. O que mudou:
+
+  1. **Camada de dataviz no sistema de temas.** `--color-chart-1..6`
+     (rampa categórica dentro de cada bloco de paleta, com índice 2 no lado
+     oposto do eixo azul/laranja para sobreviver a daltônico), mais
+     `--color-threshold-ok/warn/crit`, `--color-chart-grid`, `--meter-track`
+     e `--meter-fill`. Trocar a paleta agora recolora gráficos, medidores e
+     limiares. Detalhes e armadilhas de CSP em
+     [concepts/theming.md](concepts/theming.md).
+  2. **Terceiro eixo de aparência, `data-density`.** Compacta só é aplicada em
+     ponteiro fino, em CSS *e* em JS, porque ela baixa `--control-h` abaixo do
+     mínimo de toque de 44px.
+  3. **Painel Aparência** expondo os três eixos. As quatro palettes já
+     existiam e `dl_conn_palette` já era persistido — `theming.md` registrava
+     textualmente "sem UI de troca ainda". Não havia como trocar a paleta.
+  4. **`system` virou estado real do tema.** `setupTheme()` lia
+     `prefers-color-scheme` uma vez no load e nunca mais: mudar o SO com a aba
+     aberta não fazia nada, e o primeiro clique no sol/lua descartava a
+     preferência de sistema em silêncio. Agora há listener de `matchMedia`, e o
+     binário do header virou atalho explícito que opta fora de seguir o SO.
+  5. **Telemetria: de 6 números para medidores + armazenamento por mount +
+     histórico.** `sensors.Snapshot` é bem mais rico do que a tela mostrava;
+     cada recurso virava **um** número e metade dos campos ia embora. `Disks`
+     já era array e virou uma linha por volume — a média escondia exatamente o
+     disco que está enchendo.
+  6. **Histórico de verdade.** `telemetry_samples` já tinha índice em `ts`, mas
+     só existia `Latest()`; as sparklines eram ring buffer client-side que
+     zerava a cada reload. Adicionado `Store.Range()` + `?from=&to=` no
+     `/api/host/telemetry`, e `WithStore(telStore)` em `main.go` — sem essa
+     linha o handler responde 501. Seletores de janela (1h/24h/7d) e de métrica.
+     Detalhes em [concepts/host-telemetry.md](concepts/host-telemetry.md).
+  7. **`Snapshot.NumCPU`.** Load average só se interpreta relativo ao número de
+     núcleos, então sem ele não há como mostrar percentual de CPU — que é a
+     única forma do número significar algo num painel.
+  8. **Status rail** sticky com Túnel/Sessão/Relays/Serviços, lendo os
+     elementos autoritativos via `MutationObserver` em vez de duplicar estado
+     em doze call sites.
+  9. **Reordenação de serviços trocou HTML5 DnD por Pointer Events.** A API
+     antiga não funciona em toque nenhum — as alças eram inertes no Android e
+     iOS — e é inalcançável por teclado. Agora há caminho único para mouse,
+     toque e caneta, mais ↑/↓ na alça focável.
+  10. **Contrato de diálogo reutilizado** (`openDialog`/`closeDialog`/`
+      wireDialog`): Escape, foco entrando e foco voltando ao opener. O leitor
+      de QR tinha `role="dialog" aria-modal="true"` e nada disso.
+  11. **Tooltips `data-tip` finalmente renderizados.** O markup carregava 24
+      atributos `data-tip` e **zero** CSS os estilizava: todo botão só-de-ícone
+      (lock, refresh, clear, debug, adicionar serviço) saía sem explicação
+      nenhuma. Implementados em CSS puro, com variante `data-tip-end` para
+      controles no fim da linha e supressão em ponteiro grosso.
+  12. **`.status-grid` deixou de ser classe morta.** O markup a carregava desde
+      o redesign e este conceito a descrevia como "4 itens inline", mas
+      nenhuma regra casava com ela: herdava o `flex-direction: column` de
+      `.kpi-grid` e renderizava quatro cards de largura cheia até num desktop
+      de 1200px. A regra existe agora e a divergência com o documento acabou.
+  13. **`role="progressbar"` sem `aria-valuenow`** na contagem de
+      auto-bloqueio: assistive tech não tinha como dizer onde a contagem estava.
+
+  Restrições mantidas: sem framework, sem bundler, sem CDN, CSP
+  `style-src self` sem `unsafe-inline` (toda barra e polyline é atributo de
+  geometria SVG escrito por `setAttribute`), zero gradiente, tudo tokenizado.
+
+
 - **Redirecionamento direto em sessões já ativas e suporte a `?next=` autenticado no `RootFallback`.**
   Ao abrir múltiplos serviços a partir do frontend SPA cross-origin (ex.: GitHub Pages):
   1. No `web/app.js`, o token de uso único (`state.authToken`) não era descartado após o primeiro
@@ -829,3 +943,39 @@ A anonimização de IP altera o formato do log (`10.0.66.*`), então foi
 documentada em [security.md](concepts/security.md#hardening-de-borda) e no
 runbook antes de qualquer operador procurar por um endereço completo que não
 mais aparece.
+
+## 2026-10-03 — Uma única lista de serviços (remove a grade duplicada)
+
+A fase `u19` (usabilidade) havia introduzido a lista compacta de serviços
+dentro da Visão geral sem remover a grade de cartões que já existia: duas
+seções intituladas "Serviços" na mesma coluna, alimentadas pelo mesmo
+`state.services`, com Qual delas certo não era óbvio para quem usava a tela.
+
+A **lista foi mantida** e a grade removida. Como a grade era a única dona de
+várias funções, elas migraram para `#services-overview` em vez de sumirem:
+os controles Adicionar/Atualizar/Limpar, a barra de saúde proporcional, o
+formulário de serviço personalizado (com exportação YAML/Nix) e — por linha —
+a descrição, os selos e o botão de excluir.
+
+Registrado em
+[web-frontend-layout.md](concepts/web-frontend-layout.md#uma-única-lista-de-serviços).
+Três decisões que mudaram o resultado:
+
+1. **A visibilidade do bloco passou a seguir a fase Live, não a contagem de
+   serviços.** `renderServicesOverview()` escondia o contêiner quando a lista
+   esvaziava — com a grade removida isso engoliria justamente o botão
+   "Adicionar serviço", o único caminho para sair de zero serviços. A lista
+   vazia virou uma linha de estado.
+2. **`statusDot()` virou `serviceStatusMeta()`.** A lista já tinha sua própria
+   cópia da tabela verde/vermelho/cinza para o texto de status; com a grade
+   fora, a função antiga ficou órfã. Extrair o par `{status, cls, title}`
+   remove a duplicação em vez de deixar duas tabelas de saúde divergirem.
+3. **O CSS da grade foi apagado, não esquecido.** `.services-grid`,
+   `.service-card*`, `.service-top`, `.service-link`, `.service-name`,
+   `.service-desc`, `.service-custom-meta` e `.service-unprobed` saíram de
+   `style.css` junto com o markup. Regra morta é dívida de tema: a próxima
+   troca de paleta descobriria que metade das regras não tinha elemento.
+
+Os testes de layout e de UI de serviços personalizados foram atualizados: os
+dois afirmavam a existência da marcação da grade, então passaram a afirmar o
+contrário — que a duplicação não volta.

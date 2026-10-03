@@ -49,10 +49,68 @@ wrapper por componente. Continua **zero gradiente**: todo tingimento é sólido
 saúde continua exclusiva de `--color-success`/`error`/`on-surface-dim` via
 `.dot-good`/`.dot-bad`/`.dot-unknown`.
 
-Alternância de tema: botão sol/lua no header persiste `dl_conn_theme`
-(tema); paleta persiste `dl_conn_palette` — sem UI de troca ainda, um seletor
-futuro lê `localStorage`. Both are applied to `document.documentElement` by
-`setupTheme()`/`toggleTheme()` in `app.js`.
+### Eixos de aparência e o painel que os expõe
+
+São **três eixos ortogonais**, todos no `<html>` e todos persistidos:
+
+| Eixo | Atributo | Chave | Faixa |
+|---|---|---|---|
+| Paleta | `data-palette` | `dl_conn_palette` | azure · evergreen · ember · iris |
+| Tema | `data-theme` | `dl_conn_theme` | light · dark |
+| Densidade | `data-density` | `dl_conn_density` | comfortable · compact |
+
+**`system` é um estado real do eixo de tema**, não um palpite inicial: a
+preferência ausente vale `system` e um listener em
+`matchMedia("(prefers-color-scheme: dark)")` re-resolve o tema enquanto a
+preferência for `system`. Antes, o valor era lido uma única vez no load —
+mudar o SO com a aba aberta não fazia nada — e o primeiro clique no botão
+sol/lua descartava a preferência de sistema em silêncio.
+
+O painel **Aparência** (`#appearance-panel`, botão `#btn-appearance` no
+header) expõe os três eixos: radio de tema em três vias, swatch por paleta e
+densidade. As swatches usam as cores médias de cada paleta em hexadecimal
+fixo, **não** tokens: uma amostra tem que mostrar a identidade da paleta, e
+não pode mudar quando a paleta está ativa ou quando o tema vira.
+
+**Densidade compacta só é aplicada em ponteiro fino.** Ela baixa
+`--control-h` de 44px para 34px, o que violaria o alvo mínimo de toque;
+`applyAppearance()` recusa o atributo quando `matchMedia("(pointer: coarse)")`
+bate, mas mantém a preferência salva — um dock de volta para o mouse a
+restaura. Densidade mexe **só** em espaçamento e altura de controle: cor,
+raio e escala tipográfica continuam sendo da paleta, para que os dois eixos
+não brigem.
+
+`color-scheme: light` / `[data-theme="dark"] { color-scheme: dark }` é
+declarado para que scrollbar, `<select>` e controles nativos do SO sigam o
+tema — sem isso a página escura vinha com scrollbar clara.
+
+### Tokens de dataviz
+
+A camada de monitoramento consome uma categoria própria de tokens, para que
+trocar a paleta recolora gráficos, medidores e limiares sem tocar em regra
+de componente:
+
+- `--color-chart-1..6` — **rampa categórica declarada dentro de cada bloco
+  de paleta** (4 × 2 combinações), não em `:root`. Índice 1 é a primary da
+  paleta e índice 2 é um laranja quente no lado oposto do eixo azul/laranja,
+  que sobrevive a deuteranopia e protanopia. **Nunca codifique uma série só
+  por matiz** — pareie cor com rótulo, tracejado ou posição.
+- `--color-threshold-ok` / `-warn` / `-crit` — os limiares dos medidores e a
+  linha tracejada do gráfico. Derivados de `--color-success`/`warning`/`error`
+  em `:root`, então acompanham o tema sem bloco por paleta.
+- `--color-chart-grid` / `--color-chart-axis`, `--meter-track` / `--meter-fill`.
+
+Regra de CSP que vale para **todo** gráfico daqui: barra e polyline são
+atributos de geometria SVG escritos com `setAttribute`, nunca `style` inline
+(`style-src self` não tem `unsafe-inline`). Como a `viewBox` é esticada
+por `preserveAspectRatio="none"`, traço e linha usam
+`vector-effect: non-scaling-stroke` — sem isso o `stroke-width` é distorcido
+pelo escalonamento e a espessura varia com a largura da tela.
+
+Alternância: `applyAppearance()` (escreve os três atributos e sincroniza os
+controles), `setupTheme()` (registra o listener de esquema), `toggleTheme()`
+(atalho binário explícito, que opta **fora** do "seguir o SO") e
+`syncAppearanceControls()`. Todas em `web/app.js`.
 
 ## Por quê
 
@@ -69,7 +127,8 @@ em nenhuma regra de componente.
 `[data-palette="X"]`/`[data-palette="X"][data-theme="dark"]`,
 `[data-theme="dark"]` (azure), e componentes que consomem os tokens.
 `web/index.html`: atributos `data-palette="azure" data-theme="light"` no
-`<html>`. `web/app.js`: `setupTheme()`/`toggleTheme()`. Vide
+`<html>`. `web/app.js`: `applyAppearance()`/`setupTheme()`/`toggleTheme()`.
+Aplica-se em `document.documentElement`. Vide
 [web-frontend-layout.md](web-frontend-layout.md) para o uso dos tokens no
 layout de duas colunas, no cartão de sessão unificado e nos cartões
 `.kpi-card`/`.chart-card`/`.health-bar` (consumidores dos tons

@@ -42,12 +42,26 @@ assert(
   "Compact relay rows reserve space without overflowing",
 );
 assert(
-  /'<div class="service-top">'\s*\+\s*serviceIcon\(svc\.icon,\s*statusDot\(svc,\s*"svc-dot"\)\)/.test(app),
-  "Generated service content uses the styled service-top wrapper",
-);
-assert(
   /function serviceIcon\(icon, dotHtml\)/.test(app) && /\.service-icon \.svc-dot \{/.test(css),
   "Service health indicator renders as an icon-corner badge, matching the approved prototype",
+);
+assert(
+  /li\.className = "service-overview-item"/.test(app) && /class="services-overview-list"/.test(html),
+  "Services render as rows in the Visão geral list",
+);
+assert(
+  !/service-card|services-grid/.test(app) && !/service-card|services-grid/.test(html),
+  "The duplicate grid rendering of the services is gone from app.js and index.html",
+);
+assert(
+  !/\.service-card|\.services-grid/.test(css),
+  "The CSS for the removed services grid is gone too",
+);
+assert(
+  /id="services-overview"[\s\S]*?id="btn-toggle-custom-service"[\s\S]*?id="btn-refresh-services"[\s\S]*?id="btn-clear-services"/.test(html) &&
+    /id="services-health"/.test(html) &&
+    /id="custom-service-form"/.test(html),
+  "The services list block still owns the add / refresh / clear controls, the health strip and the custom-service form",
 );
 assert(
   /DOMContentLoaded",\s*async[\s\S]*?await init\(\)[\s\S]*?showApp\(\)/.test(app),

@@ -26,7 +26,7 @@ check("HTTP-only temporary route limitation is visible", html.includes("é somen
 check("both export actions are present and wired", /id="btn-export-services-yaml"/.test(html) && /id="btn-export-services-nix"/.test(html) && app.includes('onExportCustomServices("yaml")') && app.includes('onExportCustomServices("nix")'));
 check("host discovery merges rather than overwrites custom services", /state\.hostServices = data\.services \|\| \[\];\s*mergeServices\(\)/.test(app));
 check("custom deletion is isolated by custom config ID", app.includes("function onDeleteCustomService(configId)") && app.includes("state.customServices.filter"));
-check("custom cards explain unprobed state", app.includes("CUSTOM_SERVICE_STRINGS.unprobed") && app.includes("service-unprobed"));
+check("custom rows explain unprobed state", app.includes("CUSTOM_SERVICE_STRINGS.unprobed") && app.includes("service-overview-badge"));
 check("custom service form is responsive", /@media\s*\(max-width:\s*639px\)[\s\S]*?\.custom-service-fields\s*\{[^}]*grid-template-columns:\s*1fr/.test(css));
 check("CSP-safe UI introduces no inline styles", !/style\s*=/.test(html));
 

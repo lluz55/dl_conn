@@ -97,6 +97,14 @@
   --color-scrim:        rgba(9, 14, 26, 0.55);
   --shadow-tint:        223, 42%, 22%;   /* hsl parts, alpha appended  */
   --edge-highlight:     transparent;
+
+  /* Categorical chart ramp — see [dataviz] note in the :root block. */
+  --color-chart-1: #2e63e8;
+  --color-chart-2: #d2691e;
+  --color-chart-3: #0f8a70;
+  --color-chart-4: #7a3ff2;
+  --color-chart-5: #b3123f;
+  --color-chart-6: #5a6478;
 }
 
 [data-palette="azure"][data-theme="dark"] {
@@ -126,6 +134,13 @@
   --color-scrim:        rgba(4, 7, 12, 0.62);
   --shadow-tint:        220, 60%, 2%;
   --edge-highlight:     rgba(255, 255, 255, 0.045);
+
+  --color-chart-1: #6c9bff;
+  --color-chart-2: #f5a15c;
+  --color-chart-3: #3fd6b0;
+  --color-chart-4: #a78bfa;
+  --color-chart-5: #ff7a92;
+  --color-chart-6: #9aa8c0;
 }
 
 /* ── Palette "evergreen" — calm teal + warm charcoal ──────────────── */
@@ -154,6 +169,13 @@
   --color-error:        #c93c3c;
   --color-on-error:     #ffffff;
   --shadow-tint:        160, 30%, 20%;
+
+  --color-chart-1: #0d7d63;
+  --color-chart-2: #3b5fe0;
+  --color-chart-3: #c2410c;
+  --color-chart-4: #7a3ff2;
+  --color-chart-5: #b3123f;
+  --color-chart-6: #4a5a52;
 }
 
 [data-palette="evergreen"][data-theme="dark"] {
@@ -183,6 +205,13 @@
   --color-scrim:        rgba(3, 8, 6, 0.62);
   --shadow-tint:        160, 45%, 2%;
   --edge-highlight:     rgba(255, 255, 255, 0.04);
+
+  --color-chart-1: #45cfa4;
+  --color-chart-2: #8aa4ff;
+  --color-chart-3: #f79a4d;
+  --color-chart-4: #c08cf0;
+  --color-chart-5: #ff7a92;
+  --color-chart-6: #9db3a8;
 }
 
 /* ── Palette "ember" — warm copper + stone neutrals ──────────────── */
@@ -212,6 +241,13 @@
   --color-on-error:     #ffffff;
   --color-scrim:        rgba(28, 17, 8, 0.55);
   --shadow-tint:        30, 35%, 24%;
+
+  --color-chart-1: #b3541c;
+  --color-chart-2: #2a6e8a;
+  --color-chart-3: #0d7d63;
+  --color-chart-4: #8f3f76;
+  --color-chart-5: #6b6559;
+  --color-chart-6: #8a6a00;
 }
 
 [data-palette="ember"][data-theme="dark"] {
@@ -241,6 +277,13 @@
   --color-scrim:        rgba(10, 6, 2, 0.62);
   --shadow-tint:        28, 60%, 3%;
   --edge-highlight:     rgba(255, 240, 220, 0.05);
+
+  --color-chart-1: #f2a054;
+  --color-chart-2: #6fc9e0;
+  --color-chart-3: #45cfa4;
+  --color-chart-4: #e39ac9;
+  --color-chart-5: #bda98f;
+  --color-chart-6: #e8bb4e;
 }
 
 /* ── Palette "iris" — deep indigo + plum neutrals ─────────────────── */
@@ -270,6 +313,13 @@
   --color-on-error:     #ffffff;
   --color-scrim:        rgba(14, 10, 30, 0.55);
   --shadow-tint:        255, 35%, 24%;
+
+  --color-chart-1: #5b3ed0;
+  --color-chart-2: #b3541c;
+  --color-chart-3: #0f8a70;
+  --color-chart-4: #c1367e;
+  --color-chart-5: #6b6559;
+  --color-chart-6: #2a6e8a;
 }
 
 [data-palette="iris"][data-theme="dark"] {
@@ -299,6 +349,13 @@
   --color-scrim:        rgba(6, 4, 14, 0.62);
   --shadow-tint:        258, 55%, 3%;
   --edge-highlight:     rgba(255, 255, 255, 0.05);
+
+  --color-chart-1: #a48eff;
+  --color-chart-2: #f2a054;
+  --color-chart-3: #3fd6b0;
+  --color-chart-4: #f07ab8;
+  --color-chart-5: #aba3c7;
+  --color-chart-6: #6cbcec;
 }
 
 /* Soft tone washes (solid, color-mix — never gradients). Resolve lazily,
@@ -310,6 +367,32 @@
   --color-success-soft:  color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
   --color-warning-soft:  color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
   --color-error-soft:    color-mix(in srgb, var(--color-error) 12%, var(--color-surface));
+
+  /* ── Dataviz tokens ───────────────────────────────────────────────
+     Every chart, meter and threshold line reads its color from here, so
+     switching palette recolors the whole monitoring surface — that is the
+     point of the categorical ramp living in the palette blocks above.
+
+     The ramp is ordered so adjacent indices stay distinguishable for the
+     common red/green color-vision deficiencies: index 1 is the palette's
+     own primary and index 2 is deliberately a warm orange on the opposite
+     side of the blue/orange axis, which survives both deuteranopia and
+     protanopia. Never encode a series by hue alone — pair the color with a
+     label, a dash pattern, or position. */
+  --color-threshold-ok:   var(--color-success);
+  --color-threshold-warn: var(--color-warning);
+  --color-threshold-crit: var(--color-error);
+  --color-chart-grid:     color-mix(in srgb, var(--color-text) 9%, transparent);
+  --color-chart-axis:     color-mix(in srgb, var(--color-text) 22%, transparent);
+  --meter-track:          var(--color-surface-3);
+  --meter-fill:           var(--color-primary);
+
+  /* Density — the only geometry axis a user may override. Compact trades
+     vertical rhythm for more rows per screen; comfortable is the default.
+     Only spacing/control size is touched — color, radius and type scale
+     stay palette-driven so density never fights theming. */
+  --control-h: 44px;
+  --card-pad:   var(--gap-lg);
 
   /* Elevation ladder — the replacement for hairline borders.
      Two layers: tinted ambient + directional key + 1px inner top highlight
@@ -324,6 +407,20 @@
              0 18px 44px hsl(var(--shadow-tint) / 0.16),
              inset 0 1px 0 var(--edge-highlight);
   --ring: 0 0 0 2px var(--color-bg), 0 0 0 4.5px color-mix(in srgb, var(--color-primary) 65%, transparent);
+}
+
+/* Compact density: one axis, opt-in. Control heights drop below the 44px
+   touch minimum, so it is only ever honoured on pointer-fine pointers —
+   app.js refuses to apply it when matchMedia("(pointer: coarse)") matches,
+   and the [data-density] block below is scoped accordingly. */
+@media (pointer: fine) {
+  [data-density="compact"] {
+    --control-h: 34px;
+    --card-pad:  var(--gap-md);
+    --gap-md: 12px;
+    --gap-lg: 16px;
+    --gap-xl: 24px;
+  }
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────── */
@@ -434,7 +531,7 @@ body {
   background-color: var(--color-surface);
   border: none;
   border-radius: var(--radius-lg);
-  padding: var(--gap-lg);
+  padding: var(--card-pad);
   box-shadow: var(--elev-1);
   transition: box-shadow var(--transition), transform var(--transition);
   display: flex;
@@ -541,7 +638,8 @@ body {
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
   letter-spacing: 0.005em;
-  padding: 11px 18px;
+  padding: 0 18px;
+  min-height: var(--control-h);
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -593,7 +691,7 @@ body {
 
 .btn-full { width: 100%; }
 
-.btn-sm { font-size: var(--fs-sm); padding: 8px 14px; }
+.btn-sm { font-size: var(--fs-sm); padding: 0 14px; }
 
 .btn-link-danger {
   background: transparent; border: none;
@@ -608,7 +706,7 @@ body {
 
 .btn-link-danger,
 .btn-link {
-  min-height: 44px;
+  min-height: var(--control-h);
 }
 
 .btn-link {
@@ -621,7 +719,7 @@ body {
 
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px; padding: 0;
+  width: var(--control-h); height: var(--control-h); padding: 0;
   border: none; border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-2);
@@ -650,7 +748,8 @@ body {
 
 .nsid-input, .nsid-select {
   width: 100%;
-  padding: 12px 14px;
+  padding: 0 14px;
+  min-height: var(--control-h);
   border: none;
   border-radius: var(--radius-md);
   background-color: var(--color-surface-2);
@@ -1123,9 +1222,7 @@ body {
 .custom-service-description-field { grid-column: 1 / -1; }
 
 .custom-service-options,
-.custom-service-actions,
-.service-card-actions,
-.service-custom-meta {
+.custom-service-actions {
   display: flex;
   align-items: center;
   gap: var(--gap-sm);
@@ -1135,53 +1232,12 @@ body {
 .custom-service-actions .btn { flex: 1 1 auto; }
 .custom-service-form code { font-family: var(--font-mono); color: var(--color-primary-ink); }
 
-.service-card-actions { width: 100%; margin-top: auto; flex-wrap: nowrap; }
-.service-card-actions .service-link { flex: 1; }
-.service-custom-meta { margin-top: var(--gap-xs); gap: var(--gap-xs); }
-.service-custom-meta .pill { padding: 3px 9px; }
-.service-unprobed { margin-top: var(--gap-xs); color: var(--color-text-3); font-size: var(--fs-xs); }
-.custom-service-delete { flex: 0 0 44px; color: var(--color-error); background: var(--color-error-soft); }
-
 @media (max-width: 639px) {
   .custom-service-fields { grid-template-columns: 1fr; }
   .custom-service-description-field { grid-column: auto; }
   .custom-service-options { align-items: flex-start; flex-direction: column; }
   .custom-service-actions { align-items: stretch; flex-direction: column; }
   .custom-service-actions .btn { width: 100%; }
-}
-
-.services-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: var(--gap-md);
-}
-
-@media (max-width: 639px) { .services-grid { grid-template-columns: 1fr; } }
-
-.service-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: start;
-  gap: var(--gap-sm);
-  padding: var(--gap-md);
-  background-color: var(--color-surface);
-  border: none;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--elev-1);
-  transition: box-shadow var(--transition), transform var(--transition);
-  height: 100%;
-  position: relative;
-}
-
-.service-card:hover { box-shadow: var(--elev-2); transform: translateY(-2px); }
-
-.service-top {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  width: 100%;
-  min-width: 0;
 }
 
 .service-icon {
@@ -1210,38 +1266,6 @@ body {
 .svc-dot.dot-bad  { background: var(--color-error); }
 
 .svc-dot.dot-unknown { background: var(--color-text-3); }
-
-.service-name {
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-  line-height: var(--lh-snug);
-}
-
-.service-desc {
-  font-size: var(--fs-xs);
-  color: var(--color-text-3);
-  line-height: 1.35;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-
-.service-link {
-  margin-top: auto;
-  align-self: stretch;
-  justify-content: center;
-  display: inline-flex; align-items: center; gap: var(--gap-xs);
-  font-size: var(--fs-sm); font-weight: var(--fw-semibold);
-  color: var(--color-primary-ink);
-  text-decoration: none;
-  background: var(--color-primary-soft);
-  padding: 9px 16px;
-  border-radius: var(--radius-md);
-  transition: background-color var(--transition), color var(--transition);
-}
-
-.service-link:hover { background: var(--color-primary); color: var(--color-on-primary); }
-
-.service-link:focus-visible { outline: none; box-shadow: var(--ring); }
 
 /* ── Relays ───────────────────────────────────────────────────────── */
 .relay-list {
@@ -1616,25 +1640,24 @@ body {
 
 /* ── Ported production rules the prototype never exercised ───────── */
 .services-empty {
-  grid-column: 1 / -1;
   padding: var(--gap-lg) var(--gap-md);
   text-align: center;
   color: var(--color-text-3);
   font-size: var(--fs-sm);
 }
-.service-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
 
-/* ── Services overview list (compact list in Visão geral) ───────── */
+/* ── Services overview list (the only services view) ─────────────── */
+/* One column, one gap: the block's children are optional (health strip and
+   the add-service form appear and disappear), so the rhythm comes from the
+   container instead of per-child margins that would double up when the
+   optional pieces are absent. */
 .services-overview {
   margin-top: var(--gap-lg);
   padding-top: var(--gap-lg);
   border-top: 1px solid var(--color-outline);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
 }
 
 .services-overview-head {
@@ -1642,7 +1665,6 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--gap-sm);
-  margin-bottom: var(--gap-sm);
 }
 
 .services-overview-head h3 {
@@ -1718,6 +1740,25 @@ body {
 .service-overview-icon .svc-dot.dot-bad  { background: var(--color-error); }
 .service-overview-icon .svc-dot.dot-unknown { background: var(--color-text-3); }
 
+/* The row's own icon is `.service-icon` (from serviceIcon()), not the
+   `.service-overview-icon` above: the list row scales it down so a long
+   description and the badges still fit on one line on a phone. */
+.service-overview-item .service-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+}
+
+.service-overview-item .service-icon svg { width: 16px; height: 16px; }
+
+.service-overview-item .service-icon .svc-dot {
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px var(--color-surface-2);
+}
+
 .service-overview-meta {
   flex: 1;
   min-width: 0;
@@ -1733,6 +1774,31 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.service-overview-desc {
+  font-size: var(--fs-2xs);
+  color: var(--color-text-3);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.service-overview-custom {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.service-overview-custom .pill { padding: 2px 8px; font-size: var(--fs-2xs); }
+
+.service-overview-badge {
+  font-size: var(--fs-2xs);
+  color: var(--color-text-3);
 }
 
 .service-overview-status {
@@ -1787,45 +1853,6 @@ body {
 }
 
 .service-overview-drag:active { cursor: grabbing; }
-
-/* Drag-and-drop for service cards (grid view) */
-.service-card {
-  cursor: grab;
-}
-
-.service-card.dragging {
-  opacity: 0.4;
-  cursor: grabbing;
-}
-
-.service-card.drag-over {
-  box-shadow: var(--elev-2), 0 0 0 2px var(--color-primary);
-}
-
-.service-card-drag {
-  position: absolute;
-  top: var(--gap-xs);
-  right: var(--gap-xs);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-3);
-  cursor: grab;
-  opacity: 0.5;
-  transition: opacity var(--transition), color var(--transition), background-color var(--transition);
-  z-index: 1;
-}
-
-.service-card-drag:hover {
-  opacity: 1;
-  color: var(--color-primary-ink);
-  background: var(--color-primary-soft);
-}
-
-.service-card.dragging .service-card-drag { display: none; }
 
 /* Compact layouts need explicit reflow rules: controls keep usable touch
    targets without forcing cards wider than the viewport. */
@@ -1917,3 +1944,646 @@ body {
 }
 /* relay summary pill stays invisible while empty */
 .relay-summary:empty { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════
+   Monitoring surface — meters, per-mount storage, history chart
+   Added for the industrial-dashboard pass. Everything reads from the
+   dataviz tokens in :root, so a palette or theme switch recolors the
+   whole surface without touching a single rule here. Bars and chart
+   geometry are SVG attributes set via setAttribute in app.js, never
+   inline `style` — the page CSP has no style-src 'unsafe-inline'.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Sub-section grouping inside a card ─────────────────────────── */
+.sub-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding-top: var(--gap-md);
+  border-top: 1px solid var(--color-outline);
+}
+
+.sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+}
+
+.sub-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+}
+
+/* ── Meters ───────────────────────────────────────────────────────
+   auto-fit rather than a breakpoint: one column on a phone, two on a
+   small tablet, as many as fit on a desktop — with no new media query
+   to keep in sync. */
+.meter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: var(--gap-sm);
+}
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  padding: var(--gap-sm) var(--gap-md) var(--gap-md);
+  min-width: 0;
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-2);
+  /* The fill and the tick inherit this, so a state change is one
+     class on the meter — the color still resolves from a token. */
+  color: var(--meter-fill);
+}
+
+.meter.is-warn { color: var(--color-threshold-warn); }
+.meter.is-crit { color: var(--color-threshold-crit); }
+
+.meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-xs);
+}
+
+.meter-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+}
+
+.meter-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: currentColor;
+  line-height: 1.1;
+}
+
+.meter-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+}
+
+.meter-track { fill: var(--meter-track); }
+.meter-fill { fill: currentColor; }
+.meter-tick { fill: var(--color-text-2); opacity: 0.4; }
+
+.meter-sub {
+  font-size: var(--fs-2xs);
+  color: var(--color-text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Per-mount storage ────────────────────────────────────────────
+   One row per volume. Collapses to two lines on a phone rather than
+   squeezing six columns into a 360px viewport. */
+.storage-list { display: flex; flex-direction: column; gap: var(--gap-xs); }
+
+.storage-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 7rem) minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) 0;
+  min-width: 0;
+}
+
+.storage-mount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-bar { display: block; width: 100%; height: 6px; }
+.storage-track { fill: var(--meter-track); }
+.storage-fill { fill: currentColor; }
+.storage-row.is-warn { color: var(--color-threshold-warn); }
+.storage-row.is-crit { color: var(--color-threshold-crit); }
+.storage-row:not(.is-warn):not(.is-crit) { color: var(--color-primary); }
+
+.storage-pct {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: currentColor;
+  text-align: end;
+  min-width: 3.5em;
+}
+
+.storage-size {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-3);
+  white-space: nowrap;
+}
+
+/* ── Segmented control (window + metric pickers) ───────────────── */
+.seg-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface-2);
+}
+
+.seg {
+  appearance: none;
+  border: none;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: calc(var(--radius-sm) - 3px);
+  background: transparent;
+  color: var(--color-text-2);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition);
+}
+
+.seg:hover { color: var(--color-text); }
+
+.seg.is-on {
+  background-color: var(--color-surface);
+  color: var(--color-primary-ink);
+  box-shadow: var(--elev-1);
+}
+
+.seg:focus-visible { outline: none; box-shadow: var(--ring); }
+
+#hist-metric-group { align-self: flex-start; }
+
+/* ── History chart ──────────────────────────────────────────────── */
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding: var(--gap-md);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-2);
+}
+
+.chart-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-xs);
+  flex-wrap: wrap;
+}
+
+.chart-panel-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-chart-1);
+  line-height: 1;
+}
+
+.chart-panel-unit {
+  font-size: var(--fs-xs);
+  color: var(--color-text-3);
+}
+
+.chart-stats {
+  display: flex;
+  gap: var(--gap-md);
+  margin: 0;
+}
+
+.chart-stat { display: flex; align-items: baseline; gap: var(--gap-2xs); }
+
+.chart-stat dt {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+}
+
+.chart-stat dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-2);
+}
+
+.chart-frame { display: flex; flex-direction: column; gap: var(--gap-xs); }
+
+.series-chart {
+  display: block;
+  width: 100%;
+  height: 120px;
+  overflow: visible;
+}
+
+.chart-grid line {
+  stroke: var(--color-chart-grid);
+  /* The viewBox is stretched by preserveAspectRatio="none", which would
+     otherwise distort the stroke; this pins it to screen pixels. */
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1;
+}
+
+.chart-threshold {
+  stroke: var(--color-threshold-warn);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.series-line {
+  fill: none;
+  stroke: var(--color-chart-1);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.series-fill {
+  fill: color-mix(in srgb, var(--color-chart-1) 15%, transparent);
+  stroke: none;
+}
+
+.chart-frame.is-empty .series-chart { opacity: 0.35; }
+
+/* ── Compact refinements ────────────────────────────────────────── */
+@media (max-width: 639px) {
+  .meter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .storage-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mount pct"
+      "bar   bar"
+      "size  size";
+    row-gap: var(--gap-2xs);
+  }
+  .storage-mount { grid-area: mount; }
+  .storage-pct { grid-area: pct; }
+  .storage-bar { grid-area: bar; }
+  .storage-size { grid-area: size; }
+
+  .chart-panel { padding: var(--gap-sm); }
+  .chart-stats { gap: var(--gap-sm); }
+  .seg-group { align-self: stretch; }
+  .seg { flex: 1; min-height: 40px; }
+}
+
+/* Very narrow phones: three columns of meters stop being readable. */
+@media (max-width: 359px) {
+  .meter-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Landscape phone: the vertical rhythm costs more than it gives. */
+@media (pointer: fine) and (max-height: 520px) {
+  .series-chart { height: 88px; }
+}
+
+/* Available to assistive tech, invisible on screen. Used for the text
+   equivalent of visual meters, and for any label that should reach a
+   screen reader without adding a visible duplicate. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Tooltips
+
+   24 elements carry a data-tip but nothing ever rendered it, so every
+   icon-only button (lock, refresh, clear, debug, add service) shipped
+   with no visible explanation. This is the missing half of that
+   contract, built in pure CSS: the text comes from attr() and the
+   position from a pseudo-element, so no inline `style` is ever needed
+   and the page CSP stays intact.
+
+   Hover and keyboard focus both reveal it, because a tooltip reachable
+   only with a mouse is useless for anyone navigating by keyboard. On
+   touch there is no hover state at all — every icon-only button also
+   carries an aria-label, which is the channel that actually works
+   there, so the tooltip is an enhancement and never the only label.
+   ══════════════════════════════════════════════════════════════════ */
+
+[data-tip] { position: relative; }
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 15rem;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-elevated);
+  color: var(--color-text);
+  box-shadow: var(--elev-2);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+/* Right-anchored variant for controls that sit at the end of a row, where
+   a centered tooltip would overflow the viewport. */
+[data-tip-end]::after {
+  left: auto;
+  right: 0;
+  transform: none;
+  text-align: end;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after { opacity: 1; }
+
+/* The ring on :focus-visible is drawn on the control itself; the tooltip
+   must not swallow it, and must not survive the blur. */
+[data-tip]:not(:hover):not(:focus-visible)::after { opacity: 0; }
+
+/* A tooltip on a control near the top of a scrolling container would be
+   clipped by the card it lives in, so on phones it flips below. */
+@media (max-width: 639px) {
+  [data-tip]::after { display: none; }
+}
+
+/* Touch: no hover, so the tooltip is suppressed entirely rather than
+   flashing on tap. The aria-label remains the accessible name. */
+@media (pointer: coarse) {
+  [data-tip]::after { display: none; }
+}
+
+/* ── Status rail ──────────────────────────────────────────────────
+   The markup has carried .status-grid since the layout redesign, and
+   web-frontend-layout.md describes these as "4 itens inline" — but no
+   rule ever matched that class, so they inherited .kpi-grid's column
+   flex and rendered as four full-width stacked cards on every screen,
+   including a 1200px desktop. Same specificity as .kpi-grid and later
+   in the file, so this wins. */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--gap-md);
+  align-items: stretch;
+}
+
+/* A KPI is a readout, not a link: it should not lift on hover. */
+.status-grid .kpi-card:hover { transform: none; box-shadow: inset 0 1px 2px hsl(var(--shadow-tint) / 0.05); }
+
+/* ── Touch targets ────────────────────────────────────────────────
+   The compact block below brings most controls to 44px, but the two
+   service-overview controls were sized in absolute pixels and escaped
+   it — 32px and 28px on a phone. */
+@media (max-width: 639px) {
+  .service-overview-link { width: var(--control-h); height: var(--control-h); }
+  .service-overview-drag { width: var(--control-h); height: var(--control-h); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Appearance sheet
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Native widgets (scrollbars, <select>, date pickers) follow the OS
+   scheme unless told otherwise, which left a dark page with light
+   scrollbars. The attribute form beats :root on tie-break only by
+   source order, so both live here, after every palette block. */
+:root { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+
+.sheet {
+  position: fixed;
+  z-index: 40;
+  top: calc(var(--gap-lg) + var(--control-h) + var(--gap-xs));
+  right: var(--gap-lg);
+  width: min(21rem, calc(100vw - 2 * var(--gap-md)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--card-pad);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-elevated);
+  box-shadow: var(--elev-3);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.sheet-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.sheet-legend {
+  padding: 0;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+}
+
+.seg-group--wide { display: grid; grid-template-columns: repeat(3, 1fr); }
+#density-group { grid-template-columns: repeat(2, 1fr); }
+.seg-group--wide .seg { min-height: var(--control-h); }
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: var(--gap-sm);
+}
+
+.palette {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm);
+  min-height: var(--control-h);
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-2);
+  color: var(--color-text-2);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition),
+              box-shadow var(--transition);
+}
+
+.palette:hover { color: var(--color-text); }
+
+.palette.is-on {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary-ink);
+  box-shadow: inset 0 0 0 2px var(--color-primary);
+}
+
+.palette:focus-visible { outline: none; box-shadow: var(--ring); }
+
+.palette-dots { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.palette-dots i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+
+/* Swatch colors are the palette's mid-tones, fixed rather than tokenized:
+   a swatch has to show the palette's identity, so it must not change
+   when the palette is active or when the theme flips. */
+.palette[data-palette-choice="azure"]     .dot-a { background: #2e63e8; }
+.palette[data-palette-choice="azure"]     .dot-b { background: #7a3ff2; }
+.palette[data-palette-choice="azure"]     .dot-c { background: #4c5a75; }
+.palette[data-palette-choice="evergreen"] .dot-a { background: #0d7d63; }
+.palette[data-palette-choice="evergreen"] .dot-b { background: #3b5fe0; }
+.palette[data-palette-choice="evergreen"] .dot-c { background: #4a5a52; }
+.palette[data-palette-choice="ember"]     .dot-a { background: #b3541c; }
+.palette[data-palette-choice="ember"]     .dot-b { background: #2a6e8a; }
+.palette[data-palette-choice="ember"]     .dot-c { background: #8f3f76; }
+.palette[data-palette-choice="iris"]      .dot-a { background: #5b3ed0; }
+.palette[data-palette-choice="iris"]      .dot-b { background: #c1367e; }
+.palette[data-palette-choice="iris"]      .dot-c { background: #2a6e8a; }
+
+.palette-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A sheet has to be dismissible without a pointer: Escape, and focus
+   returning to whatever opened it. */
+.sheet:focus-visible { outline: none; box-shadow: var(--elev-3); }
+
+@media (max-width: 639px) {
+  .sheet {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(var(--card-pad) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ── Reorder handles ──────────────────────────────────────────────
+   The grip is a <span role="button" tabindex="0"> rather than a
+   <button>, so it needs the affordances one would otherwise inherit. */
+.service-overview-drag { touch-action: none; }
+
+.service-overview-drag:focus-visible {
+  outline: none;
+  opacity: 1;
+  color: var(--color-primary-ink);
+  background: var(--color-primary-soft);
+  box-shadow: var(--ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Keyboard users get the grip at full strength without a hover. */
+.service-overview-drag:focus { opacity: 1; }
+
+/* The delete control on a custom service row: a peer of the open button,
+   not a full-width action like it was in the grid. */
+.service-overview-item .custom-service-delete {
+  flex-shrink: 0;
+  color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Status rail
+   A thin always-visible strip of the four facts that decide whether the
+   tunnel is usable. Sticky, and it scrolls horizontally rather than
+   wrapping, so it never pushes the content it is meant to summarize.
+   ══════════════════════════════════════════════════════════════════ */
+
+.status-rail {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  margin: 0 calc(-1 * var(--gap-sm)) var(--gap-md);
+  padding: var(--gap-xs) var(--gap-sm);
+  overflow-x: auto;
+  scrollbar-width: none;
+  background-color: var(--color-surface);
+  box-shadow: var(--elev-1);
+  border-radius: var(--radius-md);
+}
+
+.status-rail::-webkit-scrollbar { display: none; }
+
+.rail-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.rail-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+  white-space: nowrap;
+}
+
+.rail-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+@media (min-width: 1024px) {
+  .status-rail { margin-inline: 0; }
+}

@@ -67,8 +67,6 @@ import {
     relayAddInput: $("relay-add-input"),
     btnAddRelay: $("btn-add-relay"),
     btnResetRelays: $("btn-reset-relays"),
-    servicesSection: $("services-section"),
-    servicesList: $("services-list"),
     localPortSection: $("local-port-section"),
     localPortInput: $("local-port-input"),
     localPortStatus: $("local-port-status"),
@@ -76,6 +74,20 @@ import {
     tunnelStatus: $("tunnel-status"),
     relayStatus: $("relay-status"),
     themeToggle: $("theme-toggle"),
+    railTunnel: $("rail-tunnel"),
+    railTunnelDot: $("rail-tunnel-dot"),
+    railSession: $("rail-session"),
+    railSessionDot: $("rail-session-dot"),
+    railRelay: $("rail-relay"),
+    railRelayDot: $("rail-relay-dot"),
+    railService: $("rail-service"),
+    railServiceDot: $("rail-service-dot"),
+    btnAppearance: $("btn-appearance"),
+    btnAppearanceClose: $("btn-appearance-close"),
+    appearancePanel: $("appearance-panel"),
+    themeGroup: $("theme-group"),
+    paletteGroup: $("palette-group"),
+    densityGroup: $("density-group"),
     btnLockSession: $("btn-lock-session"),
     sessionStatus: $("session-status"),
     tunnelExpiry: $("tunnel-expiry"),
@@ -108,28 +120,31 @@ import {
     biometricPin: $("biometric-pin"),
     btnEnableBiometricLater: $("btn-enable-biometric-later"),
     hostTelemetrySection: $("host-telemetry-section"),
-    telCpu: $("tel-cpu"),
-    telRam: $("tel-ram"),
-    telDisk: $("tel-disk"),
-    telGpu: $("tel-gpu"),
-    telBatt: $("tel-batt"),
     telUptime: $("tel-uptime"),
     telLive: $("tel-live"),
     telUpdated: $("tel-updated"),
+    telMeters: $("tel-meters"),
+    telStorage: $("tel-storage"),
+    telStorageList: $("tel-storage-list"),
+    telStorageCount: $("tel-storage-count"),
+    histWindowGroup: $("hist-window-group"),
+    histMetricGroup: $("hist-metric-group"),
+    histValue: $("hist-value"),
+    histUnit: $("hist-unit"),
+    histMin: $("hist-min"),
+    histAvg: $("hist-avg"),
+    histMax: $("hist-max"),
+    histGrid: $("hist-grid"),
+    histThreshold: $("hist-threshold"),
+    histFill: $("hist-fill"),
+    histLine: $("hist-line"),
+    histStatus: $("hist-status"),
+    histChartFrame: document.querySelector("#host-telemetry-section .chart-frame"),
     btnToggleDebug: $("btn-toggle-debug"),
     debugSection: $("debug-section"),
     debugLog: $("debug-log"),
     btnRunDiagnostics: $("btn-run-diagnostics"),
     btnClearDebug: $("btn-clear-debug"),
-    chartCpuValue: $("chart-cpu-value"),
-    chartCpuLine: $("chart-cpu-line"),
-    chartCpuFill: $("chart-cpu-fill"),
-    chartRamValue: $("chart-ram-value"),
-    chartRamLine: $("chart-ram-line"),
-    chartRamFill: $("chart-ram-fill"),
-    chartDiskValue: $("chart-disk-value"),
-    chartDiskLine: $("chart-disk-line"),
-    chartDiskFill: $("chart-disk-fill"),
     servicesHealth: $("services-health"),
     healthSegUp: $("health-seg-up"),
     healthSegDown: $("health-seg-down"),
@@ -186,10 +201,6 @@ import {
    */
   const RETURN_DELAY_MS = 2500;
 
-  /** Drag-and-drop state for service reordering */
-  let dragSourceEl = null;
-  let dragSourceIndex = -1;
-  let dragTargetIndex = -1;
   const SERVICES_ORDER_KEY = "dl_conn_services_order";
 
   /**
@@ -223,20 +234,15 @@ import {
   const SLOW_RELAY_MS = 600;
 
   /**
-   * Client-side ring buffers backing the telemetry sparklines. There is no
-   * backend history endpoint (only `Latest()` in `internal/store`), so the
-   * charts only ever show what this tab has observed since it loaded — they
-   * reset on reload. Capped short so a stale tab doesn't render a chart
-   * spanning many silent hours as if it were continuous.
+   * Refresh the host health card often enough to feel live without overlap.
+   * There used to be client-side ring buffers backing sparklines here, but
+   * they only ever showed what this tab had observed since it loaded — they
+   * reset on every reload. The history panel now reads the daemon's
+   * telemetry_samples table instead, so a window is a real range query.
    */
-  const CHART_HISTORY_MAX = 30;
-  /** Refresh the host health card often enough to feel live without overlap. */
   const TELEMETRY_POLL_MS = 2000;
   /** Host telemetry endpoint, the one route the operator can put behind step-up. */
   const TELEMETRY_PATH = "/api/host/telemetry";
-  const cpuLoadHistory = [];
-  const ramPctHistory = [];
-  const diskPctHistory = [];
 
   /** Stop everything the Live zone drives; called whenever it goes away. */
   function clearLiveTimers() {
@@ -287,10 +293,9 @@ import {
       el.telCpu.textContent = parts.length ? parts.join(" · ") : "—";
       // Guarded via typeof: telemetry_tests.js evaluates this function body
       // in isolation (extractFunction + `new Function`) with only
-      // formatUptime/formatCapacity inlined, so pushChartSample/renderCharts
-      // are undeclared there. `typeof x === "function"` never throws on an
+      // formatUptime/formatCapacity inlined, so the panel renderers below are
+      // undeclared there. `typeof x === "function"` never throws on an
       // undeclared identifier, unlike calling it directly would.
-      if (load1 != null && typeof pushChartSample === "function") pushChartSample(cpuLoadHistory, load1);
     }
     let ramPct = null;
     if (el.telRam) {
@@ -301,7 +306,6 @@ import {
         ramPct = snap.ram_used_pct;
         el.telRam.textContent = ramPct.toFixed(1) + "% (" + formatCapacity(snap.ram_used_mb || 0) + " / " + formatCapacity(snap.ram_total_mb || 0) + ")";
       } else el.telRam.textContent = "—";
-      if (ramPct != null && typeof pushChartSample === "function") pushChartSample(ramPctHistory, ramPct);
     }
     let diskPct = null;
     if (el.telDisk) {
@@ -320,7 +324,6 @@ import {
         diskPct = snap.disk_used_pct;
         el.telDisk.textContent = diskPct.toFixed(1) + "% (" + formatCapacity(snap.disk_used_mb || 0) + " / " + formatCapacity(snap.disk_total_mb || 0) + ") " + (snap.mountpoint || "");
       } else el.telDisk.textContent = "—";
-      if (diskPct != null && typeof pushChartSample === "function") pushChartSample(diskPctHistory, diskPct);
     }
     if (el.telGpu) {
       if (snap.gpu && (snap.gpu.temp_c != null || snap.gpu.util_pct != null)) {
@@ -341,66 +344,414 @@ import {
       else el.telBatt.textContent = "—";
     }
     if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
-    if (typeof renderCharts === "function") renderCharts();
+    if (typeof renderMeters === "function") renderMeters(snap);
+    if (typeof renderStorage === "function") renderStorage(snap);
   }
 
-  /** Append a sample to a ring buffer, dropping the oldest once it overflows. */
-  function pushChartSample(buffer, value) {
-    buffer.push(value);
-    if (buffer.length > CHART_HISTORY_MAX) buffer.shift();
+  /* ══════════════════════════════════════════════════════════════════
+     Host monitoring panel
+
+     Two layers over one snapshot: live meters (current value plus a bar
+     against a threshold) and a history chart fed by
+     /api/host/telemetry?from=&to=, which reads the daemon's SQLite
+     telemetry_samples table. The history therefore survives a reload,
+     which the client-side ring buffer it replaced did not.
+
+     Every bar and every chart point is an SVG geometry attribute set
+     with setAttribute — never an inline `style`, because the page CSP
+     declares style-src 'self' with no 'unsafe-inline'. Colors come from
+     the dataviz tokens in style.css, so switching palette recolors this
+     whole surface without touching a rule here.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /** Percentage at which a meter turns amber, per resource. */
+  const METER_WARN_PCT = { cpu: 80, ram: 85, disk: 90, gpu: 90, battery: 20 };
+  /** Percentage at which it turns red. */
+  const METER_CRIT_PCT = { cpu: 95, ram: 95, disk: 97, gpu: 97, battery: 10 };
+  /** A battery meter drains downward, so its states are inverted. */
+  const BATTERY_METER = "battery";
+  /** The busiest mountpoint stands in for "disk" in the history chart. */
+  const HISTORY_METRICS = ["cpu", "ram", "disk", "gpu"];
+  /** Cap on drawn points: more than this is indistinguishable at 1px. */
+  const HISTORY_MAX_POINTS = 240;
+
+  /** Cached meter shells, keyed by resource, built on first sight. */
+  const meterRefs = new Map();
+
+  /**
+   * State class for a meter at `pct`. Returns "" for healthy, and an
+   * empty string when there is no reading — an unknown value must never
+   * be painted as a healthy one.
+   */
+  function meterState(key, pct) {
+    if (pct == null || isNaN(pct)) return "";
+    if (key === BATTERY_METER) {
+      if (pct <= METER_CRIT_PCT[BATTERY_METER]) return " is-crit";
+      if (pct <= METER_WARN_PCT[BATTERY_METER]) return " is-warn";
+      return "";
+    }
+    if (pct >= METER_CRIT_PCT[key]) return " is-crit";
+    if (pct >= METER_WARN_PCT[key]) return " is-warn";
+    return "";
   }
 
   /**
-   * Draw one sparkline: a filled area + line polyline scaled into the SVG's
-   * `viewBox="0 0 100 36"` box. Points are plain numbers set via
-   * `setAttribute`, never inline `style` (CSP: style-src has no
-   * 'unsafe-inline'). A single sample still draws a flat line so the chart
-   * never looks broken right after the first telemetry fetch.
+   * Build the meter shell for `key` on first call and return its parts.
+   * The bar is an SVG rect whose `width` is what we animate, so a meter
+   * update is a single setAttribute rather than a style mutation.
    */
-  function drawSparkline(lineEl, fillEl, values, opts) {
-    if (!lineEl || !values.length) return;
-    const max = opts && opts.max != null ? opts.max : Math.max(...values, 1);
-    const min = opts && opts.min != null ? opts.min : 0;
-    const span = Math.max(max - min, 0.0001);
-    const w = 100;
-    const h = 36;
-    const step = values.length > 1 ? w / (values.length - 1) : 0;
-    const coords = values.map((v, i) => {
-      const x = values.length > 1 ? i * step : w;
-      const clamped = Math.min(Math.max(v, min), max);
-      const y = h - ((clamped - min) / span) * h;
-      return x.toFixed(2) + "," + y.toFixed(2);
-    });
-    lineEl.setAttribute("points", coords.join(" "));
-    if (fillEl) {
-      const fillCoords = [coords[0].split(",")[0] + "," + h]
-        .concat(coords)
-        .concat([coords[coords.length - 1].split(",")[0] + "," + h]);
-      fillEl.setAttribute("points", fillCoords.join(" "));
+  function ensureMeter(host, key, label) {
+    let refs = meterRefs.get(key);
+    if (refs) return refs;
+    const wrap = document.createElement("div");
+    wrap.className = "meter";
+    wrap.setAttribute("role", "meter");
+    wrap.setAttribute("aria-valuemin", "0");
+    wrap.setAttribute("aria-valuemax", "100");
+    wrap.setAttribute("aria-label", label);
+    wrap.innerHTML =
+      '<div class="meter-head">' +
+        '<span class="meter-label"></span>' +
+        '<span class="meter-value num"></span>' +
+      "</div>" +
+      '<svg class="meter-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">' +
+        '<rect class="meter-track" x="0" y="0" width="100" height="6"></rect>' +
+        '<rect class="meter-fill" x="0" y="0" width="0" height="6"></rect>' +
+        '<rect class="meter-tick" x="0" y="0" width="1" height="6"></rect>' +
+      "</svg>" +
+      '<span class="meter-sub"></span>';
+    wrap.querySelector(".meter-label").textContent = label;
+    host.appendChild(wrap);
+    refs = {
+      wrap: wrap,
+      value: wrap.querySelector(".meter-value"),
+      sub: wrap.querySelector(".meter-sub"),
+      fill: wrap.querySelector(".meter-fill"),
+      tick: wrap.querySelector(".meter-tick"),
+    };
+    meterRefs.set(key, refs);
+    return refs;
+  }
+
+  /** Write one reading into a meter. `pct` may be null (unknown). */
+  function setMeter(refs, key, labelText, valueText, pct, subText) {
+    if (!refs) return;
+    refs.wrap.className = "meter" + meterState(key, pct);
+    refs.value.textContent = valueText;
+    refs.sub.textContent = subText || "";
+    const width = pct == null || isNaN(pct) ? 0 : Math.max(0, Math.min(100, pct));
+    refs.fill.setAttribute("width", width.toFixed(2));
+    // The tick marks the warn threshold, so the bar reads as a scale
+    // rather than as a progress bar with no goalpost.
+    refs.tick.setAttribute("x", String(METER_WARN_PCT[key]));
+    refs.wrap.setAttribute("aria-valuenow", pct == null || isNaN(pct) ? "" : pct.toFixed(0));
+    refs.wrap.setAttribute("aria-valuetext", labelText + ": " + valueText);
+  }
+
+  /**
+   * CPU as a percentage of capacity. A raw load average is not a
+   * dashboard metric — 0.42 means idle on a 4-core box and busy on a
+   * 64-core one — so it is normalized by the core count the collector
+   * reports. Without that count we show the raw load and no bar rather
+   * than inventing a percentage.
+   */
+  function cpuPercent(snap) {
+    const load1 = snap && snap.cpu ? snap.cpu.load1 : null;
+    const cores = snap ? snap.num_cpu : null;
+    if (load1 == null || !cores) return null;
+    return (load1 / cores) * 100;
+  }
+
+  /** Render the live meters for every resource the host actually reports. */
+  function renderMeters(snap) {
+    const host = el.telMeters;
+    if (!host || !snap) return;
+    meterRefs.clear();
+    host.replaceChildren();
+    if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
+
+    // CPU
+    const cpu = snap.cpu || null;
+    const cpuPct = cpuPercent(snap);
+    if (cpu) {
+      const bits = [];
+      if (cpu.temp_c != null) bits.push(cpu.temp_c.toFixed(1) + " °C");
+      if (cpu.freq_mhz != null) bits.push((cpu.freq_mhz / 1000).toFixed(1) + " GHz");
+      if (cpuPct == null && cpu.load1) bits.push("carga " + cpu.load1.toFixed(2));
+      setMeter(
+        ensureMeter(host, "cpu", "CPU"),
+        "cpu",
+        "CPU",
+        cpuPct == null ? (cpu.load1 ? cpu.load1.toFixed(2) : "—") : cpuPct.toFixed(0) + "%",
+        cpuPct,
+        bits.join(" · ") || "—"
+      );
+    }
+
+    // Memory
+    const mem = snap.memory || null;
+    if (mem) {
+      setMeter(
+        ensureMeter(host, "ram", "Memória"),
+        "ram",
+        "Memória",
+        mem.used_pct.toFixed(0) + "%",
+        mem.used_pct,
+        formatCapacity(mem.used_mb) + " / " + formatCapacity(mem.total_mb)
+      );
+    }
+
+    // GPU — the bar tracks utilization; temperature rides in the sub-line
+    // because it is a different quantity and must not share a scale.
+    const gpu = snap.gpu || null;
+    if (gpu && gpu.util_pct != null) {
+      const bits = [];
+      if (gpu.temp_c != null) bits.push(gpu.temp_c.toFixed(1) + " °C");
+      setMeter(
+        ensureMeter(host, "gpu", "GPU"),
+        "gpu",
+        "GPU",
+        gpu.util_pct.toFixed(0) + "%",
+        gpu.util_pct,
+        bits.join(" · ") || "—"
+      );
+    }
+
+    // Battery — inverts: a full battery is healthy, an empty one is not.
+    const batt = snap.battery || null;
+    if (batt && batt.available && batt.capacity_pct != null) {
+      setMeter(
+        ensureMeter(host, "battery", "Bateria"),
+        "battery",
+        "Bateria",
+        batt.capacity_pct + "%",
+        batt.capacity_pct,
+        batt.status || ""
+      );
     }
   }
 
-  /** Redraw every telemetry sparkline from its current ring buffer. */
-  function renderCharts() {
-    drawSparkline(el.chartCpuLine, el.chartCpuFill, cpuLoadHistory);
-    if (el.chartCpuValue) {
-      el.chartCpuValue.textContent = cpuLoadHistory.length
-        ? cpuLoadHistory[cpuLoadHistory.length - 1].toFixed(2)
-        : "—";
+  /** One row per mount: the volume that is filling up must be its own line. */
+  function renderStorage(snap) {
+    const host = el.telStorageList;
+    if (!host || !snap) return;
+    const disks = snap.disks && snap.disks.length
+      ? snap.disks
+      : (snap.disk_used_pct != null
+          ? [{ mountpoint: snap.mountpoint || "/", used_pct: snap.disk_used_pct,
+               used_mb: snap.disk_used_mb, total_mb: snap.disk_total_mb }]
+          : []);
+    if (!el.telStorage) return;
+    if (!disks.length) {
+      el.telStorage.classList.add("hidden");
+      host.replaceChildren();
+      return;
     }
-    drawSparkline(el.chartRamLine, el.chartRamFill, ramPctHistory, { min: 0, max: 100 });
-    if (el.chartRamValue) {
-      el.chartRamValue.textContent = ramPctHistory.length
-        ? ramPctHistory[ramPctHistory.length - 1].toFixed(1) + "%"
-        : "—";
+    el.telStorage.classList.remove("hidden");
+    if (el.telStorageCount) {
+      el.telStorageCount.textContent = disks.length === 1
+        ? "1 ponto de montagem"
+        : disks.length + " pontos de montagem";
     }
-    drawSparkline(el.chartDiskLine, el.chartDiskFill, diskPctHistory, { min: 0, max: 100 });
-    if (el.chartDiskValue) {
-      el.chartDiskValue.textContent = diskPctHistory.length
-        ? diskPctHistory[diskPctHistory.length - 1].toFixed(1) + "%"
-        : "—";
+    const frag = document.createDocumentFragment();
+    for (const d of disks) {
+      const row = document.createElement("div");
+      row.className = "storage-row" + meterState("disk", d.used_pct);
+      row.innerHTML =
+        '<span class="storage-mount"></span>' +
+        '<svg class="storage-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">' +
+          '<rect class="storage-track" x="0" y="0" width="100" height="6"></rect>' +
+          '<rect class="storage-fill" x="0" y="0" width="0" height="6"></rect>' +
+        "</svg>" +
+        '<span class="storage-pct"></span>' +
+        '<span class="storage-size"></span>';
+      row.querySelector(".storage-mount").textContent = d.mountpoint;
+      row.querySelector(".storage-pct").textContent = d.used_pct.toFixed(0) + "%";
+      row.querySelector(".storage-size").textContent =
+        formatCapacity(d.used_mb) + " / " + formatCapacity(d.total_mb);
+      row.querySelector(".storage-fill")
+        .setAttribute("width", Math.max(0, Math.min(100, d.used_pct)).toFixed(2));
+      frag.appendChild(row);
+    }
+    host.replaceChildren(frag);
+  }
+
+  /* ── History chart ──────────────────────────────────────────────── */
+
+  const historyState = { windowSec: 604800, metric: "cpu", samples: null, inFlight: false };
+
+  /** Extract one chartable percentage from a snapshot; null if unavailable. */
+  function historyValue(snap, metric) {
+    if (!snap) return null;
+    if (metric === "cpu") return cpuPercent(snap);
+    if (metric === "ram") return snap.memory ? snap.memory.used_pct : null;
+    if (metric === "gpu") return snap.gpu && snap.gpu.util_pct != null ? snap.gpu.util_pct : null;
+    if (metric === "disk") {
+      if (snap.disks && snap.disks.length) {
+        return snap.disks.reduce((m, d) => Math.max(m, d.used_pct || 0), 0);
+      }
+      return snap.disk_used_pct != null ? snap.disk_used_pct : null;
+    }
+    return null;
+  }
+
+  /**
+   * Bucket-average the series down to at most HISTORY_MAX_POINTS. A 7-day
+   * window can hold tens of thousands of samples; drawing them all is
+   * wasted work and, at sub-pixel spacing, a smear rather than a line.
+   */
+  function downsample(points, maxPoints) {
+    if (points.length <= maxPoints) return points;
+    const bucketSize = points.length / maxPoints;
+    const out = [];
+    for (let i = 0; i < maxPoints; i++) {
+      const start = Math.floor(i * bucketSize);
+      const end = Math.min(points.length, Math.floor((i + 1) * bucketSize));
+      let sum = 0;
+      let n = 0;
+      for (let j = start; j < end; j++) { sum += points[j][1]; n++; }
+      if (!n) continue;
+      out.push([points[start][0], sum / n]);
+    }
+    return out;
+  }
+
+  /** Draw grid, threshold, line and fill for the current history state. */
+  function renderHistory() {
+    if (!el.histLine) return;
+    const samples = historyState.samples;
+    const key = historyState.metric;
+    const points = [];
+    if (samples) {
+      for (const s of samples) {
+        const v = historyValue(s, key);
+        if (v == null || isNaN(v)) continue;
+        const ts = Date.parse(s.sampled_at) / 1000;
+        if (!isFinite(ts)) continue;
+        points.push([ts, v]);
+      }
+    }
+    const reduced = downsample(points, HISTORY_MAX_POINTS);
+
+    if (el.histChartFrame) el.histChartFrame.classList.toggle("is-empty", !reduced.length);
+
+    // Gridlines: four horizontal rules plus the warn threshold marker.
+    if (el.histGrid) {
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i < 4; i++) {
+        const y = (i / 4) * 40;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", "0");
+        line.setAttribute("x2", "100");
+        line.setAttribute("y1", y.toFixed(2));
+        line.setAttribute("y2", y.toFixed(2));
+        frag.appendChild(line);
+      }
+      el.histGrid.replaceChildren(frag);
+    }
+
+    // The series is a percentage, so the scale is always 0..100 — a
+    // self-scaling axis would make a flat line look like a storm.
+    const toY = (v) => (40 - (Math.max(0, Math.min(100, v)) / 100) * 40).toFixed(2);
+    if (el.histThreshold) {
+      el.histThreshold.setAttribute("y1", toY(METER_WARN_PCT[key]));
+      el.histThreshold.setAttribute("y2", toY(METER_WARN_PCT[key]));
+    }
+
+    if (!reduced.length) {
+      el.histLine.setAttribute("points", "");
+      if (el.histFill) el.histFill.setAttribute("points", "");
+      for (const node of [el.histValue, el.histMin, el.histAvg, el.histMax]) {
+        if (node) node.textContent = "—";
+      }
+      if (el.histUnit) el.histUnit.textContent = "";
+      if (el.histStatus) {
+        el.histStatus.textContent = historyState.samples
+          ? "Sem amostras para esta métrica na janela selecionada."
+          : "Histórico indisponível neste host.";
+      }
+      return;
+    }
+
+    // x is positional, not time-linear: a gap in sampling should read as
+    // a gap, and an even spread keeps the line continuous.
+    const step = reduced.length > 1 ? 100 / (reduced.length - 1) : 0;
+    const coords = reduced.map((p, i) => {
+      const x = reduced.length > 1 ? i * step : 100;
+      return x.toFixed(2) + "," + toY(p[1]);
+    });
+    el.histLine.setAttribute("points", coords.join(" "));
+    if (el.histFill) {
+      const lastX = ((reduced.length - 1) * step).toFixed(2);
+      el.histFill.setAttribute(
+        "points",
+        ["0,40"].concat(coords).concat([lastX + ",40"]).join(" ")
+      );
+    }
+
+    const values = reduced.map((p) => p[1]);
+    const last = values[values.length - 1];
+    const min = Math.min.apply(null, values);
+    const max = Math.max.apply(null, values);
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    if (el.histValue) el.histValue.textContent = last.toFixed(0) + "%";
+    if (el.histUnit) el.histUnit.textContent = "de capacidade";
+    if (el.histMin) el.histMin.textContent = min.toFixed(0) + "%";
+    if (el.histAvg) el.histAvg.textContent = avg.toFixed(0) + "%";
+    if (el.histMax) el.histMax.textContent = max.toFixed(0) + "%";
+    if (el.histStatus) {
+      const hours = Math.round(historyState.windowSec / 3600);
+      const window = hours >= 24 ? Math.round(hours / 24) + "d" : hours + "h";
+      el.histStatus.textContent = reduced.length + " amostras · janela de " + window;
     }
   }
+
+  /**
+   * Load the selected window from the daemon. Falls back to "no history"
+   * rather than erroring, so an older daemon that ignores the query
+   * params still leaves the rest of the panel working.
+   */
+  async function fetchHistory() {
+    if (historyState.inFlight) return;
+    historyState.inFlight = true;
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - historyState.windowSec;
+    try {
+      const r = await telemetryGet(TELEMETRY_PATH + "?from=" + from + "&to=" + to);
+      if (!r.ok) throw new Error("telemetry history: " + r.status);
+      const data = await r.json();
+      historyState.samples = Array.isArray(data) ? data : null;
+    } catch (_) {
+      historyState.samples = null;
+    } finally {
+      historyState.inFlight = false;
+      renderHistory();
+    }
+  }
+
+  /** Wire the window and metric segmented controls. */
+  function setupHistoryControls() {
+    const pick = (group, attr, apply) => {
+      if (!group) return;
+      group.addEventListener("click", (event) => {
+        const btn = event.target.closest(".seg[data-" + attr + "]");
+        if (!btn || !group.contains(btn)) return;
+        for (const other of group.querySelectorAll(".seg")) {
+          other.classList.toggle("is-on", other === btn);
+        }
+        apply(btn.dataset[attr]);
+      });
+    };
+    pick(el.histWindowGroup, "window", (v) => {
+      historyState.windowSec = Number(v) || 604800;
+      fetchHistory();
+    });
+    pick(el.histMetricGroup, "metric", (v) => {
+      historyState.metric = HISTORY_METRICS.indexOf(v) >= 0 ? v : "cpu";
+      renderHistory();
+    });
+  }
+
 
   /**
    * Update the "ao vivo / ha Xs" badge. 'ok' reflects whether the last fetch
@@ -428,31 +779,41 @@ import {
     }, 1000);
   }
 
+  /**
+   * GET the telemetry route, minting a step-up proof once if the operator
+   * put the endpoint behind one. Refusal drives the proof, not the poll: an
+   * operator who never enabled step-up pays nothing for this. Shared by the
+   * live poll and the history query so both honour it identically.
+   */
+  async function telemetryGet(url) {
+    let r = await fetch(url, {
+      credentials: "include",
+      headers: getStepUpHeader() || undefined,
+    });
+    if (r.status === 401 && getStepUpHeader() === null) {
+      await requestStepUp(state.tunnelURL);
+      r = await fetch(url, {
+        credentials: "include",
+        headers: getStepUpHeader() || undefined,
+      });
+    }
+    return r;
+  }
+
   async function fetchTelemetry() {
     // A slow request must not pile up behind the 2s interval.
     if (telemetryFetchInFlight) return;
     telemetryFetchInFlight = true;
     try {
-      let r = await fetch(TELEMETRY_PATH, {
-        credentials: "include",
-        headers: getStepUpHeader() || undefined,
-      });
-      // Endpoints the operator marked sensitive need a step-up proof on top of
-      // the session. Minting one is therefore driven by the refusal, not by the
-      // poll: an operator who never enabled step-up pays nothing for this, and
-      // the request below is byte-for-byte what it has always been.
-      if (r.status === 401 && getStepUpHeader() === null) {
-        await requestStepUp(state.tunnelURL);
-        r = await fetch(TELEMETRY_PATH, {
-          credentials: "include",
-          headers: getStepUpHeader() || undefined,
-        });
-      }
+      const r = await telemetryGet(TELEMETRY_PATH);
       if (!r.ok) { updateLiveBadge(false); return; }
       const snap = await r.json();
       renderTelemetry(snap);
       lastTelemetryAt = Date.now();
       updateLiveBadge(true);
+      // Load the history window once the live route has proven reachable,
+      // so the chart never fires before a session is actually established.
+      if (historyState.samples === null && !historyState.inFlight) fetchHistory();
     } catch (_) {
       updateLiveBadge(false);
     } finally {
@@ -567,6 +928,9 @@ import {
     state.relayManager.on(onRelayEvent);
     bindEvents();
     initAutoLockUI();
+    setupHistoryControls();
+    setupAppearancePanel();
+    setupStatusRail();
     checkVaultState();
   }
 
@@ -726,6 +1090,8 @@ import {
     });
     el.btnScanQr.addEventListener("click", onScanQr);
     el.btnQrClose.addEventListener("click", stopQrScan);
+    // Escape closes the modal scanner and returns focus to its opener.
+    wireDialog(el.qrOverlay, { modal: true });
     if (el.btnReturnCancel) el.btnReturnCancel.addEventListener("click", cancelReturn);
     el.autoLockTimeout.addEventListener("change", onAutoLockChange);
     el.btnEnableBiometricLater.addEventListener("click", onEnableBiometricLater);
@@ -865,6 +1231,13 @@ import {
     el.countdownText.textContent = fmtCountdown(left);
     el.countdownWrap.classList.toggle("is-warning", pct <= 33 && pct > 10);
     el.countdownWrap.classList.toggle("is-danger", pct <= 10);
+    // role="progressbar" with no value is unannounced: assistive tech has no
+    // way to say where the countdown is. The visible text already carries the
+    // remaining time, so valuetext is what actually gets spoken.
+    el.countdownWrap.setAttribute("aria-valuemin", "0");
+    el.countdownWrap.setAttribute("aria-valuemax", "100");
+    el.countdownWrap.setAttribute("aria-valuenow", pct.toFixed(0));
+    el.countdownWrap.setAttribute("aria-valuetext", el.countdownText.textContent);
   }
 
   function onSessionEvent(event) {
@@ -909,7 +1282,7 @@ import {
       el.sessionSetup.classList.remove("hidden");
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
-      el.servicesSection.classList.add("hidden");
+      el.servicesOverview.classList.add("hidden");
       el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
@@ -932,7 +1305,7 @@ import {
       el.sessionLive.classList.add("hidden");
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
-      el.servicesSection.classList.add("hidden");
+      el.servicesOverview.classList.add("hidden");
       el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       clearLiveTimers();
@@ -1038,7 +1411,7 @@ import {
     state.config.hostNpub = null;
     state.pendingIdentity = null;
     clearLiveTimers();
-    el.servicesSection.classList.add("hidden");
+    el.servicesOverview.classList.add("hidden");
     el.localPortSection.classList.add("hidden");
     setTunnelStatus("Aguardando túnel…");
     setSessionStatus("Bloqueada", "dim");
@@ -1125,7 +1498,9 @@ import {
 
   function stopQrScan() {
     if (_qrStop) { _qrStop(); _qrStop = null; }
-    el.qrOverlay.classList.add("hidden");
+    // closeDialog also hands focus back to the button that opened the
+    // scanner, which a bare .hidden toggle never did.
+    closeDialog(el.qrOverlay);
     el.qrStatus.textContent = "";
   }
 
@@ -1134,7 +1509,8 @@ import {
       el.vaultStatus.textContent = "Câmera indisponível neste navegador.";
       return;
     }
-    el.qrOverlay.classList.remove("hidden");
+    // Modal, so focus is trapped inside until the scanner is dismissed.
+    openDialog(el.qrOverlay, el.btnScanQr);
     el.qrStatus.textContent = "Aponte a câmera para o QR do nsec…";
     try {
       _qrStop = await startScan({
@@ -1324,7 +1700,7 @@ import {
     loadServicesOrder();
     startExpiryCountdown(data.expires_in_seconds || 0);
     renderServices();
-    el.servicesSection.classList.remove("hidden");
+    el.servicesOverview.classList.remove("hidden");
     el.localPortSection.classList.remove("hidden");
     if (data.host_telemetry) renderTelemetry(data.host_telemetry);
     el.app.setAttribute("data-phase", "live");
@@ -1863,8 +2239,11 @@ import {
    * configuration: green only for "up". A service the daemon has not probed
    * yet ("unknown") or that failed its probe ("down") is shown accordingly, so
    * the dashboard never claims something is live before it answered.
+   *
+   * A custom service is always "unprobed": it rides the `/local/<porta>/`
+   * route, which the host never probes.
    */
-  function statusDot(svc, baseClass) {
+  function serviceStatusMeta(svc) {
     const status = svc.status === "up" || svc.status === "down"
       ? svc.status
       : "unknown";
@@ -1875,9 +2254,7 @@ import {
         down: { cls: "dot-bad", title: "Inativo" },
         unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
       }[status];
-    const cls = (baseClass || "dot") + " " + meta.cls;
-    return '<span class="' + cls + '" title="' + escapeHtml(meta.title) +
-      '" data-status="' + status + '" aria-hidden="true"></span>';
+    return { status: status, cls: meta.cls, title: meta.title };
   }
 
   function serviceIcon(icon, dotHtml) {
@@ -2147,24 +2524,35 @@ import {
     saveServicesOrder();
   }
 
-  /** Render the compact services list in the Visão geral section. */
+  /**
+   * Render the services list in the Visão geral section — the one and only
+   * services view. It carries the rows, the health strip and every management
+   * control, so the block's visibility follows the Live phase (the caller
+   * un-hides it) rather than the service count: with zero services the
+   * "add service" button has to stay reachable, which is why an empty list
+   * renders a message instead of collapsing the whole block.
+   */
   function renderServicesOverview() {
     if (!el.servicesOverview || !el.servicesOverviewList || !el.servicesOverviewCount) return;
 
-    if (state.services.length === 0) {
-      el.servicesOverview.classList.add("hidden");
+    const total = state.services.length;
+    el.servicesOverviewCount.textContent = total + (total === 1 ? " serviço" : " serviços");
+
+    if (total === 0) {
+      el.servicesOverviewList.replaceChildren();
+      const empty = document.createElement("li");
+      empty.className = "services-empty";
+      empty.setAttribute("role", "status");
+      empty.textContent = "Nenhum serviço na visualização.";
+      el.servicesOverviewList.appendChild(empty);
       return;
     }
-
-    el.servicesOverview.classList.remove("hidden");
-    el.servicesOverviewCount.textContent = state.services.length + (state.services.length === 1 ? " serviço" : " serviços");
 
     const frag = document.createDocumentFragment();
 
     state.services.forEach((svc, index) => {
       const li = document.createElement("li");
       li.className = "service-overview-item";
-      li.draggable = true;
       li.dataset.index = index;
 
       const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
@@ -2173,17 +2561,25 @@ import {
       // handler below redeems the token before the browser leaves.
       const href = serviceHref(state.tunnelURL, redirectPath);
 
-      const status = svc.status === "up" || svc.status === "down" ? svc.status : "unknown";
-      const statusMeta = svc.custom
-        ? { cls: "dot-unknown", title: CUSTOM_SERVICE_STRINGS.unprobed }
-        : {
-          up: { cls: "dot-good", title: "Ativo" },
-          down: { cls: "dot-bad", title: "Inativo" },
-          unknown: { cls: "dot-unknown", title: "Aguardando confirmação do host" },
-        }[status];
+      const statusMeta = serviceStatusMeta(svc);
 
       const iconHtml = serviceIcon(svc.icon,
         '<span class="svc-dot ' + statusMeta.cls + '" title="' + escapeHtml(statusMeta.title) + '" aria-hidden="true"></span>');
+
+      const name = escapeHtml(svc.name || svc.id || "serviço");
+
+      // Custom entries carry the same three markers the grid used to show:
+      // the "personalizado" badge, whether it survives a reload, and the
+      // fact that a `/local/<porta>/` route is never probed by the host.
+      const customMeta = svc.custom
+        ? '<div class="service-overview-custom">' +
+          '<span class="pill p-info">' + CUSTOM_SERVICE_STRINGS.customBadge + '</span>' +
+          '<span class="service-overview-badge">' +
+          escapeHtml(svc.persisted ? CUSTOM_SERVICE_STRINGS.persistedBadge : CUSTOM_SERVICE_STRINGS.temporaryBadge) +
+          '</span>' +
+          '<span class="service-overview-badge">' + CUSTOM_SERVICE_STRINGS.unprobed + '</span>' +
+          '</div>'
+        : "";
 
       li.innerHTML =
         '<span class="service-overview-drag" aria-label="Reordenar" data-tip="Arrastar para reordenar">' +
@@ -2191,14 +2587,20 @@ import {
         '</span>' +
         iconHtml +
         '<div class="service-overview-meta">' +
-        '<div class="service-overview-name">' + escapeHtml(svc.name || svc.id || "serviço") + '</div>' +
+        '<div class="service-overview-name">' + name + '</div>' +
+        (svc.description ? '<div class="service-overview-desc">' + escapeHtml(svc.description) + '</div>' : "") +
         '<div class="service-overview-status">' +
         '<span class="dot ' + statusMeta.cls + '" aria-hidden="true"></span>' +
         '<span>' + escapeHtml(statusMeta.title) + '</span>' +
         '</div>' +
+        customMeta +
         '</div>' +
-        '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + escapeHtml(svc.name || svc.id || "serviço") + '">' +
-        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>';
+        '<a href="' + href + '" class="service-overview-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir ' + name + '">' +
+        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg></a>' +
+        (svc.custom
+          ? '<button type="button" class="btn-icon custom-service-delete" aria-label="' + CUSTOM_SERVICE_STRINGS.deleteLabel + '" data-custom-id="' + escapeHtml(svc.configId) + '">' +
+            '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"></use></svg></button>'
+          : "");
 
       // A plain left-click redeems the token first and only then leaves, so
       // the opened URL carries no credential. Modified clicks (new tab,
@@ -2213,12 +2615,12 @@ import {
         openService(redirectPath);
       });
 
-      // Drag-and-drop event listeners
-      li.addEventListener("dragstart", handleDragStart);
-      li.addEventListener("dragend", handleDragEnd);
-      li.addEventListener("dragover", handleDragOver);
-      li.addEventListener("dragleave", handleDragLeave);
-      li.addEventListener("drop", handleDrop);
+      if (svc.custom) {
+        li.querySelector(".custom-service-delete")
+          .addEventListener("click", () => onDeleteCustomService(svc.configId));
+      }
+
+      attachReorder(li, index, name);
 
       frag.appendChild(li);
     });
@@ -2226,127 +2628,240 @@ import {
     el.servicesOverviewList.replaceChildren(frag);
   }
 
-  /** Drag-and-drop handlers for service reordering (both views). */
-  function handleDragStart(e) {
-    dragSourceEl = e.target.closest(".service-overview-item, .service-card");
-    if (!dragSourceEl) return;
-    dragSourceIndex = parseInt(dragSourceEl.dataset.index, 10);
-    dragSourceEl.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(dragSourceIndex));
+  /* ── Service reordering ────────────────────────────────────────────
+     Replaced the HTML5 drag-and-drop API: it has no touch support at
+     all, so on Android and iOS the drag handles did nothing, and it is
+     unreachable by keyboard. Pointer events cover mouse, touch and pen
+     with one path, and the handle being a real <button> gives the
+     keyboard route for free. */
+  const DRAG_START_PX = 8;
+  const dragPointer = {
+    id: null,
+    source: null,
+    from: -1,
+    to: -1,
+    started: false,
+    originX: 0,
+    originY: 0,
+  };
+
+  /** The reorderable container under a point, if any. */
+  function reorderTargetAt(x, y, source) {
+    const node = document.elementFromPoint(x, y);
+    if (!node) return null;
+    const item = node.closest(".service-overview-item");
+    return item && item !== source ? item : null;
   }
 
-  function handleDragEnd(e) {
-    const el = e.target.closest(".service-overview-item, .service-card");
-    if (el) el.classList.remove("dragging");
-    // Clear drag-over state on all items
-    document.querySelectorAll(".drag-over").forEach((item) => item.classList.remove("drag-over"));
-    dragSourceEl = null;
-    dragSourceIndex = -1;
-    dragTargetIndex = -1;
+  function clearDropHighlight() {
+    document.querySelectorAll(".drag-over").forEach((n) => n.classList.remove("drag-over"));
   }
 
-  function handleDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const targetEl = e.target.closest(".service-overview-item, .service-card");
-    if (!targetEl || targetEl === dragSourceEl) return;
-    targetEl.classList.add("drag-over");
-    dragTargetIndex = parseInt(targetEl.dataset.index, 10);
-  }
-
-  function handleDragLeave(e) {
-    const targetEl = e.target.closest(".service-overview-item, .service-card");
-    if (targetEl) targetEl.classList.remove("drag-over");
-  }
-
-  function handleDrop(e) {
-    e.preventDefault();
-    const targetEl = e.target.closest(".service-overview-item, .service-card");
-    if (!targetEl || targetEl === dragSourceEl) return;
-    targetEl.classList.remove("drag-over");
-    const targetIndex = parseInt(targetEl.dataset.index, 10);
-    if (dragSourceIndex !== targetIndex) {
-      reorderServices(dragSourceIndex, targetIndex);
-      renderServices(); // Re-render both views
-      renderServicesOverview();
-    }
-  }
-
-  function renderServices() {
-    el.servicesList.innerHTML = "";
-    renderServicesHealth();
-    if (!state.tunnelURL) return;
-    if (state.services.length === 0) {
-      el.servicesList.innerHTML =
-        '<p class="services-empty" role="status">Nenhum serviço na visualização.</p>';
-      renderServicesOverview();
-      return;
-    }
-    state.services.forEach((svc, index) => {
-      const card = document.createElement("div");
-      card.className = "service-card";
-      card.draggable = true;
-      card.dataset.index = index;
-      // A trailing slash matters here: proxied SPAs (Frigate's is the known
-      // case) fetch some of their own assets via relative URLs resolved
-      // against the current document's path. Land the browser on
-      // ".../frigate" (no slash) and the resolver drops "frigate" itself
-      // when resolving "locales/en/x.json", sending it to the origin root
-      // instead of under the service's own prefix. ".../frigate/" resolves
-      // it correctly.
-      const redirectPath = (svc.prefix || "/").replace(/\/*$/, "/");
-      // Credential-free destination; the click handler redeems the pending
-      // token first so the opened URL never carries one.
-      const href = serviceHref(state.tunnelURL, redirectPath);
-      const customMeta = svc.custom
-        ? '<div class="service-custom-meta"><span class="pill p-info">' + CUSTOM_SERVICE_STRINGS.customBadge + '</span>' +
-          '<span class="status-sub">' + (svc.persisted ? CUSTOM_SERVICE_STRINGS.persistedBadge : CUSTOM_SERVICE_STRINGS.temporaryBadge) + '</span></div>' +
-          '<div class="service-unprobed">' + CUSTOM_SERVICE_STRINGS.unprobed + '</div>'
-        : "";
-      card.innerHTML =
-        '<span class="service-card-drag" aria-label="Reordenar" data-tip="Arrastar para reordenar">' +
-        '<svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>' +
-        '</span>' +
-        '<div class="service-top">' +
-        serviceIcon(svc.icon, statusDot(svc, "svc-dot")) +
-        '<div class="service-meta">' +
-        '<div class="service-name">' + escapeHtml(svc.name || svc.id || "serviço") + "</div>" +
-        (svc.description ? '<div class="service-desc">' + escapeHtml(svc.description) + "</div>" : "") +
-        customMeta +
-        "</div>" +
-        "</div>" +
-        '<div class="service-card-actions">' +
-        '<a href="' + href + '" class="service-link" target="_blank" rel="noopener noreferrer">' +
-        '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-launch"></use></svg>Abrir</a>' +
-        (svc.custom ? '<button type="button" class="btn-icon custom-service-delete" aria-label="' + CUSTOM_SERVICE_STRINGS.deleteLabel + '" data-custom-id="' + escapeHtml(svc.configId) + '">' +
-          '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"></use></svg></button>' : "") +
-        '</div>';
-
-      if (svc.custom) {
-        card.querySelector(".custom-service-delete").addEventListener("click", () => onDeleteCustomService(svc.configId));
+  function endPointerDrag() {
+    if (dragPointer.source) {
+      dragPointer.source.classList.remove("dragging");
+      if (dragPointer.source.releasePointerCapture && dragPointer.id !== null) {
+        try { dragPointer.source.releasePointerCapture(dragPointer.id); } catch (_) { /* already released */ }
       }
+    }
+    clearDropHighlight();
+    const from = dragPointer.from;
+    const to = dragPointer.to;
+    const wasStarted = dragPointer.started;
+    dragPointer.id = null;
+    dragPointer.source = null;
+    dragPointer.from = -1;
+    dragPointer.to = -1;
+    dragPointer.started = false;
+    if (wasStarted && from !== to && from >= 0 && to >= 0) {
+      reorderServices(from, to);
+      renderServices();
+    }
+  }
 
-      // See the overview list: a plain click redeems the token first; a
-      // modified click navigates directly to the credential-free href.
-      card.querySelector(".service-link").addEventListener("click", (event) => {
-        if (event.defaultPrevented || event.button !== 0 || event.metaKey ||
-            event.ctrlKey || event.shiftKey || event.altKey) return;
+  /**
+   * Wire one reorderable row. `handle` is the drag grip; the row body also
+   * starts a drag for a mouse, which is what the previous
+   * whole-element draggable did, but a finger on the body must still
+   * scroll the list, so touch is restricted to the handle.
+   */
+  function attachReorder(row, index, name) {
+    const handle = row.querySelector(".service-overview-drag");
+    if (handle) {
+      handle.setAttribute("role", "button");
+      handle.setAttribute("tabindex", "0");
+      handle.setAttribute("aria-label",
+        "Reordenar " + name + ". Posição " + (index + 1) + " de " + state.services.length +
+        ". Use as setas para cima e para baixo.");
+      handle.setAttribute("aria-describedby", "reorder-hint");
+      handle.addEventListener("keydown", (event) => {
+        const up = event.key === "ArrowUp";
+        const down = event.key === "ArrowDown";
+        if (!up && !down) return;
         event.preventDefault();
-        openService(redirectPath);
+        const target = up ? index - 1 : index + 1;
+        if (target < 0 || target >= state.services.length) return;
+        reorderServices(index, target);
+        renderServices();
+        // Focus has to follow the item, or the next keypress acts on
+        // whatever landed in the same slot.
+        const rows = document.querySelectorAll(".service-overview-item");
+        const moved = rows[target];
+        const grip = moved && moved.querySelector(".service-overview-drag");
+        if (grip) grip.focus();
       });
+    }
 
-      // Drag-and-drop event listeners
-      card.addEventListener("dragstart", handleDragStart);
-      card.addEventListener("dragend", handleDragEnd);
-      card.addEventListener("dragover", handleDragOver);
-      card.addEventListener("dragleave", handleDragLeave);
-      card.addEventListener("drop", handleDrop);
+    const begin = (event) => {
+      if (event.button !== undefined && event.button > 0) return;
+      // Ignore a press that starts on a real control (open, delete).
+      if (event.target.closest("a, button:not(.service-overview-drag)")) return;
+      if (event.target.closest(".service-overview-drag")) {
+        if (event.pointerType && event.pointerType !== "mouse" && event.pointerType !== "touch" && event.pointerType !== "pen") return;
+      } else if (event.pointerType && event.pointerType !== "mouse") {
+        return; // let the list scroll under a finger
+      }
+      dragPointer.id = event.pointerId;
+      dragPointer.source = row;
+      dragPointer.from = index;
+      dragPointer.to = index;
+      dragPointer.started = false;
+      dragPointer.originX = event.clientX;
+      dragPointer.originY = event.clientY;
+    };
 
-      el.servicesList.appendChild(card);
+    row.addEventListener("pointerdown", begin);
+    row.addEventListener("pointermove", (event) => {
+      if (dragPointer.source !== row || event.pointerId !== dragPointer.id) return;
+      if (!dragPointer.started) {
+        const moved = Math.hypot(event.clientX - dragPointer.originX, event.clientY - dragPointer.originY);
+        if (moved < DRAG_START_PX) return;
+        dragPointer.started = true;
+        row.classList.add("dragging");
+        if (row.setPointerCapture) {
+          try { row.setPointerCapture(event.pointerId); } catch (_) { /* not capturable */ }
+        }
+      }
+      event.preventDefault();
+      const over = reorderTargetAt(event.clientX, event.clientY, row);
+      clearDropHighlight();
+      if (over) {
+        over.classList.add("drag-over");
+        dragPointer.to = parseInt(over.dataset.index, 10);
+      } else {
+        dragPointer.to = dragPointer.from;
+      }
     });
+    row.addEventListener("pointerup", (event) => {
+      if (dragPointer.source !== row) return;
+      event.preventDefault();
+      endPointerDrag();
+    });
+    row.addEventListener("pointercancel", () => {
+      if (dragPointer.source !== row) return;
+      endPointerDrag();
+    });
+  }
 
-    // Also render the overview list
+  /* ── Status rail ──────────────────────────────────────────────────
+     The rail summarizes what the cards below already say. Rather than
+     keep a second copy of that state — which would drift the moment any
+     one of a dozen call sites updated a card and forgot the rail — it
+     reads the authoritative elements directly, and a MutationObserver
+     repaints it whenever one of them changes. That also means the
+     per-second session countdown keeps the rail honest for free. */
+
+  /** Map a health dot class onto the rail's dot. */
+  function railDot(dot, level) {
+    if (!dot) return;
+    dot.className = "dot dot-" + (level === "good" ? "good" : level === "bad" ? "bad" : level === "warn" ? "warn" : "unknown");
+  }
+
+  /** Level implied by the dot the relay tester already rendered. */
+  function relayLevel() {
+    if (!el.relaySummary) return "unknown";
+    const dot = el.relaySummary.querySelector(".dot");
+    if (!dot) return "unknown";
+    if (dot.classList.contains("dot-good")) return "good";
+    if (dot.classList.contains("dot-warn")) return "warn";
+    if (dot.classList.contains("dot-bad")) return "bad";
+    return "unknown";
+  }
+
+  function syncStatusRail() {
+    if (!el.railTunnel) return;
+
+    // Tunnel: the URL is the source of truth, the expiry is the detail.
+    if (el.railTunnel) {
+      const up = Boolean(state.tunnelURL);
+      const expiry = el.tunnelExpiry ? el.tunnelExpiry.textContent : "";
+      const expired = expiry === "Expirado";
+      el.railTunnel.textContent = up ? (expired ? "expirado" : (expiry || "ativo")) : "inativo";
+      railDot(el.railTunnelDot, up ? (expired ? "bad" : "good") : "unknown");
+    }
+
+    // Session: reuse the pill the session card already maintains.
+    if (el.railSession) {
+      const pill = el.sessionStatePill;
+      const text = pill ? pill.textContent.trim() : "—";
+      el.railSession.textContent = text;
+      const locked = /bloqueada|locked/i.test(text);
+      railDot(el.railSessionDot, locked ? "warn" : "good");
+    }
+
+    // Relays: how many are enabled, graded by the last test result.
+    if (el.railRelay) {
+      let active = 0;
+      try { active = state.relayManager ? state.relayManager.getActiveUrls().length : 0; }
+      catch (_) { active = 0; }
+      el.railRelay.textContent = active + " ativos";
+      railDot(el.railRelayDot, relayLevel());
+    }
+
+    // Services: up over total, faults first in meaning — a single red
+    // service matters more than the ratio.
+    if (el.railService) {
+      const total = state.services.length;
+      const upCount = state.services.filter((s) => s.status === "up").length;
+      const downCount = state.services.filter((s) => s.status === "down").length;
+      el.railService.textContent = total ? upCount + "/" + total : "—";
+      railDot(el.railServiceDot, !total ? "unknown" : downCount ? "bad" : "good");
+    }
+  }
+
+  /** Watch the elements the rail mirrors and repaint on any change. */
+  function setupStatusRail() {
+    if (!el.railTunnel) return;
+    syncStatusRail();
+    const watched = [
+      el.tunnelExpiry, el.tunnelStatus, el.relaySummary, el.sessionStatePill,
+      el.healthSegUp, el.healthSegDown, el.servicesOverviewCount,
+    ].filter(Boolean);
+    if (!watched.length || typeof MutationObserver !== "function") return;
+    // Coalesced: the poller touches several of these in one tick, and a
+    // per-mutation repaint would redraw the rail several times over.
+    let queued = false;
+    const observer = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      Promise.resolve().then(() => {
+        queued = false;
+        syncStatusRail();
+      });
+    });
+    for (const node of watched) {
+      observer.observe(node, { childList: true, subtree: true, characterData: true, attributes: true });
+    }
+  }
+
+  /**
+   * The single services renderer. There used to be a second, grid-shaped
+   * rendering of the same `state.services`; both are gone — the list in the
+   * Visão geral is the only place services are shown, and this entry point
+   * paints it together with the health strip that lives in the same block.
+   */
+  function renderServices() {
+    renderServicesHealth();
     renderServicesOverview();
   }
 
@@ -2504,26 +3019,172 @@ import {
     return '<svg class="icon" aria-hidden="true"><use href="#' + id + '"></use></svg>';
   }
 
-  function setupTheme() {
-    const saved = localStorage.getItem("dl_conn_theme") || "system";
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const isDark = saved === "dark" || (saved === "system" && prefersDark);
+  /* ── Theme, palette, density ──────────────────────────────────────
+     Three orthogonal axes, all token-driven: the palette picks the
+     --color-chart-* and --color-* values, the theme picks the light or
+     dark block, and density only moves spacing and control height.
+     "system" is a real state, not an initial guess — before this, the
+     preference was read once at load and never again, so switching the
+     OS to dark with the tab open left the page light, and the first
+     click on the toggle silently discarded the system preference. */
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const coarsePointer = window.matchMedia("(pointer: coarse)");
+
+  /** The theme actually in effect, after resolving "system". */
+  function effectiveTheme(preference) {
+    if (preference === "dark") return "dark";
+    if (preference === "light") return "light";
+    return darkQuery.matches ? "dark" : "light";
+  }
+
+  function applyAppearance() {
+    const root = document.documentElement;
+    const preference = localStorage.getItem("dl_conn_theme") || "system";
     // Tokens live on the root element (see style.css palette blocks), so the
     // attributes are set on <html>, not <body>. The palette attribute must
     // always exist: every dark block is scoped [data-palette=…][data-theme=dark].
-    const root = document.documentElement;
-    root.setAttribute("data-theme", isDark ? "dark" : "light");
+    root.setAttribute("data-theme", effectiveTheme(preference));
     root.setAttribute("data-palette", localStorage.getItem("dl_conn_palette") || "azure");
-    el.themeToggle.innerHTML = themeIcon(isDark);
+    // Compact drops controls below the 44px touch minimum, so it is refused
+    // on a coarse pointer rather than left to the CSS media query alone —
+    // the stored preference is kept, so a dock back to a mouse restores it.
+    const density = localStorage.getItem("dl_conn_density") || "comfortable";
+    if (density === "compact" && coarsePointer.matches) root.removeAttribute("data-density");
+    else root.setAttribute("data-density", density);
+    if (el.themeToggle) el.themeToggle.innerHTML = themeIcon(root.getAttribute("data-theme") === "dark");
+    syncAppearanceControls();
+  }
+
+  /** Reflect the live appearance on the sheet's controls. */
+  function syncAppearanceControls() {
+    const root = document.documentElement;
+    const preference = localStorage.getItem("dl_conn_theme") || "system";
+    const mark = (group, attr, value) => {
+      if (!group) return;
+      for (const btn of group.querySelectorAll(".seg, .palette")) {
+        const on = btn.dataset[attr] === value;
+        btn.classList.toggle("is-on", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    };
+    mark(el.themeGroup, "themeChoice", preference);
+    mark(el.paletteGroup, "paletteChoice", root.getAttribute("data-palette"));
+    const density = localStorage.getItem("dl_conn_density") || "comfortable";
+    const effective = (density === "compact" && coarsePointer.matches) ? "comfortable" : density;
+    mark(el.densityGroup, "densityChoice", effective);
+  }
+
+  function setupTheme() {
+    applyAppearance();
+    // Follow the OS while the preference is "system" and only then — once
+    // the user picks light or dark explicitly, their choice wins outright.
+    const onSchemeChange = () => {
+      if ((localStorage.getItem("dl_conn_theme") || "system") === "system") applyAppearance();
+    };
+    if (typeof darkQuery.addEventListener === "function") darkQuery.addEventListener("change", onSchemeChange);
+    else if (typeof darkQuery.addListener === "function") darkQuery.addListener(onSchemeChange);
   }
 
   function toggleTheme() {
+    // Binary: an explicit choice, which also opts out of following the OS.
     const root = document.documentElement;
-    const current = root.getAttribute("data-theme");
-    const next = current === "dark" ? "light" : "dark";
-    root.setAttribute("data-theme", next);
+    const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
     localStorage.setItem("dl_conn_theme", next);
-    el.themeToggle.innerHTML = themeIcon(next === "dark");
+    applyAppearance();
+  }
+
+  /* ── Dialog plumbing ──────────────────────────────────────────────
+     Two dialogs now exist (the appearance sheet and the QR scanner) and
+     both need the same three things: Escape to close, focus moved in,
+     and focus returned to the opener. That contract lives here once so
+     neither dialog can quietly skip it. */
+
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  /** Open a dialog, remembering what had focus so it can be restored. */
+  function openDialog(panel, opener) {
+    if (!panel) return;
+    panel._opener = opener || document.activeElement;
+    panel.classList.remove("hidden");
+    if (opener && opener.setAttribute) opener.setAttribute("aria-expanded", "true");
+    const first = panel.querySelector(FOCUSABLE);
+    if (first) first.focus();
+  }
+
+  /** Close a dialog and hand focus back to whatever opened it. */
+  function closeDialog(panel) {
+    if (!panel || panel.classList.contains("hidden")) return;
+    panel.classList.add("hidden");
+    const opener = panel._opener;
+    panel._opener = null;
+    if (opener && opener.setAttribute) opener.setAttribute("aria-expanded", "false");
+    if (opener && opener.focus) opener.focus();
+  }
+
+  /**
+   * Wire Escape-to-close and Tab containment for a dialog. Trap is only
+   * enforced for a modal; the appearance sheet is non-modal (it sits over
+   * the page but the page stays usable), so Tab is allowed to leave it.
+   */
+  function wireDialog(panel, { modal = false } = {}) {
+    if (!panel) return;
+    panel.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeDialog(panel);
+        return;
+      }
+      if (event.key !== "Tab" || !modal) return;
+      const items = Array.from(panel.querySelectorAll(FOCUSABLE))
+        .filter((n) => n.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+  }
+
+  function setupAppearancePanel() {
+    wireDialog(el.appearancePanel, { modal: false });
+    if (el.btnAppearance) {
+      el.btnAppearance.addEventListener("click", () => {
+        if (el.appearancePanel.classList.contains("hidden")) {
+          openDialog(el.appearancePanel, el.btnAppearance);
+        } else {
+          closeDialog(el.appearancePanel);
+        }
+      });
+    }
+    if (el.btnAppearanceClose) {
+      el.btnAppearanceClose.addEventListener("click", () => closeDialog(el.appearancePanel));
+    }
+    // Clicking away dismisses the sheet: it is non-modal, so it must not
+    // demand an explicit close.
+    document.addEventListener("click", (event) => {
+      const panel = el.appearancePanel;
+      if (!panel || panel.classList.contains("hidden")) return;
+      if (panel.contains(event.target) || (el.btnAppearance && el.btnAppearance.contains(event.target))) return;
+      closeDialog(panel);
+    });
+    const choose = (group, attr, key, apply) => {
+      if (!group) return;
+      group.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-" + attr + "]");
+        if (!btn || !group.contains(btn)) return;
+        localStorage.setItem(key, btn.dataset[attr]);
+        apply(btn.dataset[attr]);
+      });
+    };
+    choose(el.themeGroup, "themeChoice", "dl_conn_theme", applyAppearance);
+    choose(el.paletteGroup, "paletteChoice", "dl_conn_palette", applyAppearance);
+    choose(el.densityGroup, "densityChoice", "dl_conn_density", applyAppearance);
   }
 
   function truncateNpub(npub) {

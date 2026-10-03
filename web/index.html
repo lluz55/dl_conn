@@ -82,6 +82,8 @@
     <symbol id="i-lightbulb" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/></symbol>
     <symbol id="i-docker" viewBox="0 0 24 24"><path d="M2 14h20v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4z"/><rect x="4" y="10" width="3" height="3"/><rect x="8" y="10" width="3" height="3"/><rect x="12" y="10" width="3" height="3"/><rect x="8" y="6" width="3" height="3"/><rect x="12" y="6" width="3" height="3"/><rect x="12" y="2" width="3" height="3"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.6-1.4-.3-.4-.4-.8-.4-1.1 0-.8.7-1.5 1.5-1.5H16a6 6 0 0 0 6-6c0-4.4-4.5-8-10-8z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
   </svg>
 
@@ -98,22 +100,109 @@
         <h1>dl_conn</h1>
       </div>
       <div class="header-actions">
-        <button id="btn-toggle-relays" class="btn-icon on" aria-label="Ocultar configuração de relays" data-tip="Mostrar ou ocultar relays" aria-expanded="true">
+        <button id="btn-toggle-relays" class="btn-icon on" aria-label="Ocultar configuração de relays" data-tip-end data-tip="Mostrar ou ocultar relays" aria-expanded="true">
           <svg class="icon" aria-hidden="true"><use href="#i-relays"></use></svg>
         </button>
-        <button id="btn-toggle-debug" class="btn-icon" aria-label="Ferramentas de depuração" data-tip="Ferramentas de depuração" aria-expanded="false">
+        <button id="btn-toggle-debug" class="btn-icon" aria-label="Ferramentas de depuração" data-tip-end data-tip="Ferramentas de depuração" aria-expanded="false">
           <svg class="icon" aria-hidden="true"><use href="#i-terminal"></use></svg>
         </button>
-        <button id="btn-lock-session" class="btn-icon hidden" aria-label="Bloquear sessão" data-tip="Bloquear sessão">
+        <button id="btn-lock-session" class="btn-icon hidden" aria-label="Bloquear sessão" data-tip-end data-tip="Bloquear sessão">
           <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
         </button>
-        <button id="theme-toggle" class="btn-icon" aria-label="Alternar tema" data-tip="Alternar tema">
+        <button id="btn-appearance" class="btn-icon" aria-label="Aparência: tema, paleta e densidade" data-tip-end data-tip="Aparência" aria-haspopup="dialog" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-palette"></use></svg>
+        </button>
+        <button id="theme-toggle" class="btn-icon" aria-label="Alternar tema" data-tip-end data-tip="Alternar tema">
           <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>
         </button>
       </div>
     </header>
 
+    <!-- Appearance sheet. Four palettes and a three-way theme already exist
+         as tokens and as persisted keys, but nothing ever rendered a control
+         for either: setupTheme() read dl_conn_palette on every load and the
+         user had no way to set it. -->
+    <div id="appearance-panel" class="sheet hidden" role="dialog" aria-modal="false" aria-label="Aparência">
+      <div class="sheet-head">
+        <h2>Aparência</h2>
+        <button id="btn-appearance-close" class="btn-icon" aria-label="Fechar aparência">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+
+      <fieldset class="sheet-group">
+        <legend class="sheet-legend">Tema</legend>
+        <div class="seg-group seg-group--wide" id="theme-group" role="group" aria-label="Tema">
+          <button type="button" class="seg" data-theme-choice="light">Claro</button>
+          <button type="button" class="seg" data-theme-choice="dark">Escuro</button>
+          <button type="button" class="seg" data-theme-choice="system">Sistema</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="sheet-group">
+        <legend class="sheet-legend">Paleta</legend>
+        <div class="palette-grid" id="palette-group" role="group" aria-label="Paleta de cores">
+          <button type="button" class="palette" data-palette-choice="azure">
+            <span class="palette-dots" aria-hidden="true"><i class="dot-a"></i><i class="dot-b"></i><i class="dot-c"></i></span>
+            <span class="palette-name">Azure</span>
+          </button>
+          <button type="button" class="palette" data-palette-choice="evergreen">
+            <span class="palette-dots" aria-hidden="true"><i class="dot-a"></i><i class="dot-b"></i><i class="dot-c"></i></span>
+            <span class="palette-name">Evergreen</span>
+          </button>
+          <button type="button" class="palette" data-palette-choice="ember">
+            <span class="palette-dots" aria-hidden="true"><i class="dot-a"></i><i class="dot-b"></i><i class="dot-c"></i></span>
+            <span class="palette-name">Ember</span>
+          </button>
+          <button type="button" class="palette" data-palette-choice="iris">
+            <span class="palette-dots" aria-hidden="true"><i class="dot-a"></i><i class="dot-b"></i><i class="dot-c"></i></span>
+            <span class="palette-name">Iris</span>
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset class="sheet-group">
+        <legend class="sheet-legend">Densidade</legend>
+        <div class="seg-group seg-group--wide" id="density-group" role="group" aria-label="Densidade">
+          <button type="button" class="seg" data-density-choice="compact">Compacta</button>
+          <button type="button" class="seg" data-density-choice="comfortable">Confortável</button>
+        </div>
+        <p class="status-sub">A densidade compacta só vale em ponteiro fino: alvos de toque nunca ficam abaixo de 44px.</p>
+      </fieldset>
+    </div>
+
     <main class="main">
+
+      <!-- Status rail: the four facts that decide whether the tunnel is
+           worth using, always on screen. It mirrors values that already
+           exist further down rather than keeping its own copy — see
+           syncStatusRail in app.js — so it cannot drift from them.
+           Deliberately not an aria-live region: the session countdown
+           rewrites it every second, and a live region would announce
+           that sixty times a minute. The same values are present in the
+           overview cards, which a screen reader can navigate to. -->
+      <div id="status-rail" class="status-rail" aria-label="Estado geral">
+        <div class="rail-item">
+          <span class="dot dot-unknown" id="rail-tunnel-dot" aria-hidden="true"></span>
+          <span class="rail-label">Túnel</span>
+          <span class="rail-value num" id="rail-tunnel">aguardando</span>
+        </div>
+        <div class="rail-item">
+          <span class="dot dot-unknown" id="rail-session-dot" aria-hidden="true"></span>
+          <span class="rail-label">Sessão</span>
+          <span class="rail-value num" id="rail-session">—</span>
+        </div>
+        <div class="rail-item">
+          <span class="dot dot-unknown" id="rail-relay-dot" aria-hidden="true"></span>
+          <span class="rail-label">Relays</span>
+          <span class="rail-value num" id="rail-relay">—</span>
+        </div>
+        <div class="rail-item">
+          <span class="dot dot-unknown" id="rail-service-dot" aria-hidden="true"></span>
+          <span class="rail-label">Serviços</span>
+          <span class="rail-value num" id="rail-service">—</span>
+        </div>
+      </div>
 
       <!-- Shown when the daemon bounced this browser here from an expired
            link (see internal/auth/login_redirect.go): says where it was
@@ -299,10 +388,10 @@
         <div class="card-head">
           <h2>Ferramentas de depuração</h2>
           <div class="card-head-actions">
-            <button id="btn-run-diagnostics" class="btn-icon" aria-label="Rodar diagnóstico" data-tip="Rodar diagnóstico">
+            <button id="btn-run-diagnostics" class="btn-icon" aria-label="Rodar diagnóstico" data-tip-end data-tip="Rodar diagnóstico">
               <svg class="icon" aria-hidden="true"><use href="#i-activity"></use></svg>
             </button>
-            <button id="btn-clear-debug" class="btn-icon" aria-label="Limpar log" data-tip="Limpar log">
+            <button id="btn-clear-debug" class="btn-icon" aria-label="Limpar log" data-tip-end data-tip="Limpar log">
               <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
             </button>
           </div>
@@ -360,12 +449,85 @@
           </div>
         </div>
 
-        <!-- Services list in overview (compact list view) -->
+        <!-- Serviços: single list view. It owns the rows, the health strip
+             and every management control (add / refresh / clear) — there is
+             no second grid rendering of the same data. -->
         <div id="services-overview" class="services-overview hidden" aria-label="Serviços">
           <div class="services-overview-head">
             <h3>Serviços</h3>
-            <span id="services-overview-count" class="pill p-info" aria-live="polite">0</span>
+            <div class="card-head-actions">
+              <span id="services-overview-count" class="pill p-info" aria-live="polite">0</span>
+              <button id="btn-toggle-custom-service" class="btn-icon" aria-label="Adicionar serviço" data-tip-end data-tip="Adicionar serviço" aria-expanded="false">
+                <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+              </button>
+              <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip-end data-tip="Atualizar status dos serviços">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+              </button>
+              <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip-end data-tip="Limpar lista de serviços">
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+              </button>
+            </div>
           </div>
+          <div id="services-health" class="health-bar-wrap hidden">
+            <!-- Proportional strip drawn as SVG rects (x/width set from
+                 app.js via setAttribute, same technique as the sparklines
+                 below) so no inline `style` is ever touched — the page CSP
+                 forbids style-src 'unsafe-inline'. -->
+            <svg class="health-bar" id="health-bar-svg" viewBox="0 0 100 8" preserveAspectRatio="none"
+                 role="img" aria-label="Proporção de serviços ativos, inativos e não confirmados">
+              <rect class="health-seg seg-up" id="health-seg-up" x="0" y="0" width="0" height="8"></rect>
+              <rect class="health-seg seg-down" id="health-seg-down" x="0" y="0" width="0" height="8"></rect>
+              <rect class="health-seg seg-unknown" id="health-seg-unknown" x="0" y="0" width="0" height="8"></rect>
+            </svg>
+            <div class="health-legend">
+              <span class="health-legend-item"><span class="dot dot-good" aria-hidden="true"></span><span id="health-count-up">0 ativos</span></span>
+              <span class="health-legend-item"><span class="dot dot-bad" aria-hidden="true"></span><span id="health-count-down">0 inativos</span></span>
+              <span class="health-legend-item"><span class="dot dot-unknown" aria-hidden="true"></span><span id="health-count-unknown">0 aguardando</span></span>
+            </div>
+          </div>
+          <form id="custom-service-form" class="custom-service-form hidden" novalidate>
+            <div class="custom-service-fields">
+              <div class="field">
+                <label for="custom-service-name" class="field-label">Nome</label>
+                <input id="custom-service-name" class="nsid-input" type="text" maxlength="80" required placeholder="Ex.: Grafana" />
+              </div>
+              <div class="field">
+                <label for="custom-service-port" class="field-label">Porta</label>
+                <input id="custom-service-port" class="nsid-input" type="number" min="1024" max="65535" inputmode="numeric" required placeholder="Ex.: 3000" />
+              </div>
+              <div class="field">
+                <label for="custom-service-icon" class="field-label">Ícone</label>
+                <select id="custom-service-icon" class="nsid-select" aria-label="Ícone do serviço"></select>
+              </div>
+              <div class="field custom-service-description-field">
+                <label for="custom-service-description" class="field-label">Descrição (opcional)</label>
+                <input id="custom-service-description" class="nsid-input" type="text" maxlength="240" placeholder="Como este serviço é usado" />
+              </div>
+            </div>
+            <div class="custom-service-options">
+              <label class="checkbox-row">
+                <input type="checkbox" id="custom-service-websocket" />
+                <span>Usar WebSocket na instalação permanente</span>
+              </label>
+              <label class="checkbox-row">
+                <input type="checkbox" id="custom-service-persist" />
+                <span>Salvar neste navegador</span>
+              </label>
+            </div>
+            <p class="status-sub">O acesso temporário usa <code>/local/&lt;porta&gt;/</code> e é somente HTTP. A opção WebSocket só será aplicada ao arquivo exportado para instalação permanente.</p>
+            <div class="custom-service-actions">
+              <button type="submit" id="btn-add-custom-service" class="btn btn-primary">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>Adicionar serviço
+              </button>
+              <button type="button" id="btn-export-services-yaml" class="btn btn-tonal">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar YAML
+              </button>
+              <button type="button" id="btn-export-services-nix" class="btn btn-tonal">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar Nix
+              </button>
+            </div>
+            <p id="custom-service-status" class="status-sub" role="status" aria-live="polite"></p>
+          </form>
           <ul id="services-overview-list" class="services-overview-list" role="list"></ul>
         </div>
       </section>
@@ -374,52 +536,82 @@
       <section id="host-telemetry-section" class="card hidden">
         <div class="card-head">
           <h2>Saúde do host</h2>
-          <span class="live-badge" id="tel-live" title="Telemetria do host em tempo real">
-            <span class="live-dot" aria-hidden="true"></span><span id="tel-updated">—</span>
-          </span>
-        </div>
-        <div class="telemetry-grid">
-          <div class="telemetry-item"><span class="status-label">CPU</span><span class="status-value num" id="tel-cpu">—</span></div>
-          <div class="telemetry-item"><span class="status-label">RAM</span><span class="status-value num" id="tel-ram">—</span></div>
-          <div class="telemetry-item"><span class="status-label">Disco</span><span class="status-value num" id="tel-disk">—</span></div>
-          <div class="telemetry-item"><span class="status-label">GPU</span><span class="status-value num" id="tel-gpu">—</span></div>
-          <div class="telemetry-item"><span class="status-label">Bateria</span><span class="status-value num" id="tel-batt">—</span></div>
-          <div class="telemetry-item"><span class="status-label">Uptime</span><span class="status-value num" id="tel-uptime">—</span></div>
-        </div>
-        <!-- Recent-history sparklines (client-side ring buffer, no backend
-             history endpoint exists yet — see docs/okf/log.md). Drawn as
-             plain inline SVG polylines updated from app.js; no charting
-             library, no CDN, CSP-compliant. -->
-        <div class="chart-row">
-          <div class="chart-card tone-primary">
-            <div class="chart-card-head">
-              <span class="chart-card-title">CPU (carga)</span>
-              <span class="chart-card-value num" id="chart-cpu-value">—</span>
-            </div>
-            <svg class="sparkline" id="chart-cpu" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
-              <polygon class="sparkline-fill" id="chart-cpu-fill" points=""></polygon>
-              <polyline class="sparkline-line" id="chart-cpu-line" points=""></polyline>
-            </svg>
+          <div class="card-head-actions">
+            <span class="pill p-info num" id="tel-uptime" title="Tempo ligado">—</span>
+            <span class="live-badge" id="tel-live" title="Telemetria do host em tempo real">
+              <span class="live-dot" aria-hidden="true"></span><span id="tel-updated">—</span>
+            </span>
           </div>
-          <div class="chart-card tone-accent">
-            <div class="chart-card-head">
-              <span class="chart-card-title">RAM</span>
-              <span class="chart-card-value num" id="chart-ram-value">—</span>
-            </div>
-            <svg class="sparkline" id="chart-ram" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
-              <polygon class="sparkline-fill" id="chart-ram-fill" points=""></polygon>
-              <polyline class="sparkline-line" id="chart-ram-line" points=""></polyline>
-            </svg>
+        </div>
+        <!-- Text equivalent of the meters below. A bar conveys "how full"
+             at a glance, but a screen reader can only read numbers, so
+             renderTelemetry fills both and the two must agree; the meters
+             are what sighted users get. -->
+        <p class="sr-only" id="reorder-hint">Pressione as setas para cima ou para baixo para reordenar o serviço.</p>
+        <div class="sr-only">
+          <p>CPU: <span id="tel-cpu">—</span></p>
+          <p>Memória: <span id="tel-ram">—</span></p>
+          <p>Disco: <span id="tel-disk">—</span></p>
+          <p>GPU: <span id="tel-gpu">—</span></p>
+          <p>Bateria: <span id="tel-batt">—</span></p>
+        </div>
+        <!-- Live meters: one per resource, each a bar drawn as an SVG rect
+             whose width is set with setAttribute — never inline `style`, the
+             page CSP forbids style-src 'unsafe-inline' (same technique as
+             the health bar below). Tones come from --meter-fill /
+             --color-threshold-* so a palette switch recolors them all. -->
+        <div class="meter-grid" id="tel-meters"></div>
+
+        <!-- Per-mount storage. `disks` is an array in the snapshot, so each
+             volume gets its own row: averaging them into a single number
+             hides exactly the disk that is filling up. -->
+        <div class="sub-block" id="tel-storage" hidden>
+          <div class="sub-head">
+            <h3>Armazenamento</h3>
+            <span class="status-sub" id="tel-storage-count"></span>
           </div>
-          <div class="chart-card tone-info">
-            <div class="chart-card-head">
-              <span class="chart-card-title">Disco</span>
-              <span class="chart-card-value num" id="chart-disk-value">—</span>
+          <div class="storage-list" id="tel-storage-list"></div>
+        </div>
+
+        <!-- History. Backed by the SQLite telemetry_samples table via
+             /api/host/telemetry?from=&to=, so a range survives a reload —
+             unlike the old client-side ring buffer, which reset on every
+             page load. -->
+        <div class="sub-block">
+          <div class="sub-head">
+            <h3>Histórico</h3>
+            <div class="seg-group" id="hist-window-group" role="group" aria-label="Janela de tempo">
+              <button type="button" class="seg" data-window="3600">1h</button>
+              <button type="button" class="seg" data-window="86400">24h</button>
+              <button type="button" class="seg is-on" data-window="604800">7d</button>
             </div>
-            <svg class="sparkline" id="chart-disk" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">
-              <polygon class="sparkline-fill" id="chart-disk-fill" points=""></polygon>
-              <polyline class="sparkline-line" id="chart-disk-line" points=""></polyline>
-            </svg>
+          </div>
+          <div class="seg-group" id="hist-metric-group" role="group" aria-label="Métrica">
+            <button type="button" class="seg is-on" data-metric="cpu">CPU</button>
+            <button type="button" class="seg" data-metric="ram">Memória</button>
+            <button type="button" class="seg" data-metric="disk">Disco</button>
+            <button type="button" class="seg" data-metric="gpu">GPU</button>
+          </div>
+          <div class="chart-panel">
+            <div class="chart-panel-head">
+              <span class="chart-panel-value num" id="hist-value">—</span>
+              <span class="chart-panel-unit" id="hist-unit"></span>
+              <div class="spacer"></div>
+              <dl class="chart-stats">
+                <div class="chart-stat"><dt>mín</dt><dd class="num" id="hist-min">—</dd></div>
+                <div class="chart-stat"><dt>méd</dt><dd class="num" id="hist-avg">—</dd></div>
+                <div class="chart-stat"><dt>máx</dt><dd class="num" id="hist-max">—</dd></div>
+              </dl>
+            </div>
+            <div class="chart-frame">
+              <svg class="series-chart" id="hist-chart" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Série temporal">
+                <g class="chart-grid" id="hist-grid"></g>
+                <line class="chart-threshold" id="hist-threshold" x1="0" x2="100" y1="0" y2="0"></line>
+                <polygon class="series-fill" id="hist-fill" points=""></polygon>
+                <polyline class="series-line" id="hist-line" points=""></polyline>
+              </svg>
+              <p class="status-sub" id="hist-status" role="status" aria-live="polite"></p>
+            </div>
           </div>
         </div>
       </section>
@@ -443,84 +635,6 @@
         </div>
       </section>
 
-      <!-- Services -->
-      <section id="services-section" class="card hidden">
-        <div class="card-head">
-          <h2>Serviços</h2>
-          <div class="card-head-actions">
-            <button id="btn-toggle-custom-service" class="btn-icon" aria-label="Adicionar serviço" data-tip="Adicionar serviço" aria-expanded="false">
-              <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
-            </button>
-            <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip="Atualizar status dos serviços">
-              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
-            </button>
-            <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip="Limpar lista de serviços">
-              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
-            </button>
-          </div>
-        </div>
-        <form id="custom-service-form" class="custom-service-form hidden" novalidate>
-          <div class="custom-service-fields">
-            <div class="field">
-              <label for="custom-service-name" class="field-label">Nome</label>
-              <input id="custom-service-name" class="nsid-input" type="text" maxlength="80" required placeholder="Ex.: Grafana" />
-            </div>
-            <div class="field">
-              <label for="custom-service-port" class="field-label">Porta</label>
-              <input id="custom-service-port" class="nsid-input" type="number" min="1024" max="65535" inputmode="numeric" required placeholder="Ex.: 3000" />
-            </div>
-            <div class="field">
-              <label for="custom-service-icon" class="field-label">Ícone</label>
-              <select id="custom-service-icon" class="nsid-select" aria-label="Ícone do serviço"></select>
-            </div>
-            <div class="field custom-service-description-field">
-              <label for="custom-service-description" class="field-label">Descrição (opcional)</label>
-              <input id="custom-service-description" class="nsid-input" type="text" maxlength="240" placeholder="Como este serviço é usado" />
-            </div>
-          </div>
-          <div class="custom-service-options">
-            <label class="checkbox-row">
-              <input type="checkbox" id="custom-service-websocket" />
-              <span>Usar WebSocket na instalação permanente</span>
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="custom-service-persist" />
-              <span>Salvar neste navegador</span>
-            </label>
-          </div>
-          <p class="status-sub">O acesso temporário usa <code>/local/&lt;porta&gt;/</code> e é somente HTTP. A opção WebSocket só será aplicada ao arquivo exportado para instalação permanente.</p>
-          <div class="custom-service-actions">
-            <button type="submit" id="btn-add-custom-service" class="btn btn-primary">
-              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>Adicionar serviço
-            </button>
-            <button type="button" id="btn-export-services-yaml" class="btn btn-tonal">
-              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar YAML
-            </button>
-            <button type="button" id="btn-export-services-nix" class="btn btn-tonal">
-              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"></use></svg>Exportar Nix
-            </button>
-          </div>
-          <p id="custom-service-status" class="status-sub" role="status" aria-live="polite"></p>
-        </form>
-        <div id="services-health" class="health-bar-wrap hidden">
-          <!-- Proportional strip drawn as SVG rects (x/width set from
-               app.js via setAttribute, same technique as the sparklines
-               below) so no inline `style` is ever touched — the page CSP
-               forbids style-src 'unsafe-inline'. -->
-          <svg class="health-bar" id="health-bar-svg" viewBox="0 0 100 8" preserveAspectRatio="none"
-               role="img" aria-label="Proporção de serviços ativos, inativos e não confirmados">
-            <rect class="health-seg seg-up" id="health-seg-up" x="0" y="0" width="0" height="8"></rect>
-            <rect class="health-seg seg-down" id="health-seg-down" x="0" y="0" width="0" height="8"></rect>
-            <rect class="health-seg seg-unknown" id="health-seg-unknown" x="0" y="0" width="0" height="8"></rect>
-          </svg>
-          <div class="health-legend">
-            <span class="health-legend-item"><span class="dot dot-good" aria-hidden="true"></span><span id="health-count-up">0 ativos</span></span>
-            <span class="health-legend-item"><span class="dot dot-bad" aria-hidden="true"></span><span id="health-count-down">0 inativos</span></span>
-            <span class="health-legend-item"><span class="dot dot-unknown" aria-hidden="true"></span><span id="health-count-unknown">0 aguardando</span></span>
-          </div>
-        </div>
-        <div id="services-list" class="services-grid"></div>
-      </section>
         </div>
       </div>
 
@@ -532,7 +646,7 @@
     <div class="qr-overlay-inner">
       <div class="qr-overlay-head">
         <h3>Ler nsec do QR</h3>
-        <button id="btn-qr-close" class="btn-icon" aria-label="Fechar leitor de QR" data-tip="Fechar">
+        <button id="btn-qr-close" class="btn-icon" aria-label="Fechar leitor de QR" data-tip-end data-tip="Fechar">
           <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
         </button>
       </div>
