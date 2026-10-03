@@ -28,22 +28,26 @@ const TUNNEL = "https://demo.trycloudflare.com";
 /**
  * Install a minimum stub of the DOM the redemption path uses. Node has no
  * DOM globals by default; the helpers here only touch createElement,
- * appendChild, querySelectorAll, and submit(), so a hand-rolled stub is
- * cheaper than pulling jsdom. Returns a `dispose` to restore the originals
- * (none yet — the stub is permanent for the test process) and a `forms`
- * array of every <form> created during the test, so the assertions can
- * inspect what would have been submitted.
+ * appendChild, querySelectorAll, submit(), and (when a new tab is opened)
+ * window.open, so a hand-rolled stub is cheaper than pulling jsdom.
+ *
+ * Returns a `dispose` to restore the originals (none yet — the stub is
+ * permanent for the test process) and the shared inspection handles:
+ *  - `forms`: every <form> created during the test, so assertions can
+ *    inspect what would have been submitted.
+ *  - `openedWindows`: every (name, features) tuple the test fed into
+ *    window.open, so the test can confirm a target="_blank" redemption
+ *    pre-opens a window.
  */
 function installDomStub() {
   const forms = [];
+  const openedWindows = [];
 
   function makeInput() {
     return {
       type: "",
       name: "",
       value: "",
-      // appendChild is a no-op for inputs — the form walks children by
-      // appending into a list, not a tree.
     };
   }
 
@@ -88,15 +92,24 @@ function installDomStub() {
   };
 
   // submit() would navigate in a real browser; in node there's no
-  // navigation, so stub it. Defining it on the stub prototype is enough
-  // since the stub form isn't an HTMLFormElement.
+  // navigation, so stub it.
   const FormProto = Object.getPrototypeOf(makeForm());
   FormProto.submit = function noop() {};
 
-  return { forms };
+  globalThis.window = {
+    open(url, name, features) {
+      openedWindows.push({ url, name, features });
+      // Real browsers return a WindowProxy; the helper ignores the return
+      // value (it targets by name, not by reference), so returning null is
+      // faithful to the test's needs.
+      return null;
+    },
+  };
+
+  return { forms, openedWindows };
 }
 
-const { forms } = installDomStub();
+const { forms, openedWindows } = installDomStub();
 
 /** Records every call and answers with a scripted response (step-up only). */
 function stubFetch(responses) {
@@ -132,14 +145,19 @@ assert.equal(serviceHref(null, undefined), "/", "no arguments at all still yield
 console.log("  [redeemToken — form submission]");
 {
   forms.length = 0;
+  openedWindows.length = 0;
   const ok = redeemToken(TUNNEL, "secret-token", "/frigate/");
   assert.equal(ok, true, "submitting a valid form returns true");
   assert.equal(forms.length, 1, "one form is built");
+  assert.equal(openedWindows.length, 0, "no window.open when no new tab is requested");
 
   const form = forms[0];
   assert.equal(form.method, "POST", "the token travels in a body, not a query string");
   assert.equal(form.action, TUNNEL + "/auth", "posts to /auth");
   assert.ok(!form.action.includes("secret-token"), "the action URL does not carry the token");
+  assert.equal(form.target, "", "no target means the current tab navigates");
+  assert.equal(form.style.position, "absolute", "off-screen position, not display:none");
+  assert.equal(form.style.left, "-9999px");
 
   const fields = {};
   for (const input of form.querySelectorAll("input")) fields[input.name] = input.value;
@@ -147,24 +165,52 @@ console.log("  [redeemToken — form submission]");
   assert.equal(fields.redirect, "/frigate/", "the destination is in the form body");
 }
 {
-  // A new tab is requested via target="_blank": the same form, but the
-  // browser will spawn a fresh browsing context for the navigation. The
-  // field set is unchanged.
+  // A new tab is requested via target="_blank": the helper pre-opens an
+  // about:blank window with a unique name (so the form submission can
+  // target it), and the form's `target` ends up being that name, not the
+  // literal "_blank" — that's the only way the submission reliably lands
+  // on the window `window.open` opened instead of being swallowed by the
+  // popup blocker (or spawning a sibling window).
   forms.length = 0;
+  openedWindows.length = 0;
   const ok = redeemToken(TUNNEL, "secret-token", "/hass/", "_blank");
   assert.equal(ok, true);
+  assert.equal(forms.length, 1);
+  assert.equal(openedWindows.length, 1, "a window is pre-opened for the new tab");
+
+  const opened = openedWindows[0];
+  assert.equal(opened.url, "", "the pre-opened window is about:blank");
+  assert.match(opened.name, /^dl_conn_/, "the pre-opened window has a generated name");
+  assert.ok(
+    opened.features && opened.features.includes("noopener") && opened.features.includes("noreferrer"),
+    "no opener/noreferrer so the SPA can't poke the service's window"
+  );
+
   const form = forms[0];
   assert.equal(form.method, "POST");
   assert.equal(form.action, TUNNEL + "/auth");
-  assert.equal(form.target, "_blank", "target=_blank opens a new tab on submit");
+  assert.equal(form.target, opened.name, "the form targets the pre-opened window by name");
   const fields = {};
   for (const input of form.querySelectorAll("input")) fields[input.name] = input.value;
   assert.equal(fields.token, "secret-token");
   assert.equal(fields.redirect, "/hass/");
 }
 {
+  // Two consecutive _blank calls must produce different window names, so the
+  // two navigations don't collide on a single about:blank tab.
+  openedWindows.length = 0;
+  forms.length = 0;
+  redeemToken(TUNNEL, "t1", "/a/", "_blank");
+  const firstName = openedWindows[0].name;
+  forms.length = 0;
+  redeemToken(TUNNEL, "t2", "/b/", "_blank");
+  const secondName = openedWindows[1].name;
+  assert.notEqual(firstName, secondName, "consecutive new-tab calls open different tabs");
+}
+{
   // A trailing slash on the tunnel origin is not doubled in the action.
   forms.length = 0;
+  openedWindows.length = 0;
   redeemToken(TUNNEL + "/", "tok", "/x/");
   assert.equal(forms[0].action, TUNNEL + "/auth", "action URL never doubles the slash");
 }
@@ -173,6 +219,7 @@ console.log("  [redeemToken — form submission]");
   // daemon falls back to "/" for an empty redirect parameter (see
   // SafeRedirect), which is the SPA itself.
   forms.length = 0;
+  openedWindows.length = 0;
   redeemToken(TUNNEL, "tok", "");
   const fields = {};
   for (const input of forms[0].querySelectorAll("input")) fields[input.name] = input.value;
@@ -187,18 +234,22 @@ console.log("  [redeemToken — form submission]");
 console.log("  [redeemAndOpen — thin wrapper]");
 {
   forms.length = 0;
+  openedWindows.length = 0;
   const ok = redeemAndOpen(TUNNEL, "secret-token", "/hass/", "_blank");
   assert.equal(ok, true);
   assert.equal(forms.length, 1, "the helper builds the same form as redeemToken");
+  assert.equal(openedWindows.length, 1, "and pre-opens a window for the new tab");
   assert.equal(forms[0].method, "POST");
   assert.equal(forms[0].action, TUNNEL + "/auth");
-  assert.equal(forms[0].target, "_blank");
+  assert.equal(forms[0].target, openedWindows[0].name);
 }
 {
-  // Same tab when no target is supplied: the form's default target is the
-  // current window, so the navigation lands here.
+  // Same tab when no target is supplied: no window is pre-opened, the
+  // form's target is empty, the navigation lands here.
   forms.length = 0;
+  openedWindows.length = 0;
   redeemAndOpen(TUNNEL, "secret-token", "/hass/");
+  assert.equal(openedWindows.length, 0);
   assert.equal(forms[0].target, "", "no target defaults to the current window");
 }
 

@@ -81,25 +81,53 @@ export function serviceHref(tunnelURL, redirectPath) {
  * navigation, so the destination origin becomes first-party for cookie
  * purposes and the Set-Cookie sticks.
  *
+ * When a new tab is requested (target === "_blank"), the new window is
+ * pre-opened via `window.open` before the form is submitted, and the form
+ * targets the opened window by name. Two reasons this is more reliable
+ * than just `form.target = "_blank"` + `form.submit()`:
+ *  1. `window.open` inside the click that triggered the redemption is the
+ *     canonical user-gesture-bound popup opener; a bare `form.submit()`
+ *     with `target="_blank"` is not always recognized as user-initiated
+ *     and the popup blocker may leave the new tab at about:blank.
+ *  2. Naming the window guarantees the form's navigation lands on the
+ *     window `window.open` already opened, instead of spawning a second
+ *     one.
+ *
+ * The form is positioned off-screen rather than display:none: browsers
+ * refuse to submit a form whose computed display is none in some paths
+ * (even with target="_blank"), and the form's inputs are all hidden
+ * anyway, so no flicker is visible to the user either way.
+ *
  * @param {string} tunnelURL   tunnel origin (e.g. "https://x.trycloudflare.com")
  * @param {string} token        one-time token to redeem
  * @param {string} redirectPath same-origin destination (e.g. "/hass/")
- * @param {string} [target]     form target; "_blank" opens a new tab,
- *                              anything else (or omitted) navigates the
- *                              current tab.
+ * @param {string} [target]     "_blank" opens a new tab; anything else
+ *                              (or omitted) navigates the current tab.
  * @returns {boolean} true when the form was submitted; false when no token
  *   or no tunnelURL was supplied, so a caller can early-out without
  *   triggering a navigation that has nothing to do.
  */
 export function redeemToken(tunnelURL, token, redirectPath, target) {
   if (!tunnelURL || !token) return false;
+
+  // Pre-open the window when a new tab is requested, so the form
+  // submission has a target window whose user-gesture context is
+  // already established (see the function comment for why this is needed).
+  // A unique name makes the form's submission target exactly this window
+  // instead of opening a sibling one.
+  let targetName = target || "";
+  if (target === "_blank") {
+    targetName = "dl_conn_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+    window.open("", targetName, "noopener,noreferrer");
+  }
+
   const form = document.createElement("form");
   form.method = "POST";
   form.action = tunnelURL.replace(/\/+$/, "") + "/auth";
-  // Submission happens before the user could see it, but display:none keeps
-  // the brief flicker away too — same as the rest of the SPA.
-  form.style.display = "none";
-  if (target) form.target = target;
+  form.style.position = "absolute";
+  form.style.left = "-9999px";
+  form.style.top = "0";
+  form.target = targetName;
 
   const tokenInput = document.createElement("input");
   tokenInput.type = "hidden";
@@ -116,9 +144,9 @@ export function redeemToken(tunnelURL, token, redirectPath, target) {
   }
 
   document.body.appendChild(form);
-  // form.submit() initiates the navigation synchronously; the form is then
-  // attached to a discarded document. Leaving it in place is safe and avoids
-  // racing the navigation in browsers that tear down the document on submit.
+  // form.submit() initiates the navigation synchronously; the form is
+  // left in place for the brief lifetime of the navigation, and the
+  // browser discards the document on unload.
   form.submit();
   return true;
 }

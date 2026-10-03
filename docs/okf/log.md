@@ -23,6 +23,35 @@ type: log
   pré-existentes (35 `errcheck`, 7 `staticcheck`) em código que não mudou nesta
   release; `go test`, `go vet` e as 12 suítes de `web/tests/` passam.
 
+- **Nova aba abre com `window.open`, depois form-POST navega para ela.** A
+  redenção por form-POST abriu caminho para um segundo bug que a
+  substituição direta deixou: a nova aba (`form.target = "_blank"`)
+  ficava em `about:blank` em alguns navegadores, porque (a) o form
+  estava `display: none`, e (b) `form.submit()` com `target="_blank"`
+  em um clique é o padrão que os popup blockers nem sempre reconhecem
+  como user-initiated, mesmo dentro de um handler de click. Sintoma
+  reportado: "as paginas estão sendo abertas com about blank em vez
+  do serviço".
+
+  Fix: o caminho da nova aba agora chama `window.open("", nome, ...)`
+  — gesto do usuário dentro do click — para garantir que o popup é
+  permitido, e o form submita com `target` apontando para o **nome**
+  dessa janela pré-aberta (não o literal `"_blank"`), então a navegação
+  cai na aba que já existe em vez de abrir outra. O form também sai
+  de `display: none` para `position: absolute; left: -9999px` —
+  invisível para o usuário (todos os inputs são `hidden`), mas ainda
+  "no layout" para o navegador não pular a submissão. Casos cobertos
+  pelos testes: target ausente (sem pré-aberta, navega a aba atual),
+  target `_blank` (pré-aberta com nome único, form aponta pra ela),
+  chamadas consecutivas com nomes distintos.
+
+  Decisão registrada porque é o tipo de coisa que parece "óbvia na
+  teoria" mas só aparece quando o browser decide não gostar do seu
+  form: o `window.open` primeiro é o padrão canônico de popup
+  user-gesture-bound, e o `display: none` em forms submetidos é uma
+  pegadinha conhecida. `go test ./...`, `go vet ./...` e as 12 suítes
+  de `web/tests/` passam; lint não introduz warnings novos.
+
 - **Redenção de token agora é form-POST, não `fetch()` cross-origin.** A SPA
   redencionava o token via `fetch(..., {mode: "no-cors"})` e dependia do
   `Set-Cookie` da resposta para abrir o serviço (`web/js/api_client.js`).
