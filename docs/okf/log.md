@@ -6,6 +6,21 @@ type: log
 
 ## 2026-10-03
 
+- **Redirecionamento direto em sessões já ativas e suporte a `?next=` autenticado no `RootFallback`.**
+  Ao abrir múltiplos serviços a partir do frontend SPA cross-origin (ex.: GitHub Pages):
+  1. No `web/app.js`, o token de uso único (`state.authToken`) não era descartado após o primeiro
+     resgate, fazendo com que cliques subsequentes submetessem novamente o token já consumido via
+     `POST /auth`. Como navegadores não enviam cookies `SameSite=Lax` em requisições POST cross-origin,
+     o daemon rejeitava o token expirado e redirecionava para `/?next=<serviço>`. O `openService`
+     agora consome `state.authToken = null` na primeira abertura e, para cliques posteriores com sessão
+     já estabelecida, navega diretamente via GET (`window.open(serviceHref(...), "_blank")`), permitindo
+     que o navegador envie o cookie `SameSite=Lax` sem passar por `/auth`.
+  2. No `internal/proxy/router.go` (`RootFallback`), requisições para `/?next=<destino>` feitas por
+     clientes que já possuem cookie de sessão válido (`ValidateSession(r) == true`) agora são
+     imediatamente redirecionadas (`303 See Other`) para `auth.SafeRedirect(next)` em vez de servir a
+     SPA raiz vazia (`index.html`). Isso elimina o cenário em que um acesso redirecionado a `/?next=`
+     exibia a tela inicial desautenticada em navegadores que já possuíam sessão ativa.
+
 - **CSP `form-action` bloqueava redenção cross-origin, e `api.trycloudflare.com` capturada em erro.**
   Três causas convergiam para abrir páginas em branco para todos os serviços:
   1. A política de CSP em `web/index.html` e `cmd/dl_conn/main.go` definia `form-action 'self'`.

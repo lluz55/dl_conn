@@ -199,6 +199,15 @@ func (rt *Router) clientIPForLog(r *http.Request) string {
 // for is offered to the router.
 func RootFallback(rt *Router, static http.Handler, files http.FileSystem) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.URL.Path == "/" || r.URL.Path == "/index.html") && r.URL.Query().Get("next") != "" {
+			if rt != nil && rt.sessions != nil && rt.sessions.ValidateSession(r) {
+				if target := auth.SafeRedirect(r.URL.Query().Get("next")); target != "/" {
+					w.Header().Set("Cache-Control", "no-store")
+					http.Redirect(w, r, target, http.StatusSeeOther)
+					return
+				}
+			}
+		}
 		if !isSPAPath(r.URL.Path) && !servesFile(files, r.URL.Path) && rt.matchService(r) != nil {
 			rt.ServeHTTP(w, r)
 			return

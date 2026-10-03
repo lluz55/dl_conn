@@ -1364,7 +1364,13 @@ import {
     // api_client.js for why this can't be a fetch().
     const href = serviceHref(state.tunnelURL, target);
     const go = () => {
-      redeemAndOpen(state.tunnelURL, state.authToken || "", target);
+      const token = state.authToken;
+      state.authToken = null;
+      if (token) {
+        redeemAndOpen(state.tunnelURL, token, target);
+      } else {
+        window.location.assign(href);
+      }
     };
 
     if (!el.returnBanner) {
@@ -1374,6 +1380,11 @@ import {
     el.returnBannerText.textContent = "Sessão renovada. Voltando para " + label + "…";
     el.returnBannerLink.href = href;
     el.returnBannerLink.textContent = "Ir agora";
+    el.returnBannerLink.onclick = (e) => {
+      e.preventDefault();
+      if (returnTimer) { clearTimeout(returnTimer); returnTimer = null; }
+      go();
+    };
     el.returnBanner.classList.remove("hidden");
 
     if (returnTimer) clearTimeout(returnTimer);
@@ -1501,12 +1512,24 @@ import {
    */
   function openService(redirectPath) {
     if (!state.tunnelURL) return;
-    redeemAndOpen(
-      state.tunnelURL,
-      state.authToken || "",
-      redirectPath,
-      "_blank"
-    );
+    if (state.authToken) {
+      const token = state.authToken;
+      state.authToken = null;
+      redeemAndOpen(
+        state.tunnelURL,
+        token,
+        redirectPath,
+        "_blank"
+      );
+    } else {
+      const targetUrl = serviceHref(state.tunnelURL, redirectPath);
+      const opened = window.open(targetUrl, "_blank");
+      if (opened) {
+        try { opened.opener = null; } catch { /* ignore */ }
+      } else {
+        window.location.assign(targetUrl);
+      }
+    }
   }
 
   function onOpenLocalPort() {

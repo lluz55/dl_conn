@@ -432,6 +432,49 @@ func TestRootFallback(t *testing.T) {
 	}
 }
 
+// When a client with a valid session arrives at the SPA login page ("/" or "/index.html")
+// carrying a ?next= parameter, RootFallback redirects them to their destination rather
+// than showing the login page to an already-authenticated user.
+func TestRootFallback_AuthenticatedNextRedirects(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	rt := NewRouter(testServices(), sm)
+	static := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("from spa"))
+	})
+	h := RootFallback(rt, static, nil)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	// 1. Authenticated client with valid next destination gets redirected (303 See Other)
+	req := httptest.NewRequest("GET", "/?next=%2Fzigbee2mqtt%2F", nil)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusSeeOther)
+	}
+	if got, want := w.Header().Get("Location"), "/zigbee2mqtt/"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+
+	// 2. Unauthenticated client with next destination is served the SPA login page
+	reqUnauth := httptest.NewRequest("GET", "/?next=%2Fzigbee2mqtt%2F", nil)
+	wUnauth := httptest.NewRecorder()
+	h.ServeHTTP(wUnauth, reqUnauth)
+	if wUnauth.Code != http.StatusOK || wUnauth.Body.String() != "from spa" {
+		t.Errorf("unauthenticated got status=%d body=%q, want 200 'from spa'", wUnauth.Code, wUnauth.Body.String())
+	}
+
+	// 3. Authenticated client with hostile/open-redirect next is served the SPA (no redirect)
+	reqHostile := httptest.NewRequest("GET", "/?next=//evil.com", nil)
+	reqHostile.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	wHostile := httptest.NewRecorder()
+	h.ServeHTTP(wHostile, reqHostile)
+	if wHostile.Code != http.StatusOK || wHostile.Body.String() != "from spa" {
+		t.Errorf("hostile next got status=%d body=%q, want 200 'from spa'", wHostile.Code, wHostile.Body.String())
+	}
+}
+
 // A sub-resource routed through the root fallback is still a proxied
 // request: Zero-Trust applies to it exactly as it does under a prefix.
 func TestRootFallback_RequiresSession(t *testing.T) {
