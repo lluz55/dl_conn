@@ -126,6 +126,12 @@ in
         ExecReload = "kill -HUP $MAINPID";
         Environment = [
           "PATH=${lib.makeBinPath [ pkgs.cloudflared ]}"
+          # SPA is bundled inside the package itself (cp -r web $out/share/web
+          # in dl-conn.nix); the daemon reads DL_CONN_WEB_DIR and serves it
+          # via http.FileServer. Leaving this unset makes the daemon fall back
+          # to ./web, which is the local dev convention but wrong under
+          # systemd where WorkingDirectory=/var/lib/dl-conn has no web/.
+          "DL_CONN_WEB_DIR=${cfg.package}/share/web"
         ];
         EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
 

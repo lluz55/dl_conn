@@ -330,7 +330,17 @@ func run(cmd *cobra.Command, _ []string) error {
 	// SPA static files. The catch-all pattern also has to let root-absolute
 	// sub-resource requests from proxied SPAs through to the router — see
 	// proxy.RootFallback.
-	webDir := filepath.Join(".", "web")
+	// SPA location: DL_CONN_WEB_DIR (set by the Nix package and module to
+	// ${package}/share/web) wins; the local-dev convention ./web is the
+	// fallback -- the latter is what `go run ./cmd/dl_conn` from a worktree
+	// expects, and what the daemon does by default when neither an env var
+	// nor an installed package is present. See dl-conn.nix + nixos/module.nix
+	// for the deploy side; see s17 + the 2026-10-03 log entry for why this
+	// fallback alone used to silently 404 everything under systemd.
+	webDir := os.Getenv("DL_CONN_WEB_DIR")
+	if webDir == "" {
+		webDir = filepath.Join(".", "web")
+	}
 	fs := securityHeaders(http.FileServer(http.Dir(webDir)))
 	mux.Handle("/", proxy.RootFallback(router, fs, http.Dir(webDir)))
 
