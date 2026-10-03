@@ -4,6 +4,23 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-03
+
+- **SPA 404 após o rebuild S17.** Login continuou respondendo porque Nostr
+  e `/auth` vivem em memória; `/` e `/config.json` voltaram 404 porque
+  o pacote Nix do `dl_conn` só embute `bin/dl_conn` — o `web/` que o daemon
+  serve via `http.FileServer` precisava ser extraído manualmente para
+  `/var/lib/dl-conn/web/` a cada release. A primeira tentativa de `nixos-rebuild switch`
+  que pegou o commit `fba5aa1` (e qualquer reconstrução subsequente sem o
+  passo de rsync) deixa a árvore vazia. O navegador parecia ter "voltado a
+  funcionar" só porque a página ficou em cache da sessão anterior.
+  Fix estrutural em `6bd5a5d fix(nix): bundle web/ into the dl_conn package`:
+  `dl-conn.nix` agora copia `$src/web → $out/share/web` no `postInstall`,
+  `nixos/module.nix` define `DL_CONN_WEB_DIR=${cfg.package}/share/web`
+  no `Environment`, e `cmd/dl_conn/main.go` lê esse env var com fallback
+  para `./web` no dev local. A partir desse commit, `nixos-rebuild switch`
+  sozinho mantém dashboard e daemon em sincronia — sem mais `rsync`.
+
 ## 2026-10-02
 
 - **Regressão corrigida em S17 (2026-10-02): startup travado + NIP-42 não
