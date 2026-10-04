@@ -157,15 +157,19 @@ assert(ephemeral.sk === ephIdentity.sk, "session key unchanged after createVault
 removeVaultFromStorage();
 ephemeral.lock();
 
-// Test 9: Theme preserved during clear all
-console.log("  [Theme Preserved on Clear All]");
-// Simulate the onClearAll logic that should skip dl_conn_theme
+// Test 9: Appearance preferences preserved during clear all
+console.log("  [Appearance Preferences Preserved on Clear All]");
+// Simulate the onClearAll logic that should skip appearance preferences
 localStorage.setItem("dl_conn_theme", "dark");
+localStorage.setItem("dl_conn_palette", "ember");
+localStorage.setItem("dl_conn_density", "compact");
 localStorage.setItem("dl_conn_host_npub", "npub1host");
 for (const k of Object.keys(_store)) {
-  if (k.startsWith("dl_conn_") && k !== "dl_conn_theme") delete _store[k];
+  if (k.startsWith("dl_conn_") && k !== "dl_conn_theme" && k !== "dl_conn_palette" && k !== "dl_conn_density") delete _store[k];
 }
 assert(localStorage.getItem("dl_conn_theme") === "dark", "dl_conn_theme preserved on clear all");
+assert(localStorage.getItem("dl_conn_palette") === "ember", "dl_conn_palette preserved on clear all");
+assert(localStorage.getItem("dl_conn_density") === "compact", "dl_conn_density preserved on clear all");
 assert(localStorage.getItem("dl_conn_host_npub") === null, "dl_conn_host_npub removed on clear all");
 
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");

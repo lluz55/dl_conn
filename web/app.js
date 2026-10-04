@@ -1593,10 +1593,10 @@ import {
     if (state.nostr) state.nostr.disconnect();
     state.session.wipe(); // vault + WebAuthn + brute-force + bio-pin (emite "wiped")
     // remove todo dl_conn_* que o wipe() não cobre (host_npub, npub, sk, ...)
-    // EXCETO dl_conn_theme/dl_conn_palette: preferências de aparência devem
+    // EXCETO dl_conn_theme/dl_conn_palette/dl_conn_density: preferências de aparência devem
     // sobreviver ao reset.
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("dl_conn_") && k !== "dl_conn_theme" && k !== "dl_conn_palette") localStorage.removeItem(k);
+      if (k.startsWith("dl_conn_") && k !== "dl_conn_theme" && k !== "dl_conn_palette" && k !== "dl_conn_density") localStorage.removeItem(k);
     }
     for (const k of Object.keys(sessionStorage)) if (k.startsWith("dl_conn_")) sessionStorage.removeItem(k);
     // reinicia estado em memória
