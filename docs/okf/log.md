@@ -4,6 +4,60 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-04
+
+- **O histórico continuava vazio depois da correção de tamanho: a causa era o
+  daemon em execução, não o código.** O serviço que serve o painel roda
+  `dl_conn --config /var/lib/dl-conn/config.yaml`, de um build `dl_conn-0.2.0`
+  no nix store — a tag `v0.2.0`, **10 commits atrás** da árvore de trabalho. A
+  consulta de intervalo (`e4f6819`) é **posterior** à tag, e a verificação no
+  binário confirma: existem `api/host/telemetry` e `telemetry_samples`, mas não
+  existe `telemetry history is not available` nem `num_cpu`. Ou seja, o daemon
+  ignora `?from=`/`?to=` e responde com o **objeto** do snapshot, enquanto o
+  front espera um **array**. Nenhuma versão do front conserta isso — o painel
+  não pode funcionar contra esse binário. Corrigido o código, a ação que
+  falta é **redeploy** (`nix build`/release e reiniciar o serviço).
+  - O front agora **nomeia** esse caso: uma resposta que não é array vira
+    "o daemon em execução é anterior ao histórico: reinicie o serviço na
+    versão atual…". Antes era um "histórico indisponível" genérico que
+    mandava o operador caçar bug no lugar errado.
+  - `web/tests/telemetry_tests.js` ganha o caso: um daemon que responde objeto
+    é reconhecido como desatualizado, e nenhum dado é extraído dele.
+
+- **Nova categoria de temperatura no gráfico.** `HISTORY_METRICS` deixou de ser
+  uma lista de chaves e virou uma tabela de descritores (chave, rótulo,
+  **unidade**, **domínio do eixo**, limiar de alerta, extrator da série). O
+  motivo é uma soma, não estilo: a série deixou de ser sempre percentual, e
+  uma temperatura desenhada no domínio 0..100 % é um **número errado**, não
+  só um rótulo errado. Eixo, sufixo de cada número, linha de alerta e legenda
+  passam a sair do mesmo descritor.
+  - A aba "Temp." lê o sensor da CPU (que todo host x86/ARM expõe) e cai para
+    a GPU quando o host não tem sensor de CPU; a legenda diz qual das duas
+    está sendo lida, e as duas **nunca** são misturadas numa série — uma linha
+    que trocasse de fonte no meio seria uma mentira sobre o host. A categoria
+    "GPU" continua sendo utilização, que é a grandeza da barra do medidor.
+  - Nenhuma mudança de backend: `cpu.temp_c` já era capturado e persistido
+    por amostra. O que faltava era poder mostrá-lo.
+  - O teste web avalia a tabela **extraída do fonte de produção** (um
+    `extractConstValue` novo no harness), não uma cópia: uma cópia passaria
+    happily depois da tabela mudar por baixo.
+
+- **Disco: uma linha por filesystem, não por ponto de montagem.**
+  `ReadDisks` deduplicava por mountpoint, que é a chave errada. Medido no host
+  de desenvolvimento: `/`, `/nix/store` e
+  `/var/lib/containers/storage/overlay` são **o mesmo** volume ext4 (mesmo
+  fsid `[-601701970 -330095992]`, mesmos blocks/bfree) e o painel listava três
+  linhas idênticas — "3 pontos de montagem" para um disco. Agora a chave é
+  `fsKey()`: o **filesystem ID**, com queda para tamanho/livre quando o
+  fsid é zero. Bind mounts e subvolumes btrfs colapsam, que é o correto,
+  porque `statfs` num subvolume já reporta o número do filesystem inteiro.
+  - `internal/sensors/disk_test.go` é novo: o teste do `fsKey` é hermético
+    (valores de `Statfs_t` sintéticos) e o de `ReadDisks` lê o `/proc/mounts`
+    real afirmando que **nenhuma** dupla de linhas compartilha o mesmo
+    `(total, used)` — é a afirmação que falha antes da mudança.
+  - Registrado em [host-telemetry.md](concepts/host-telemetry.md) e
+    [web-frontend-layout.md](concepts/web-frontend-layout.md).
+
 ## 2026-10-03
 
 - **Os gráficos de CPU/memória/disco/GPU não carregavam.** O gráfico de

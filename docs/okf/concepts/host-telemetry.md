@@ -32,7 +32,14 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
   byte-stable and easy to test. Do not move unit conversion into the Go API
   or the Nostr host_telemetry field; keep the daemon emitting MiB.
 - All snap.disks get their **own row** in the Armazenamento block, not one
-  averaged number: averaging hides exactly the volume that is filling up.
+  averaged number: averaging hides exactly the volume that is filling up. But
+  "one row per *mountpoint*" is not the same as "one row per disk": a bind
+  mount or a btrfs subvolume is the same filesystem seen twice, and
+  `statfs` on it already reports the whole filesystem. `ReadDisks` therefore
+  keys its dedup on `fsKey()` — the filesystem ID, falling back to
+  size/free when a filesystem reports no ID. Measured on the dev host, one
+  ext4 volume was listed three times (as `/`, `/nix/store` and the container
+  overlay) with identical numbers, which read as three disks in the panel.
 - Continuous refresh: startTelemetryPolling() reveals the card immediately,
   polls /api/host/telemetry every 2s, and drives a 1s liveTicker that
   updates an "ao vivo / ha Xs" badge (ids tel-live / tel-updated). A failed
@@ -65,6 +72,33 @@ gráfico de série (`#hist-*`). Três decisões o mantêm utilizável:
    consulta o último snapshot ao vivo para essa distinção; no caso da GPU ele
    diz que a coleta usa `nvidia-smi`, que é a razão real em qualquer host sem
    NVIDIA.
+4. **Uma resposta que não é um array é um daemon antigo, e se diz isso.**
+   Um build anterior à consulta de intervalo ignora `?from=` e responde com o
+   objeto do snapshot. Nenhuma versão do front conserta isso, então a mensagem
+   nomeia o fato de deployment ("o daemon em execução é anterior ao
+   histórico…") em vez de virar um genérico "histórico indisponível" — a
+   diferença entre o operador reinstalar e o operador caçar bug no front.
+
+### A tabela de métricas do gráfico (unidade por métrica)
+
+`HISTORY_METRICS` deixou de ser uma lista de chaves e virou uma tabela de
+descritores: chave, rótulo, **unidade**, **domínio do eixo**, limiar de alerta
+e o extrator da série. Isso existe porque a série deixou de ser sempre
+percentual: **"60 °C" e "63 %" são grandezas diferentes**, e uma temperatura
+desenhada no domínio 0..100 % é um número errado, não só um rótulo errado.
+Com a tabela, o eixo, o sufixo de cada número, a linha de alerta e a
+legenda da unidade saem do mesmo lugar, e o teste web avalia a tabela de
+produção (extraída do fonte) em vez de manter uma cópia que derivaria dela.
+
+- `temp` (aba "Temp.") tem unidade `°C`, domínio 0..100 °C e alerta em
+  80 °C. O sensor da CPU vence porque é o que todo host x86/ARM expõe; a GPU
+  é o fallback, e a legenda diz qual das duas está sendo lida. As duas nunca
+  são misturadas numa série só: uma linha que trocasse de fonte no meio
+  seria uma mentira sobre o host.
+- `gpu` continua sendo **utilização**, que é a grandeza da barra do medidor.
+  A temperatura tem sua própria métrica em vez de dividirem um eixo.
+- `historyMetric(key)` devolve o descritor e cai no primeiro quando a chave é
+  desconhecida, então um `data-metric` obsoleto no markup não quebra o painel.
 
 ## Consulta de intervalo (histórico)
 

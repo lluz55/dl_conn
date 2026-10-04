@@ -9,7 +9,35 @@ arquivo não é lido por nenhum código.
 
 ## [Não publicado]
 
+### Adicionado
+
+- Categoria de **temperatura** no gráfico de histórico do painel de saúde do
+  host, com a unidade `°C`, o eixo em 0..100 °C e a linha de alerta em 80 °C.
+  Lê o sensor da CPU (que todo host x86/ARM expõe) e usa a GPU apenas quando o
+  host não tem sensor de CPU, dizendo na legenda qual das duas está sendo
+  lida. Nenhuma mudança de backend: a temperatura já era capturada e
+  persistida por amostra, o que faltava era poder mostrá-la. O seletor de
+  métrica deixou de ser uma lista de chaves e virou uma tabela de
+  descritores — chave, unidade, domínio do eixo, limiar — porque uma
+  temperatura desenhada no domínio percentual é um número errado, e não só um
+  rótulo errado.
+
 ### Corrigido
+
+- O painel listava **um disco três vezes**. `ReadDisks` deduplicava por ponto
+  de montagem, que é a chave errada: `/`, `/nix/store` e o overlay de
+  containers são o mesmo volume ext4, com o mesmo id de filesystem e os mesmos
+  números. A deduplicação passou a usar o id do filesystem, com queda para
+  tamanho/espaço livre quando não há id. Bind mounts e subvolumes btrfs agora
+  colapsam em uma linha, que é o correto — `statfs` num subvolume já reporta
+  o número do filesystem inteiro.
+
+- O histórico do painel avisava "indisponível" quando o motivo real era o
+  **daemon em execução ser anterior à consulta de intervalo**: um build como o
+  `0.2.0` ignora `?from=`/`?to=` e responde com um objeto onde o front espera
+  um array, e nenhuma versão do front conserta isso. A resposta agora é
+  nomeada como o que é — um fato de deployment — dizendo o que fazer, em vez
+  de um erro genérico que mandava procurar bug no lugar errado.
 
 - Os gráficos de CPU, memória, disco e GPU do painel de saúde do host não
   carregavam. `GET /api/host/telemetry?from=&to=` respondia com **todas** as

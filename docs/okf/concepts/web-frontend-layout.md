@@ -117,12 +117,17 @@ O card Saúde do host tem três blocos, nesta ordem:
    `max-width: 639px` via `grid-template-areas` em vez de espremer 4 colunas em
    360px.
 3. **Histórico** (`#hist-*`) — gráfico de série com seletor de janela
-   (1h/24h/7d) e de métrica (CPU/Memória/Disco/GPU), mais mín/méd/máx.
+   (1h/24h/7d) e de métrica (CPU/Memória/Disco/GPU/Temp.), mais mín/méd/máx.
    Alimentado por `?from=&to=&points=` (ver
    [host-telemetry.md](host-telemetry.md)), então **sobrevive a reload**.
    Decisões que importam:
-   - O eixo y é **sempre 0..100**. Um eixo auto-escalado faz uma linha plana
-     parecer tempestade.
+   - O eixo y tem **domínio fixo por métrica**, declarado na tabela
+     `HISTORY_METRICS`: 0..100 % para as capacidades e 0..100 °C para a
+     temperatura. Um eixo auto-escalado faz uma linha plana parecer
+     tempestade, e a temperatura no domínio percentual seria um número
+     errado. Por isso a unidade, o sufixo de cada número e a linha de alerta
+     saem do mesmo descritor — a unidade é parte da métrica, não um rótulo
+     à parte.
    - O eixo x é **posicional, não linear no tempo**: uma falha na amostragem
      deve ler como lacuna, e uma espalhadura uniforme mantém a linha contínua.
    - A série é *bucket-averaged* para no máximo 240 pontos
