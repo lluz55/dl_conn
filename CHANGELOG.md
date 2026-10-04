@@ -24,6 +24,19 @@ arquivo não é lido por nenhum código.
 
 ### Corrigido
 
+- O painel **Aparência** abria, desenhava os três eixos e não alterava nada:
+  tema, paleta e densidade eram inalteráveis pela interface, sem nenhum erro no
+  console. O handler montava o seletor concatenando a chave do `dataset` —
+  `closest("[data-" + attr + "]")` com `attr = "themeChoice"`, o que produz
+  `[data-themeChoice]`, enquanto o atributo no markup é `data-theme-choice`. O
+  seletor não casa com nada, o clique era engolido por um early return e nem o
+  `localStorage` era escrito. Os tokens e os blocos de paleta em `style.css`
+  estavam corretos: o defeito era só o nome do atributo, o que explica o
+  sintoma de "mostra o visual, sem efeito real". O seletor agora é derivado da
+  mesma chave que o `dataset` lê, e `web/tests/appearance_tests.js` executa o
+  painel de produção contra um DOM falso para provar que o clique persiste e
+  re-aplica.
+
 - O painel listava **um disco três vezes**. `ReadDisks` deduplicava por ponto
   de montagem, que é a chave errada: `/`, `/nix/store` e o overlay de
   containers são o mesmo volume ext4, com o mesmo id de filesystem e os mesmos

@@ -6,6 +6,30 @@ type: log
 
 ## 2026-10-04
 
+- **O painel Aparência abria, desenhava os três eixos e não fazia nada: erro de
+  grafia camelCase/kebab-case no seletor.** O handler `choose()` montava o
+  seletor concatenando a chave do `dataset` —
+  `closest("[data-" + attr + "]")` com `attr = "themeChoice"` —, o que produz
+  `[data-themeChoice]`. O atributo no markup é `data-theme-choice`. O seletor
+  não casa com nada, `closest()` devolve `null`, o early return engole o clique
+  e **nem o `localStorage` é escrito**: tema, paleta e densidade eram
+  inalteráveis pela UI, sem nenhum erro no console. Os tokens, os blocos de
+  paleta em `style.css` e o `applyAppearance()` estavam todos corretos — o
+  defeito estava inteiramente no nome do atributo, o que explica o sintoma
+  "mostra o visual, sem efeito real".
+  - O seletor agora sai de `dataAttr()`, que converte a chave, e sai da mesma
+    chave que o `dataset` lê: as duas não podem mais divergir. Também houve
+    guarda para `event.target` sem `closest`.
+  - `web/tests/appearance_tests.js` (novo) **executa** o
+    `setupAppearancePanel()` de produção contra um DOM falso e clica de
+    verdade: prova que o clique persiste e re-aplica, que clicar no rótulo
+    dentro do botão seleciona, e que clicar no fundo do grupo não seleciona
+    nada. A primeira versão do teste era uma checagem por regex e **passava no
+    código quebrado**, porque derivava o nome do atributo com a mesma regra
+    errada do bug — registrar isso porque é a armadilha óbxima ao testar esse
+    tipo de defeito.
+  - Ver [concepts/theming.md](concepts/theming.md) (Painel Aparência).
+
 - **O histórico continuava vazio depois da correção de tamanho: a causa era o
   daemon em execução, não o código.** O serviço que serve o painel roda
   `dl_conn --config /var/lib/dl-conn/config.yaml`, de um build `dl_conn-0.2.0`

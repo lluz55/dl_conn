@@ -72,6 +72,20 @@ densidade. As swatches usam as cores médias de cada paleta em hexadecimal
 fixo, **não** tokens: uma amostra tem que mostrar a identidade da paleta, e
 não pode mudar quando a paleta está ativa ou quando o tema vira.
 
+**O nome do atributo é derivado da chave do `dataset`, nunca escrito à mão.** O
+handler de escolha do painel (`choose()` em `setupAppearancePanel`) busca
+`event.target.closest("[data-<x>]")`, e o `dataset` é lido pela chave
+camelCase (`themeChoice`) enquanto o atributo no markup é kebab-case
+(`data-theme-choice`). Concatenar a chave direto no seletor produz
+`[data-themeChoice]`, que **não casa com nada**: o clique cai no early return,
+nada é persistido e nada é re-aplicado — o painel abre, desenha os três eixos
+e funciona como se fosse decorativo, sem nenhum erro no console. Por isso o
+seletor sai de um helper que converte a chave (`dataAttr()`), e
+`web/tests/appearance_tests.js` executa o `setupAppearancePanel()` de produção
+contra um DOM falso para garantir que o clique realmente escreve e re-aplica —
+uma checagem por regex do texto-fonte passaria, porque tanto o código quanto o
+padrão de teste repetiriam o mesmo erro de grafia.
+
 **Densidade compacta só é aplicada em ponteiro fino.** Ela baixa
 `--control-h` de 44px para 34px, o que violaria o alvo mínimo de toque;
 `applyAppearance()` recusa o atributo quando `matchMedia("(pointer: coarse)")`
