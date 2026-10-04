@@ -69,14 +69,71 @@ function extractDeclaration(src, name) {
   return src.slice(m.index, m.index + m[0].length) + extractFunction(src, name) + "}";
 }
 
+/**
+ * Returns the right-hand side of `const NAME = …` (objects, arrays, numbers),
+ * so a test can evaluate the production constant itself instead of keeping a
+ * copy that would happily drift away from the real one.
+ */
+function extractConstValue(src, name) {
+  const re = new RegExp('(?:const|let)\\s+' + name + '\\s*=\\s*');
+  const m = re.exec(src);
+  if (!m) throw new Error("const " + name + " not found");
+  let i = m.index + m[0].length;
+  const start = i;
+  let depth = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      i++;
+      while (i < src.length && src[i] !== c) {
+        if (src[i] === '\\') i++;
+        i++;
+      }
+    } else if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+    } else if (c === '/' && src[i + 1] === '*') {
+      i += 2;
+      while (i < src.length - 1 && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i++;
+    } else if (c === '(' || c === '[' || c === '{') {
+      depth++;
+    } else if (c === ')' || c === ']' || c === '}') {
+      depth--;
+    } else if (c === ';' && depth === 0) {
+      return src.slice(start, i);
+    }
+    i++;
+  }
+  throw new Error("const " + name + " is not terminated");
+}
+
 const formatUptimeBody = extractFunction(appJs, 'formatUptime');
 const formatCapacityBody = extractFunction(appJs, 'formatCapacity');
 const renderTelemetryBody = extractFunction(appJs, 'renderTelemetry');
-const historyValueBody = extractFunction(appJs, 'historyValue');
 const downsampleBody = extractFunction(appJs, 'downsample');
 const historyErrorLabelBody = extractFunction(appJs, 'historyErrorLabel');
-const missingMetricReasonBody = extractFunction(appJs, 'missingMetricReason');
+const historyStaleDaemonLabelBody = extractFunction(appJs, 'historyStaleDaemonLabel');
 const fetchHistoryBody = extractFunction(appJs, 'fetchHistory');
+const indexHtml = readFileSync(join(here, '..', 'index.html'), 'utf8');
+
+/**
+ * The history panel's real metric table and the helpers around it, evaluated
+ * in one scope. Assembled from the production source on purpose: a test that
+ * carried its own copy of the descriptor table would keep passing after the
+ * table changed underneath it.
+ */
+const history = new Function(`
+  const METER_WARN_PCT = ${extractConstValue(appJs, 'METER_WARN_PCT')};
+  const METER_CRIT_PCT = ${extractConstValue(appJs, 'METER_CRIT_PCT')};
+  const TEMP_WARN_C = ${extractConstValue(appJs, 'TEMP_WARN_C')};
+  const HISTORY_METRICS = ${extractConstValue(appJs, 'HISTORY_METRICS')};
+  ${extractDeclaration(appJs, 'cpuPercent')}
+  ${extractDeclaration(appJs, 'hostTempC')}
+  ${extractDeclaration(appJs, 'tempSourceLabel')}
+  ${extractDeclaration(appJs, 'historyMetric')}
+  ${extractDeclaration(appJs, 'historyValue')}
+  return { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS };
+`)();
 
 console.log("\n=== Telemetry Polling Tests ===");
 assert(/const TELEMETRY_POLL_MS = 2000;/.test(appJs), "host health refreshes every 2 seconds");
@@ -210,26 +267,59 @@ assert(el.telDisk.textContent.includes("976.6 GB"), "multi-disk: /data total 100
 
 console.log("\n=== History series tests ===");
 
-// Each of these bodies ends in a `return`, so the value built by new Function
-// answers with exactly what the production function returns. cpuPercent is
-// prepended as a declaration (not a parameter, which would shadow nothing and
-// collide with nothing) because historyValue calls it.
-const historyValue = new Function('snap', 'metric',
-  'const cpuPercent = ' + extractDeclaration(appJs, 'cpuPercent') + ';\n' + historyValueBody);
+// The history panel's real metric table and its helpers, evaluated together in
+// the `history` scope above — this file keeps no hand-written copy of the table.
+const { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS } = history;
 const downsample = new Function('points', 'maxPoints', downsampleBody);
-const missingMetricReason = new Function('lastSnapshot', 'key', missingMetricReasonBody);
+// Both free variables of the body (`lastSnapshot` and the key) are parameters
+// of the generated function, so one call returns the answer.
+const reasonFor = new Function('lastSnapshot', 'key',
+  'const hostTempC = ' + extractDeclaration(appJs, 'hostTempC') + ';\n' +
+  extractDeclaration(appJs, 'missingMetricReason') +
+  '\nreturn missingMetricReason(key);');
 const historyErrorLabel = new Function('status', historyErrorLabelBody);
+const historyStaleDaemonLabel = new Function(historyStaleDaemonLabelBody);
 
 assert(historyValue({ cpu: { load1: 0.8 }, num_cpu: 4 }, 'cpu') === 20,
   "cpu: carga normalizada pelos núcleos (0.8/4 = 20%)");
 assert(historyValue({ cpu: { load1: 1 }, num_cpu: 0 }, 'cpu') === null,
   "cpu: sem num_cpu não há percentual inventado");
 assert(historyValue({ memory: { used_pct: 50 } }, 'ram') === 50, "ram: percentual direto");
-assert(historyValue({ gpu: { util_pct: 22, temp_c: 60 } }, 'gpu') === 22, "gpu: utilização");
-assert(historyValue({ gpu: { temp_c: 60 } }, 'gpu') === null,
-  "gpu: só temperatura não vira série em um eixo de 0..100%");
+assert(historyValue({ gpu: { util_pct: 22, temp_c: 60 } }, 'gpu') === 22,
+  "gpu: a categoria GPU mede utilização, não temperatura");
 assert(historyValue({ disks: [{ used_pct: 40 }, { used_pct: 60 }] }, 'disk') === 60,
   "disco: o mountpoint mais cheio representa a série");
+
+console.log("\n=== History metric table (categoria de temperatura) ===");
+assert(HISTORY_METRICS.map((m) => m.key).join(",") === "cpu,ram,disk,gpu,temp",
+  "a tabela cobre CPU, memória, disco, GPU e temperatura: " + HISTORY_METRICS.map((m) => m.key).join(","));
+const temp = historyMetric("temp");
+assert(temp.unit === "°C", "temperatura carrega a unidade °C, veio " + temp.unit);
+assert(typeof temp.warn === "number" && temp.warn > 0 && temp.warn <= 100,
+  "a linha de alerta da temperatura é uma temperatura: " + temp.warn);
+assert(HISTORY_METRICS.every((m) => Array.isArray(m.domain) && m.domain[1] > m.domain[0]),
+  "toda métrica declara um domínio de eixo com folga");
+assert(HISTORY_METRICS.filter((m) => m.unit === "%").every((m) => m.domain[0] === 0 && m.domain[1] === 100),
+  "as métricas de capacidade continuam no domínio 0..100");
+assert(/data-metric="temp"/.test(indexHtml), "o seletor de métrica tem o botão de temperatura");
+assert((indexHtml.match(/class="seg[^"]*" data-metric="/g) || []).length === HISTORY_METRICS.length,
+  "o seletor do markup tem exatamente um botão por métrica da tabela");
+
+console.log("\n=== historyValue: categoria de temperatura ===");
+assert(historyValue({ cpu: { temp_c: 58 } }, 'temp') === 58,
+  "temp: usa a temperatura do sensor da CPU");
+assert(historyValue({ gpu: { temp_c: 61 } }, 'temp') === 61,
+  "temp: cai para a GPU quando o host não expõe sensor de CPU");
+assert(historyValue({ cpu: {}, gpu: { util_pct: 5 } }, 'temp') === null,
+  "temp: host sem sensor nenhum não vira série");
+assert(historyValue(null, 'temp') === null, "temp: snapshot ausente é null");
+assert(historyMetric("inexistente").key === "cpu", "métrica desconhecida cai na primeira da tabela");
+assert(tempSourceLabel({ cpu: { temp_c: 58 } }) === "temperatura da CPU",
+  "a unidade nomeia a fonte: " + tempSourceLabel({ cpu: { temp_c: 58 } }));
+assert(tempSourceLabel({ gpu: { temp_c: 61 } }) === "temperatura da GPU",
+  "a unidade acompanha a fonte real: " + tempSourceLabel({ gpu: { temp_c: 61 } }));
+assert(tempSourceLabel({}) === "temperatura", "sem fonte, a unidade não inventa uma");
+assert(hostTempC({ cpu: { temp_c: 0 } }) === 0, "0 °C é leitura, não ausência");
 
 const dense = Array.from({ length: 60480 }, (_, i) => [i, i % 100]);
 assert(downsample(dense, 240).length === 240,
@@ -240,11 +330,14 @@ assert(downsample([[1, 5], [2, 6]], 240).length === 2,
 // missingMetricReason tells a host that never reports the metric apart from a
 // window that happens to be empty — the difference between "GPU não existe
 // aqui" and "o gráfico quebrou".
-const reasonFor = (snap, key) => missingMetricReason(snap, key);
 assert(reasonFor({ cpu: { load1: 1 }, num_cpu: 4 }, 'cpu') === "",
   "cpu presente: nenhuma desculpa inventada");
 assert(/nvidia-smi/.test(reasonFor({}, 'gpu')),
   "host sem GPU explica que a coleta usa nvidia-smi");
+assert(/temperatura/.test(reasonFor({ cpu: {}, gpu: {} }, 'temp')),
+  "host sem sensor de temperatura explica o motivo: " + reasonFor({ cpu: {}, gpu: {} }, 'temp'));
+assert(reasonFor({ cpu: { temp_c: 58 } }, 'temp') === "",
+  "host com sensor não é julgado ausente");
 assert(/utilização/.test(reasonFor({ gpu: { temp_c: 60 } }, 'gpu')),
   "GPU só com temperatura explica por que não há série");
 assert(reasonFor({ gpu: { util_pct: 5 } }, 'gpu') === "",
@@ -269,7 +362,8 @@ async function makeHistoryFetch(respond) {
   // declaration goes inside an async IIFE that hands the function back.
   const fetchHistory = await new Function('deps', `
     const { historyState, TELEMETRY_PATH, HISTORY_MAX_POINTS, HISTORY_RETRY_MS,
-            HISTORY_REFRESH_MS, renderHistory, historyErrorLabel, telemetryGet } = deps;
+            HISTORY_REFRESH_MS, renderHistory, historyErrorLabel,
+            historyStaleDaemonLabel, telemetryGet } = deps;
     return (async () => {
       ${extractDeclaration(appJs, 'fetchHistory')}
       return fetchHistory;
@@ -282,6 +376,7 @@ async function makeHistoryFetch(respond) {
     HISTORY_REFRESH_MS: 300000,
     renderHistory: () => {},
     historyErrorLabel,
+    historyStaleDaemonLabel,
     telemetryGet: (url) => { calls.push(url); return respond(url, calls); },
   });
   return { state, calls, fetchHistory };
@@ -320,6 +415,22 @@ const respondOk = () => Promise.resolve({ ok: true, status: 200, json: () => Pro
     "20 ticks do poll de 2s não viram 20 requests de janela inteira");
   await h.fetchHistory(true);
   assert(h.calls.length === 2, "trocar de janela força a carga mesmo após falha");
+}
+
+// A daemon built before the range query ignores ?from= and answers with the
+// single-snapshot object. That is a deployment fact, and the panel has to name
+// it — otherwise the operator debugs the frontend for a daemon that can never
+// answer the question.
+{
+  assert(/anterior ao histórico/.test(historyStaleDaemonLabel()),
+    "a mensagem de daemon desatualizado diz o que fazer: " + historyStaleDaemonLabel());
+  const h = await makeHistoryFetch(() => Promise.resolve({
+    ok: true, status: 200, json: () => Promise.resolve({ cpu: { load1: 1 }, num_cpu: 4 }),
+  }));
+  await h.fetchHistory();
+  assert(/anterior ao histórico/.test(h.state.error),
+    "resposta objeto (daemon antigo) é reconhecida, não vira série: " + h.state.error);
+  assert(h.state.samples === null, "nenhum dado é extraído de um objeto");
 }
 
 // A transient failure must not wipe a chart the user is reading.

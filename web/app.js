@@ -372,8 +372,6 @@ import {
   const METER_CRIT_PCT = { cpu: 95, ram: 95, disk: 97, gpu: 97, battery: 10 };
   /** A battery meter drains downward, so its states are inverted. */
   const BATTERY_METER = "battery";
-  /** The busiest mountpoint stands in for "disk" in the history chart. */
-  const HISTORY_METRICS = ["cpu", "ram", "disk", "gpu"];
   /**
    * Cap on drawn points: more than this is indistinguishable at 1px — and it
    * is also what we ask the daemon for. The two are the same number on
@@ -606,6 +604,83 @@ import {
   /* ── History chart ──────────────────────────────────────────────── */
 
   /**
+   * Temperature at which the chart draws its warn line, in Celsius. Chosen to
+   * sit below where a desktop CPU throttles rather than at a percentage of
+   * anything: 80 °C sustained is the point where the number is worth noticing.
+   */
+  const TEMP_WARN_C = 80;
+  /**
+   * One row per selectable metric, in selector order. The unit, the axis
+   * domain and the warn line live here rather than being hardcoded at the
+   * drawing site, because the series is no longer always a percentage: a
+   * temperature drawn on a 0..100% axis is a wrong number, not just a wrong
+   * label. `value` extracts the series from one snapshot, `null` when the host
+   * does not report it.
+   */
+  const HISTORY_METRICS = [
+    {
+      key: "cpu", label: "CPU", unit: "%", caption: "de capacidade",
+      domain: [0, 100], warn: METER_WARN_PCT.cpu,
+      value: (s) => cpuPercent(s),
+    },
+    {
+      key: "ram", label: "Memória", unit: "%", caption: "de capacidade",
+      domain: [0, 100], warn: METER_WARN_PCT.ram,
+      value: (s) => (s.memory ? s.memory.used_pct : null),
+    },
+    {
+      key: "disk", label: "Disco", unit: "%", caption: "de capacidade",
+      domain: [0, 100], warn: METER_WARN_PCT.disk,
+      // The busiest mountpoint stands in for "disk", so a filling volume is
+      // the one that shows up regardless of how many others stay flat.
+      value: (s) => {
+        if (s.disks && s.disks.length) {
+          return s.disks.reduce((m, d) => Math.max(m, d.used_pct || 0), 0);
+        }
+        return s.disk_used_pct != null ? s.disk_used_pct : null;
+      },
+    },
+    {
+      key: "gpu", label: "GPU", unit: "%", caption: "de capacidade",
+      domain: [0, 100], warn: METER_WARN_PCT.gpu,
+      // Utilization, not temperature: this is the axis the GPU meter uses, and
+      // temperature has its own metric below rather than sharing this one.
+      value: (s) => (s.gpu && s.gpu.util_pct != null ? s.gpu.util_pct : null),
+    },
+    {
+      key: "temp", label: "Temp.", unit: "°C", caption: "de temperatura",
+      domain: [0, 100], warn: TEMP_WARN_C,
+      value: (s) => hostTempC(s),
+    },
+  ];
+
+  /** The metric descriptor for `key`, falling back to the first one. */
+  function historyMetric(key) {
+    return HISTORY_METRICS.find((m) => m.key === key) || HISTORY_METRICS[0];
+  }
+
+  /**
+   * The temperature this host reports, and where it came from. The CPU package
+   * sensor wins because it is the one every x86 and ARM host exposes; a GPU
+   * sensor is the fallback, and the two are never mixed into one series — a
+   * line that silently switched source halfway would be a lie about the host.
+   */
+  function hostTempC(snap) {
+    if (!snap) return null;
+    if (snap.cpu && snap.cpu.temp_c != null) return snap.cpu.temp_c;
+    if (snap.gpu && snap.gpu.temp_c != null) return snap.gpu.temp_c;
+    return null;
+  }
+
+  /** Which sensor the temperature metric is reading, for the unit caption. */
+  function tempSourceLabel(snap) {
+    if (!snap) return "";
+    if (snap.cpu && snap.cpu.temp_c != null) return "temperatura da CPU";
+    if (snap.gpu && snap.gpu.temp_c != null) return "temperatura da GPU";
+    return "temperatura";
+  }
+
+  /**
    * `samples` is the last series that actually loaded, kept on screen across a
    * failed reload: a transient error should not wipe a chart the user is
    * reading. `lastAttempt` is the cooldown that keeps the 2s live poll from
@@ -622,19 +697,10 @@ import {
     error: null,
   };
 
-  /** Extract one chartable percentage from a snapshot; null if unavailable. */
+  /** Extract one chartable value from a snapshot; null if unavailable. */
   function historyValue(snap, metric) {
     if (!snap) return null;
-    if (metric === "cpu") return cpuPercent(snap);
-    if (metric === "ram") return snap.memory ? snap.memory.used_pct : null;
-    if (metric === "gpu") return snap.gpu && snap.gpu.util_pct != null ? snap.gpu.util_pct : null;
-    if (metric === "disk") {
-      if (snap.disks && snap.disks.length) {
-        return snap.disks.reduce((m, d) => Math.max(m, d.used_pct || 0), 0);
-      }
-      return snap.disk_used_pct != null ? snap.disk_used_pct : null;
-    }
-    return null;
+    return historyMetric(metric).value(snap);
   }
 
   /**
@@ -662,7 +728,8 @@ import {
   function renderHistory() {
     if (!el.histLine) return;
     const samples = historyState.samples;
-    const key = historyState.metric;
+    const metric = historyMetric(historyState.metric);
+    const key = metric.key;
     const points = [];
     if (samples) {
       for (const s of samples) {
@@ -692,12 +759,14 @@ import {
       el.histGrid.replaceChildren(frag);
     }
 
-    // The series is a percentage, so the scale is always 0..100 — a
-    // self-scaling axis would make a flat line look like a storm.
-    const toY = (v) => (40 - (Math.max(0, Math.min(100, v)) / 100) * 40).toFixed(2);
+    // The scale is fixed per metric (see the descriptor table) — a
+    // self-scaling axis would make a flat line look like a storm, and a
+    // temperature sharing the percentage domain would be a wrong number.
+    const [lo, hi] = metric.domain;
+    const toY = (v) => (40 - ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * 40).toFixed(2);
     if (el.histThreshold) {
-      el.histThreshold.setAttribute("y1", toY(METER_WARN_PCT[key]));
-      el.histThreshold.setAttribute("y2", toY(METER_WARN_PCT[key]));
+      el.histThreshold.setAttribute("y1", toY(metric.warn));
+      el.histThreshold.setAttribute("y2", toY(metric.warn));
     }
 
     if (!reduced.length) {
@@ -747,11 +816,16 @@ import {
     const min = Math.min.apply(null, values);
     const max = Math.max.apply(null, values);
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    if (el.histValue) el.histValue.textContent = last.toFixed(0) + "%";
-    if (el.histUnit) el.histUnit.textContent = "de capacidade";
-    if (el.histMin) el.histMin.textContent = min.toFixed(0) + "%";
-    if (el.histAvg) el.histAvg.textContent = avg.toFixed(0) + "%";
-    if (el.histMax) el.histMax.textContent = max.toFixed(0) + "%";
+    // Every number carries the metric's own unit: "60 °C" and "63 %" are
+    // different quantities and one suffix for both is a wrong reading.
+    const unit = metric.unit;
+    if (el.histValue) el.histValue.textContent = last.toFixed(0) + unit;
+    if (el.histUnit) {
+      el.histUnit.textContent = key === "temp" ? tempSourceLabel(lastSnapshot) : metric.caption;
+    }
+    if (el.histMin) el.histMin.textContent = min.toFixed(0) + unit;
+    if (el.histAvg) el.histAvg.textContent = avg.toFixed(0) + unit;
+    if (el.histMax) el.histMax.textContent = max.toFixed(0) + unit;
     if (el.histStatus) {
       const hours = Math.round(historyState.windowSec / 3600);
       const window = hours >= 24 ? Math.round(hours / 24) + "d" : hours + "h";
@@ -788,6 +862,11 @@ import {
       );
       if (!r.ok) throw new Error(historyErrorLabel(r.status));
       const data = await r.json();
+      // A daemon built before the range query ignores ?from= and answers with
+      // the single-snapshot object. Saying so is the whole difference between
+      // the operator redeploying and the operator guessing — the panel cannot
+      // work against that binary no matter what this code does.
+      if (data && !Array.isArray(data)) throw new Error(historyStaleDaemonLabel());
       if (!Array.isArray(data)) throw new Error("resposta fora do contrato do histórico");
       historyState.samples = data;
       historyState.lastSuccess = Date.now();
@@ -811,6 +890,16 @@ import {
   }
 
   /**
+   * What to tell the operator when the daemon answers a range request with a
+   * single snapshot — the signature of a build from before the range query
+   * existed. It is a deployment fact, not a transient error, so it is named as
+   * one instead of being flattened into "history unavailable".
+   */
+  function historyStaleDaemonLabel() {
+    return "o daemon em execução é anterior ao histórico: reinicie o serviço na versão atual para a consulta de intervalo funcionar";
+  }
+
+  /**
    * Why a metric has no series on this host at all, or "" when the absence is
    * just an empty window. Without it the chart says "sem amostras" for a GPU
    * the host never had, which reads as a broken chart rather than as a host
@@ -819,12 +908,15 @@ import {
   function missingMetricReason(key) {
     const snap = lastSnapshot;
     if (!snap) return "";
+    if (key === "temp" && hostTempC(snap) == null) {
+      return "Este host não expõe sensores de temperatura (lwtrace/coretemp).";
+    }
     const gpu = snap.gpu || null;
     if (key === "gpu" && !(gpu && (gpu.util_pct != null || gpu.temp_c != null))) {
       return "Este host não reporta GPU — a coleta usa nvidia-smi.";
     }
     if (key === "gpu" && gpu && gpu.util_pct == null) {
-      return "A GPU deste host não expõe utilização, só temperatura.";
+      return "A GPU deste host não expõe utilização, só temperatura — veja a aba Temp.";
     }
     return "";
   }
@@ -849,7 +941,7 @@ import {
       fetchHistory(true);
     });
     pick(el.histMetricGroup, "metric", (v) => {
-      historyState.metric = HISTORY_METRICS.indexOf(v) >= 0 ? v : "cpu";
+      historyState.metric = historyMetric(v).key;
       renderHistory();
     });
   }
