@@ -3373,10 +3373,19 @@ import {
       if (panel.contains(event.target) || (el.btnAppearance && el.btnAppearance.contains(event.target))) return;
       closeDialog(panel);
     });
+    // The dataset key is camelCase ("themeChoice") but the markup spells the
+    // attribute in kebab-case ("data-theme-choice"). Building the selector by
+    // concatenation produced "[data-themeChoice]", which matches nothing, so
+    // every click hit the early return and the sheet changed nothing at all.
+    // The attribute name is derived from the same key dataset reads it from,
+    // so the two can no longer drift apart.
+    const dataAttr = (key) => "data-" + key.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
     const choose = (group, attr, key, apply) => {
       if (!group) return;
+      const selector = "[" + dataAttr(attr) + "]";
       group.addEventListener("click", (event) => {
-        const btn = event.target.closest("[data-" + attr + "]");
+        if (!event.target || typeof event.target.closest !== "function") return;
+        const btn = event.target.closest(selector);
         if (!btn || !group.contains(btn)) return;
         localStorage.setItem(key, btn.dataset[attr]);
         apply(btn.dataset[attr]);
