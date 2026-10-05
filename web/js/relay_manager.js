@@ -12,7 +12,6 @@ export const DEFAULT_RELAYS = [
   "wss://nostr.mom",
   "wss://relay.snort.social",
   "wss://nostr.oxtr.dev",
-  "wss://nostr.land",
 ];
 
 /**

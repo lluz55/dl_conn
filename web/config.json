@@ -7,7 +7,6 @@
     "wss://relay.primal.net",
     "wss://nostr.mom",
     "wss://relay.snort.social",
-    "wss://nostr.oxtr.dev",
-    "wss://nostr.land"
+    "wss://nostr.oxtr.dev"
   ]
 }

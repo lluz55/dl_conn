@@ -4,6 +4,22 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-05
+
+- **Telemetria de host no GitHub Pages via Nostr (sem polling 404) e remoção de relay pago.**
+  No frontend SPA rodando no GitHub Pages (`*.github.io`):
+  1. `startTelemetryPolling()` e `fetchHistory()` agora verificam `canPollTelemetry()`. Em
+     origens estáticas sem backend (`*.github.io`), o polling HTTP relativo contra `/api/host/telemetry`
+     é suprimido imediatamente, eliminando os erros contínuos de 404 a cada 2 segundos no console.
+  2. Os dados de telemetria recebidos via Nostr (`data.host_telemetry` da resposta de descoberta)
+     são preservados na tela, com o selo exibindo `Nostr · ao vivo` (ou `Nostr · ha Xs`), atualizando
+     sempre que o usuário renova o status via DM Nostr.
+  3. `renderMeters()`, `cpuPercent()`, `hostTempC()` e `tempSourceLabel()` agora suportam os campos
+     planos do payload Nostr (`snap.cpu_load1`, `snap.ram_used_pct`, etc.) além dos objetos aninhados
+     do HTTP, permitindo que as barras de medidores (CPU, RAM, GPU, Bateria) desenhem corretamente.
+  4. O relay `wss://nostr.land` foi removido dos padrões (`DEFAULT_RELAYS` e `config.json`), pois
+     passou a exigir pagamento e rejeitava eventos de publicação com `restricted: Pay for access`.
+
 ## 2026-10-04
 
 - **O painel Aparência abria, desenhava os três eixos e não fazia nada: erro de

@@ -178,6 +178,7 @@ import {
   let telemetryFetchInFlight = false;
   let liveTicker = null;
   let lastTelemetryAt = 0;
+  let telemetrySource = "http";
   /** Newest live snapshot; the history panel consults it to explain a gap. */
   let lastSnapshot = null;
   let visibilityListenerAdded = false;
@@ -245,6 +246,28 @@ import {
   const TELEMETRY_POLL_MS = 2000;
   /** Host telemetry endpoint, the one route the operator can put behind step-up. */
   const TELEMETRY_PATH = "/api/host/telemetry";
+
+  /**
+   * Reports whether this browser origin can reach the daemon's HTTP telemetry
+   * route. When loaded from a static launcher (like GitHub Pages), the origin
+   * has no local backend, so /api/host/telemetry would 404 on every tick.
+   */
+  function canPollTelemetry() {
+    if (typeof window !== "undefined" && window.location) {
+      if (window.location.hostname && window.location.hostname.endsWith(".github.io")) return false;
+      if (state.tunnelURL) {
+        try {
+          const tunnelOrigin = new URL(state.tunnelURL).origin;
+          if (window.location.origin !== tunnelOrigin &&
+              window.location.hostname !== "localhost" &&
+              window.location.hostname !== "127.0.0.1") {
+            return false;
+          }
+        } catch (_) {}
+      }
+    }
+    return true;
+  }
 
   /** Stop everything the Live zone drives; called whenever it goes away. */
   function clearLiveTimers() {
@@ -481,7 +504,7 @@ import {
    * than inventing a percentage.
    */
   function cpuPercent(snap) {
-    const load1 = snap && snap.cpu ? snap.cpu.load1 : null;
+    const load1 = snap && snap.cpu ? snap.cpu.load1 : (snap && snap.cpu_load1 != null ? snap.cpu_load1 : null);
     const cores = snap ? snap.num_cpu : null;
     if (load1 == null || !cores) return null;
     return (load1 / cores) * 100;
@@ -496,7 +519,13 @@ import {
     if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
 
     // CPU
-    const cpu = snap.cpu || null;
+    const cpu = snap.cpu || (snap.cpu_load1 != null || snap.cpu_temp_c != null || snap.cpu_freq_mhz != null ? {
+      load1: snap.cpu_load1,
+      load5: snap.cpu_load5,
+      load15: snap.cpu_load15,
+      temp_c: snap.cpu_temp_c,
+      freq_mhz: snap.cpu_freq_mhz,
+    } : null);
     const cpuPct = cpuPercent(snap);
     if (cpu) {
       const bits = [];
@@ -514,7 +543,11 @@ import {
     }
 
     // Memory
-    const mem = snap.memory || null;
+    const mem = snap.memory || (snap.ram_used_pct != null ? {
+      used_pct: snap.ram_used_pct,
+      used_mb: snap.ram_used_mb,
+      total_mb: snap.ram_total_mb,
+    } : null);
     if (mem) {
       setMeter(
         ensureMeter(host, "ram", "Memória"),
@@ -528,7 +561,10 @@ import {
 
     // GPU — the bar tracks utilization; temperature rides in the sub-line
     // because it is a different quantity and must not share a scale.
-    const gpu = snap.gpu || null;
+    const gpu = snap.gpu || (snap.gpu_util_pct != null || snap.gpu_temp_c != null ? {
+      util_pct: snap.gpu_util_pct,
+      temp_c: snap.gpu_temp_c,
+    } : null);
     if (gpu && gpu.util_pct != null) {
       const bits = [];
       if (gpu.temp_c != null) bits.push(gpu.temp_c.toFixed(1) + " °C");
@@ -543,7 +579,11 @@ import {
     }
 
     // Battery — inverts: a full battery is healthy, an empty one is not.
-    const batt = snap.battery || null;
+    const batt = snap.battery || (snap.batt_capacity_pct != null ? {
+      available: true,
+      capacity_pct: snap.batt_capacity_pct,
+      status: snap.batt_status,
+    } : null);
     if (batt && batt.available && batt.capacity_pct != null) {
       setMeter(
         ensureMeter(host, "battery", "Bateria"),
@@ -669,14 +709,16 @@ import {
     if (!snap) return null;
     if (snap.cpu && snap.cpu.temp_c != null) return snap.cpu.temp_c;
     if (snap.gpu && snap.gpu.temp_c != null) return snap.gpu.temp_c;
+    if (snap.cpu_temp_c != null) return snap.cpu_temp_c;
+    if (snap.gpu_temp_c != null) return snap.gpu_temp_c;
     return null;
   }
 
   /** Which sensor the temperature metric is reading, for the unit caption. */
   function tempSourceLabel(snap) {
     if (!snap) return "";
-    if (snap.cpu && snap.cpu.temp_c != null) return "temperatura da CPU";
-    if (snap.gpu && snap.gpu.temp_c != null) return "temperatura da GPU";
+    if ((snap.cpu && snap.cpu.temp_c != null) || snap.cpu_temp_c != null) return "temperatura da CPU";
+    if ((snap.gpu && snap.gpu.temp_c != null) || snap.gpu_temp_c != null) return "temperatura da GPU";
     return "temperatura";
   }
 
@@ -844,6 +886,11 @@ import {
    * definition, not a reason to skip the request.
    */
   async function fetchHistory(force) {
+    if (typeof canPollTelemetry === "function" && !canPollTelemetry()) {
+      historyState.error = "histórico disponível via túnel";
+      renderHistory();
+      return;
+    }
     if (historyState.inFlight) return;
     const now = Date.now();
     if (!force) {
@@ -962,7 +1009,8 @@ import {
     }
     if (el.telLive) el.telLive.classList.remove("is-stale");
     const secs = lastTelemetryAt ? Math.floor((Date.now() - lastTelemetryAt) / 1000) : 0;
-    el.telUpdated.textContent = secs < 5 ? "ao vivo" : "ha " + secs + "s";
+    const prefix = telemetrySource === "nostr" ? "Nostr · " : "";
+    el.telUpdated.textContent = secs < 5 ? prefix + "ao vivo" : prefix + "ha " + secs + "s";
   }
 
   /** 1s ticker so the "ha Xs" label counts up between telemetry fetches. */
@@ -995,13 +1043,26 @@ import {
   }
 
   async function fetchTelemetry() {
+    if (typeof canPollTelemetry === "function" && !canPollTelemetry()) {
+      if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+      return;
+    }
     // A slow request must not pile up behind the 2s interval.
     if (telemetryFetchInFlight) return;
     telemetryFetchInFlight = true;
     try {
       const r = await telemetryGet(TELEMETRY_PATH);
-      if (!r.ok) { updateLiveBadge(false); return; }
+      if (r.status === 404) {
+        if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+        if (telemetrySource !== "nostr") updateLiveBadge(false);
+        return;
+      }
+      if (!r.ok) {
+        if (telemetrySource !== "nostr") updateLiveBadge(false);
+        return;
+      }
       const snap = await r.json();
+      telemetrySource = "http";
       // Kept for the history panel: it needs to tell "this host has no such
       // metric" apart from "this window has no samples".
       lastSnapshot = snap;
@@ -1015,7 +1076,7 @@ import {
       // call costs one request every HISTORY_REFRESH_MS, not one per tick.
       fetchHistory();
     } catch (_) {
-      updateLiveBadge(false);
+      if (telemetrySource !== "nostr") updateLiveBadge(false);
     } finally {
       telemetryFetchInFlight = false;
     }
@@ -1902,7 +1963,13 @@ import {
     renderServices();
     el.servicesOverview.classList.remove("hidden");
     el.localPortSection.classList.remove("hidden");
-    if (data.host_telemetry) renderTelemetry(data.host_telemetry);
+    if (data.host_telemetry) {
+      telemetrySource = "nostr";
+      lastSnapshot = data.host_telemetry;
+      lastTelemetryAt = Date.now();
+      renderTelemetry(data.host_telemetry);
+      updateLiveBadge(true);
+    }
     el.app.setAttribute("data-phase", "live");
     // Transition session from "pending" to "active" on first successful
     // backend contact.
