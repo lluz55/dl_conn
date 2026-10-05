@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,7 @@ const maxRangePoints = 720
 type Handler struct {
 	collector *sensors.Collector
 	sessions  *auth.SessionManager
+	tokens    *auth.TokenManager
 	// stepUp, when non-nil, gates the endpoint behind a step-up proof in
 	// addition to the session (see auth.stepUp). It is opt-in via
 	// auth.stepUpProtected.
@@ -97,29 +99,67 @@ func (h *Handler) WithStore(s *store.Store) *Handler {
 	return h
 }
 
+// WithTokens allows bearer token authentication using one-time tokens issued by
+// Nostr discovery (or tokenManager), enabling cross-origin telemetry polling
+// and history queries from static clients like GitHub Pages.
+func (h *Handler) WithTokens(tm *auth.TokenManager) *Handler {
+	h.tokens = tm
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dl-Conn-StepUp")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		w.Header().Set("Vary", "Origin")
+	}
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.sessions.ValidateSession(r) {
+
+	authKey := ""
+	if h.sessions != nil && h.sessions.ValidateSession(r) {
+		authKey = h.sessions.GetSessionID(r)
+	} else if h.tokens != nil {
+		bearer := extractBearer(r)
+		if bearer != "" && h.tokens.Validate(bearer) {
+			authKey = bearer
+		}
+	}
+
+	if authKey == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Checked after the session, because the proof is bound to the session
+
+	// Checked after the session/token, because the proof is bound to the credential
 	// and there is nothing to verify until there is one.
-	if h.stepUp != nil && !h.stepUp.Enforce(w, h.sessions.GetSessionID(r), r.Header.Get(auth.StepUpHeader)) {
+	if h.stepUp != nil && !h.stepUp.Enforce(w, authKey, r.Header.Get(auth.StepUpHeader)) {
 		return
 	}
 
-	sessionID := h.sessions.GetSessionID(r)
-	// Keyed on the session rather than the address: a session is what the
-	// endpoint's cost is attributable to, and one client may legitimately have
+	// Keyed on the credential rather than the address: a session or token is what
+	// the endpoint's cost is attributable to, and one client may legitimately have
 	// more than one session (two devices, two browsers) without either of them
 	// eating the other's budget.
-	if !h.limiter.Allow(auth.TokenPrefix(sessionID)) {
-		log.Printf("telemetry throttled: session_prefix=%s remote=%s",
-			auth.TokenPrefix(sessionID), h.sessions.IPForLog(r))
+	if !h.limiter.Allow(auth.TokenPrefix(authKey)) {
+		logRemote := r.RemoteAddr
+		if h.sessions != nil {
+			logRemote = h.sessions.IPForLog(r)
+		}
+		log.Printf("telemetry throttled: auth_prefix=%s remote=%s",
+			auth.TokenPrefix(authKey), logRemote)
 		auth.AllowTooManyRequests(w)
 		return
 	}
@@ -278,3 +318,13 @@ func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// extractBearer extracts the token from an "Authorization: Bearer <token>" header.
+func extractBearer(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if len(authHeader) > 7 && strings.EqualFold(authHeader[:7], "bearer ") {
+		return strings.TrimSpace(authHeader[7:])
+	}
+	return ""
+}
+

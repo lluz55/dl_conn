@@ -85,6 +85,27 @@ func (m *TokenManager) ConsumeWithReason(token string) (bool, ConsumeResult) {
 	return true, ConsumeOK
 }
 
+// Validate reports whether token is a valid, unexpired token.
+// Tokens stay valid for read-only telemetry access throughout their TTL,
+// even after being consumed for a top-level service redemption.
+func (m *TokenManager) Validate(token string) bool {
+	if token == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, ok := m.tokens[token]
+	if !ok {
+		return false
+	}
+	if time.Since(entry.createdAt) > m.ttl {
+		delete(m.tokens, token)
+		return false
+	}
+	return true
+}
+
 // Cleanup removes expired tokens.
 func (m *TokenManager) Cleanup() {
 	m.mu.Lock()
@@ -96,3 +117,4 @@ func (m *TokenManager) Cleanup() {
 		}
 	}
 }
+

@@ -248,26 +248,38 @@ import {
   const TELEMETRY_PATH = "/api/host/telemetry";
 
   /**
+   * Resolves a path (such as /api/host/telemetry) against the discovered
+   * tunnel URL if one is known, allowing static launchers (GitHub Pages) to
+   * query the daemon directly.
+   */
+  function telemetryEndpoint(pathAndQuery) {
+    if (typeof state !== "undefined" && state && state.tunnelURL) {
+      try {
+        const base = new URL(state.tunnelURL);
+        return new URL(pathAndQuery, base).href;
+      } catch (_) {}
+    }
+    return pathAndQuery;
+  }
+
+  /**
    * Reports whether this browser origin can reach the daemon's HTTP telemetry
    * route. When loaded from a static launcher (like GitHub Pages), the origin
-   * has no local backend, so /api/host/telemetry would 404 on every tick.
+   * has no local backend, so it queries the discovered tunnel URL once known.
    */
   function canPollTelemetry() {
     if (typeof window !== "undefined" && window.location) {
-      if (window.location.hostname && window.location.hostname.endsWith(".github.io")) return false;
-      if (state.tunnelURL) {
-        try {
-          const tunnelOrigin = new URL(state.tunnelURL).origin;
-          if (window.location.origin !== tunnelOrigin &&
-              window.location.hostname !== "localhost" &&
-              window.location.hostname !== "127.0.0.1") {
-            return false;
-          }
-        } catch (_) {}
+      const isStaticLauncher = window.location.hostname && (
+        window.location.hostname.endsWith(".github.io") ||
+        window.location.protocol === "file:"
+      );
+      if (isStaticLauncher) {
+        return Boolean(typeof state !== "undefined" && state && state.tunnelURL);
       }
     }
     return true;
   }
+
 
   /** Stop everything the Live zone drives; called whenever it goes away. */
   function clearLiveTimers() {
@@ -920,8 +932,6 @@ import {
    */
   async function fetchHistory(force) {
     if (typeof canPollTelemetry === "function" && !canPollTelemetry()) {
-      historyState.error = "histórico disponível via túnel";
-      renderHistory();
       return;
     }
     if (historyState.inFlight) return;
@@ -937,9 +947,9 @@ import {
     try {
       // `points` is what the chart can actually draw, so it is all we ask
       // for; the daemon caps it again on its side.
-      const r = await telemetryGet(
-        TELEMETRY_PATH + "?from=" + from + "&to=" + to + "&points=" + HISTORY_MAX_POINTS
-      );
+      const path = TELEMETRY_PATH + "?from=" + from + "&to=" + to + "&points=" + HISTORY_MAX_POINTS;
+      const endpoint = typeof telemetryEndpoint === "function" ? telemetryEndpoint(path) : path;
+      const r = await telemetryGet(endpoint);
       if (!r.ok) throw new Error(historyErrorLabel(r.status));
       const data = await r.json();
       // A daemon built before the range query ignores ?from= and answers with
@@ -1061,15 +1071,22 @@ import {
    * live poll and the history query so both honour it identically.
    */
   async function telemetryGet(url) {
+    const buildHeaders = () => {
+      const h = Object.assign({}, getStepUpHeader() || {});
+      if (typeof state !== "undefined" && state && state.authToken) {
+        h["Authorization"] = "Bearer " + state.authToken;
+      }
+      return Object.keys(h).length ? h : undefined;
+    };
     let r = await fetch(url, {
       credentials: "include",
-      headers: getStepUpHeader() || undefined,
+      headers: buildHeaders(),
     });
     if (r.status === 401 && getStepUpHeader() === null) {
       await requestStepUp(state.tunnelURL);
       r = await fetch(url, {
         credentials: "include",
-        headers: getStepUpHeader() || undefined,
+        headers: buildHeaders(),
       });
     }
     return r;
@@ -1084,7 +1101,8 @@ import {
     if (telemetryFetchInFlight) return;
     telemetryFetchInFlight = true;
     try {
-      const r = await telemetryGet(TELEMETRY_PATH);
+      const endpoint = typeof telemetryEndpoint === "function" ? telemetryEndpoint(TELEMETRY_PATH) : TELEMETRY_PATH;
+      const r = await telemetryGet(endpoint);
       if (r.status === 404) {
         if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
         if (telemetrySource !== "nostr") updateLiveBadge(false);
@@ -2003,6 +2021,7 @@ import {
       renderTelemetry(data.host_telemetry);
       updateLiveBadge(true);
     }
+    fetchHistory(true);
     el.app.setAttribute("data-phase", "live");
     // Transition session from "pending" to "active" on first successful
     // backend contact.

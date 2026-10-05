@@ -28,6 +28,20 @@ type: log
     função de produção extraída do fonte. Ver
     [concepts/host-telemetry.md](concepts/host-telemetry.md) (Frontend rendering).
 
+- **Histórico e telemetria remota no GitHub Pages via CORS e Bearer token Nostr.**
+  A rota `GET /api/host/telemetry` antes dependia exclusivamente de cookie de mesma origem (`ValidateSession`),
+  tornando impossível ler o histórico de métricas (SQLite) a partir de lançadores estáticos como o GitHub Pages
+  (`lluz55.github.io`), resultando na mensagem "histórico disponível via túnel".
+  1. O daemon Go (`internal/telemetry/handler.go`) agora responde com cabeçalhos CORS (`Access-Control-Allow-Origin`,
+     `Access-Control-Allow-Credentials`, `Access-Control-Allow-Methods`, etc.) e trata preflights `OPTIONS` (204 No Content).
+  2. A autenticação do endpoint agora aceita tanto a sessão de cookie padrão quanto `Authorization: Bearer <token>`
+     gerado pelo handshake NIP-44 via Nostr (`WithTokens(tokenMgr)`).
+  3. `TokenManager.Validate(token)` (`internal/auth/tokens.go`) permite validação de leitura durante o TTL do token,
+     preservando a possibilidade de consumo único em navegações top-level de serviços.
+  4. O frontend SPA (`web/app.js`) agora direciona as requisições de telemetria e histórico para `state.tunnelURL`
+     quando disponível, anexando o cabeçalho `Authorization: Bearer <state.authToken>`. Com isso, a SPA no GitHub
+     Pages carrega e desenha o histórico completo (1h, 24h, 7d) e mantém os medidores atualizados sem erros 404.
+
 - **Telemetria de host no GitHub Pages via Nostr (sem polling 404) e remoção de relay pago.**
   No frontend SPA rodando no GitHub Pages (`*.github.io`):
   1. `startTelemetryPolling()` e `fetchHistory()` agora verificam `canPollTelemetry()`. Em

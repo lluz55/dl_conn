@@ -31,6 +31,35 @@ func TestTokenManager_IssuanceAndConsumption(t *testing.T) {
 	}
 }
 
+func TestTokenManager_Validate(t *testing.T) {
+	tm := NewTokenManager(120 * time.Second)
+	token, _, err := tm.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unconsumed token validates
+	if !tm.Validate(token) {
+		t.Error("unconsumed valid token should validate")
+	}
+
+	// Consumed token still validates for read-only access within TTL
+	if !tm.Consume(token) {
+		t.Fatal("consume should succeed")
+	}
+	if !tm.Validate(token) {
+		t.Error("consumed token within TTL should still validate for read-only telemetry")
+	}
+
+	// Empty and nonexistent tokens do not validate
+	if tm.Validate("") {
+		t.Error("empty token should not validate")
+	}
+	if tm.Validate("bogus") {
+		t.Error("bogus token should not validate")
+	}
+}
+
 func TestTokenManager_InvalidToken(t *testing.T) {
 	tm := NewTokenManager(120 * time.Second)
 	if tm.Consume("nonexistent") {

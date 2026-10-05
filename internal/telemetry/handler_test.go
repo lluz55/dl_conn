@@ -180,3 +180,78 @@ func TestHandler_StepUpRequired(t *testing.T) {
 		t.Errorf("with a valid proof = %d, want 200", rr.Code)
 	}
 }
+
+func TestHandler_BearerTokenAuth(t *testing.T) {
+	sm := auth.NewSessionManager(time.Hour)
+	tm := auth.NewTokenManager(time.Hour)
+	collector := sensors.NewCollector(time.Second)
+	collector.CollectOnce()
+	h := NewHandler(collector, sm).WithTokens(tm)
+
+	token, _, err := tm.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Request with valid bearer token succeeds
+	req := httptest.NewRequest("GET", "/api/host/telemetry", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status with valid bearer token = %d, want 200", rr.Code)
+	}
+
+	// Request with invalid bearer token returns 401
+	badReq := httptest.NewRequest("GET", "/api/host/telemetry", nil)
+	badReq.Header.Set("Authorization", "Bearer invalid-token")
+	badRR := httptest.NewRecorder()
+	h.ServeHTTP(badRR, badReq)
+
+	if badRR.Code != http.StatusUnauthorized {
+		t.Errorf("status with invalid bearer token = %d, want 401", badRR.Code)
+	}
+}
+
+func TestHandler_CORS(t *testing.T) {
+	sm := auth.NewSessionManager(time.Hour)
+	collector := sensors.NewCollector(time.Second)
+	h := NewHandler(collector, sm)
+
+	// OPTIONS preflight
+	optReq := httptest.NewRequest("OPTIONS", "/api/host/telemetry", nil)
+	optReq.Header.Set("Origin", "https://lluz55.github.io")
+	optRR := httptest.NewRecorder()
+	h.ServeHTTP(optRR, optReq)
+
+	if optRR.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want 204", optRR.Code)
+	}
+	if got := optRR.Header().Get("Access-Control-Allow-Origin"); got != "https://lluz55.github.io" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want https://lluz55.github.io", got)
+	}
+	if got := optRR.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want true", got)
+	}
+	if got := optRR.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Error("Access-Control-Allow-Methods missing")
+	}
+
+	// GET with Origin
+	sid := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+	collector.CollectOnce()
+	getReq := httptest.NewRequest("GET", "/api/host/telemetry", nil)
+	getReq.Header.Set("Origin", "https://lluz55.github.io")
+	getReq.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sid})
+	getRR := httptest.NewRecorder()
+	h.ServeHTTP(getRR, getReq)
+
+	if getRR.Code != http.StatusOK {
+		t.Errorf("GET status = %d, want 200", getRR.Code)
+	}
+	if got := getRR.Header().Get("Access-Control-Allow-Origin"); got != "https://lluz55.github.io" {
+		t.Errorf("GET Access-Control-Allow-Origin = %q, want https://lluz55.github.io", got)
+	}
+}
+

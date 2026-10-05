@@ -438,7 +438,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// Host telemetry (requires session, and a step-up proof when the
 	// operator put this route in auth.stepUpProtected)
 	if telCollector != nil {
-		telHandler := telemetry.NewHandler(telCollector, sessionMgr)
+		telHandler := telemetry.NewHandler(telCollector, sessionMgr).WithTokens(tokenMgr)
 		// Hand the store over so the route can also answer ?from=&to= with a
 		// real range from telemetry_samples. Without this the handler only
 		// serves the latest snapshot and answers 501 to a range request.
