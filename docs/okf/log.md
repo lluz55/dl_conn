@@ -6,6 +6,28 @@ type: log
 
 ## 2026-10-05
 
+- **O tempo de ligado do host só aparecia em horas.** `formatUptime()` somava
+  tudo em horas: `Xh Ym`. Não é um detalhe de estilo — uma máquina ligada há 45
+  dias aparecia como `1080h`, um número que não é legível nem se coloca num
+  calendário, e a duração é o dado que o operador lê para saber "desde quando
+  isso está assim". Agora a duração é **decomposta** em `mês / sem / d / h / min`
+  e a pill `#tel-uptime` mostra **as duas maiores unidades**: `42 min` abaixo de
+  uma hora, `1 h 0 min`, `3 d 17 h`, `2 sem 3 d`, `1 mês 1 sem` acima disso.
+  - **Mês = 30 dias** é convenção, não calendário: uptime é duração, não data,
+    e não há mês do calendário para dividir. Só `mês` flexiona (`1 mês` /
+    `3 meses`); `sem`, `d`, `h` e `min` são abreviações invariantes, e `min`
+    fica por extenso porque um `m` solto seria ambíguo entre minuto e mês.
+  - **Duas unidades** é decisão de layout: `.card-head-actions` tem
+    `flex-wrap` e a pill é `white-space: nowrap`, então uma terceira unidade
+    jogaria a pill para a linha inteira no celular.
+  - Entrada negativa ou não numérica vira travessão, como nos outros
+    formatadores do painel. O daemon continua mandando `uptime_s` em segundos
+    de `/proc/uptime` — nada mudou no protocolo.
+  - `web/tests/telemetry_tests.js` cobre a nova escala (0, 1 min, 1 h, 1 d,
+    1 semana, 1 mês, plural, fracionário, negativo) e continua avaliando a
+    função de produção extraída do fonte. Ver
+    [concepts/host-telemetry.md](concepts/host-telemetry.md) (Frontend rendering).
+
 - **Telemetria de host no GitHub Pages via Nostr (sem polling 404) e remoção de relay pago.**
   No frontend SPA rodando no GitHub Pages (`*.github.io`):
   1. `startTelemetryPolling()` e `fetchHistory()` agora verificam `canPollTelemetry()`. Em

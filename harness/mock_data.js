@@ -71,7 +71,8 @@ export function mockSnapshot() {
     num_cpu: cores,
     // Seconds, not milliseconds: uptime_s is what /proc/uptime reports, and
     // formatUptime() treats it as seconds. Writing 1000*60*60*24*3 here showed
-    // "72283h" in the header pill and is a good reminder of the unit.
+    // "72283h" in the header pill and is a good reminder of the unit. This
+    // value is 3 days and some minutes, which the pill reads as "3 d 17 h".
     uptime_s: 3 * 24 * 3600 + 17 * 60 + 42,
     cpu: {
       temp_c: 47 + walk(0, 0.5) * 0.22,

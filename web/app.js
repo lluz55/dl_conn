@@ -278,12 +278,45 @@ import {
     if (debugWatchdog) { clearInterval(debugWatchdog); debugWatchdog = null; }
   }
 
+  /**
+   * Host uptime as the two largest units that carry the magnitude.
+   *
+   * Hours stop being readable early: a box up 45 days read as "1080h", which
+   * is not obviously "since last month" and cannot be placed on a calendar
+   * at all, so the duration is decomposed instead. The month is the usual
+   * 30-day convention — an uptime is a duration, not a date, and there is no
+   * calendar to divide by.
+   *
+   * Minutes are the floor: below an hour they are the only unit that applies
+   * ("42 min"); from one hour up the value shows the largest unit and the one
+   * below it ("1 h 0 min", "3 d 17 h", "2 sem 3 d", "1 mês 1 sem"). Two units
+   * is what fits the pill, and the pair is enough to read the value as a date.
+   * "min" stays spelled out: a bare "m" would be ambiguous between minute and
+   * month, and "sem" is the abbreviation a pt-BR dashboard uses for week.
+   */
   function formatUptime(total) {
-    if (total == null || isNaN(total)) return "—";
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    if (h > 0) return h + "h " + m + "m";
-    return m + "m";
+    if (total == null || isNaN(total) || total < 0) return "—";
+    // [singular, plural, seconds]: the month is the only unit that inflects,
+    // since it is the only one spelled out and long enough to read as a word.
+    const units = [
+      ["mês", "meses", 30 * 24 * 3600],
+      ["sem", "sem", 7 * 24 * 3600],
+      ["d", "d", 24 * 3600],
+      ["h", "h", 3600],
+      ["min", "min", 60],
+    ];
+    let rest = Math.floor(total);
+    // A leading zero is not a unit of the value: under an hour nothing above
+    // "min" applies, so the first shown unit becomes the last real one.
+    let i = 0;
+    while (i < units.length - 1 && rest < units[i][2]) i++;
+    const parts = [];
+    for (; i < units.length && parts.length < 2; i++) {
+      const n = Math.floor(rest / units[i][2]);
+      rest -= n * units[i][2];
+      parts.push(n + " " + units[i][n === 1 ? 0 : 1]);
+    }
+    return parts.join(" ");
   }
 
   /**

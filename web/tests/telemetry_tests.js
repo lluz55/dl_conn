@@ -154,15 +154,27 @@ const renderTelemetry = new Function(
 );
 
 console.log("\n=== Telemetry formatUptime Tests ===");
-assert(formatUptime(0) === "0m", "0s → 0m");
-assert(formatUptime(60) === "1m", "60s → 1m");
-assert(formatUptime(3600) === "1h 0m", "3600s → 1h 0m");
-assert(formatUptime(3661) === "1h 1m", "3661s → 1h 1m");
-assert(formatUptime(86400) === "24h 0m", "86400s → 24h 0m");
-assert(formatUptime(90061) === "25h 1m", "90061s → 25h 1m");
+assert(formatUptime(0) === "0 min", "0s → 0 min");
+assert(formatUptime(60) === "1 min", "60s → 1 min");
+assert(formatUptime(1234) === "20 min", "1234s → 20 min (a hora é a próxima unidade)");
+assert(formatUptime(3600) === "1 h 0 min", "3600s → 1 h 0 min");
+assert(formatUptime(3661) === "1 h 1 min", "3661s → 1 h 1 min");
+// The whole point of the parse: hours alone made 45 days read as "1080h".
+assert(formatUptime(86400) === "1 d 0 h", "1d → 1 d 0 h, não 24 h");
+assert(formatUptime(90061) === "1 d 1 h", "90061s → 1 d 1 h, não 25 h");
+assert(formatUptime(604800) === "1 sem 0 d", "1 semana exata → 1 sem 0 d");
+assert(formatUptime(691200) === "1 sem 1 d", "8 dias → 1 sem 1 d");
+assert(formatUptime(3888000) === "1 mês 2 sem", "45 dias → 1 mês 2 sem");
+assert(formatUptime(7776000) === "3 meses 0 sem", "90 dias → 3 meses 0 sem (plural)");
+assert(formatUptime(2592000) === "1 mês 0 sem", "30 dias → 1 mês 0 sem");
+assert(formatUptime(30 * 24 * 3600 + 86400 * 3 + 3600 * 17) === "1 mês 0 sem",
+  "1 mês 3 d 17 h colapsa nas duas maiores unidades, com a segunda zerada: " +
+  formatUptime(30 * 24 * 3600 + 86400 * 3 + 3600 * 17));
+assert(formatUptime(7320.7) === "2 h 2 min", "segundos fracionários não viram meia hora");
 assert(formatUptime(null) === "—", "null → em dash");
 assert(formatUptime(undefined) === "—", "undefined → em dash");
 assert(formatUptime(NaN) === "—", "NaN → em dash");
+assert(formatUptime(-60) === "—", "negativo → em dash");
 
 console.log("\n=== formatCapacity Tests (adaptive MB/GB/TB, base 1024) ===");
 assert(formatCapacity(null) === "—", "null → em dash");
@@ -214,7 +226,7 @@ assert(el.telGpu.textContent.includes("70.0°C"), "GPU shows temp: " + el.telGpu
 assert(el.telGpu.textContent.includes("25%"), "GPU shows util: " + el.telGpu.textContent);
 assert(el.telBatt.textContent.includes("80%"), "Battery shows pct: " + el.telBatt.textContent);
 assert(el.telBatt.textContent.includes("Discharging"), "Battery shows status: " + el.telBatt.textContent);
-assert(el.telUptime.textContent === "2h 2m", "Uptime formatted: " + el.telUptime.textContent);
+assert(el.telUptime.textContent === "2 h 2 min", "Uptime formatted: " + el.telUptime.textContent);
 
 renderTelemetry({
   cpu: { load1: 1.0 },
@@ -229,7 +241,7 @@ assert(el.telRam.textContent === "—", "RAM missing → em dash");
 assert(el.telDisk.textContent === "—", "Disks empty → em dash");
 assert(el.telGpu.textContent === "—", "GPU missing → em dash");
 assert(el.telBatt.textContent === "—", "Battery unavailable → em dash");
-assert(el.telUptime.textContent === "0m", "Uptime 0 → 0m");
+assert(el.telUptime.textContent === "0 min", "Uptime 0 → 0 min");
 
 renderTelemetry({
   sampled_at: "2026-01-01T00:00:00Z",
@@ -249,7 +261,7 @@ assert(el.telGpu.textContent.includes("60.0°C"), "compact GPU temp");
 assert(el.telGpu.textContent.includes("10%"), "compact GPU util");
 assert(el.telBatt.textContent.includes("75%"), "compact batt");
 assert(el.telBatt.textContent.includes("Charging"), "compact batt status");
-assert(el.telUptime.textContent === "20m", "compact uptime");
+assert(el.telUptime.textContent === "20 min", "compact uptime");
 
 // Multiple disks: every mountpoint is listed, each with adaptive units.
 renderTelemetry({

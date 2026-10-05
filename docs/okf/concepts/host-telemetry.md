@@ -31,6 +31,20 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
   readable binary unit - MB, GB, TB, PB, base 1024 - so the protocol stays
   byte-stable and easy to test. Do not move unit conversion into the Go API
   or the Nostr host_telemetry field; keep the daemon emitting MiB.
+- `formatUptime()` decomposes `uptime_s` into **mês / sem / d / h / min** and
+  shows the **two largest units** (mês = 30 d, sem = 7 d), minutes being the
+  floor: "42 min" under an hour, "1 h 0 min" / "3 d 17 h" / "2 sem 3 d" /
+  "1 mês 1 sem" above it. The old `Xh Ym` accumulator was the defect, not a
+  style choice — a host up 45 days read as "1080h", which is neither readable
+  nor placeable on a calendar, and the pill (`#tel-uptime`) is the only place
+  the duration appears. Two units is a layout decision: `.card-head-actions`
+  wraps and the pill is `white-space: nowrap`, so a third unit would push the
+  pill to its own line on a phone. The month is a 30-day convention because an
+  uptime is a duration, not a date — there is no calendar to divide by — and
+  only `mês` inflects (`1 mês` / `3 meses`); `sem`, `d`, `h` and `min` are the
+  invariant abbreviations, and `min` stays spelled out because a bare `m` is
+  ambiguous between minute and month. Negative or non-numeric input is an em
+  dash, like every other metric formatter in the panel.
 - All snap.disks get their **own row** in the Armazenamento block, not one
   averaged number: averaging hides exactly the volume that is filling up. But
   "one row per *mountpoint*" is not the same as "one row per disk": a bind
