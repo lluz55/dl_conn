@@ -711,7 +711,7 @@ import {
     {
       key: "ram", label: "Memória", unit: "%", caption: "de capacidade",
       domain: [0, 100], warn: METER_WARN_PCT.ram,
-      value: (s) => (s.memory ? s.memory.used_pct : null),
+      value: (s) => (s && s.memory && s.memory.used_pct != null ? s.memory.used_pct : (s && s.ram_used_pct != null ? s.ram_used_pct : null)),
     },
     {
       key: "disk", label: "Disco", unit: "%", caption: "de capacidade",
@@ -719,6 +719,7 @@ import {
       // The busiest mountpoint stands in for "disk", so a filling volume is
       // the one that shows up regardless of how many others stay flat.
       value: (s) => {
+        if (!s) return null;
         if (s.disks && s.disks.length) {
           return s.disks.reduce((m, d) => Math.max(m, d.used_pct || 0), 0);
         }
@@ -730,7 +731,7 @@ import {
       domain: [0, 100], warn: METER_WARN_PCT.gpu,
       // Utilization, not temperature: this is the axis the GPU meter uses, and
       // temperature has its own metric below rather than sharing this one.
-      value: (s) => (s.gpu && s.gpu.util_pct != null ? s.gpu.util_pct : null),
+      value: (s) => (s && s.gpu && s.gpu.util_pct != null ? s.gpu.util_pct : (s && s.gpu_util_pct != null ? s.gpu_util_pct : null)),
     },
     {
       key: "temp", label: "Temp.", unit: "°C", caption: "de temperatura",
