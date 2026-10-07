@@ -1123,6 +1123,26 @@ body {
    no rhythm between them — the gap would draw a seam through them. */
 #session-live-body { gap: 0; }
 
+/* Same rule for every other collapsible body. Wrapping a card's children in a
+   div to give the head something to hide changes which elements are *direct*
+   children of the flex-column `.card`, and `gap` only counts direct children —
+   without this the blocks inside a section would sit flush against each other
+   the first time it could be collapsed. `--gap-md` is the card's own gap, so a
+   section reads identically expanded or collapsed.
+   `.services-body` is deliberately absent: it keeps its own tighter gap from
+   the rules further down, matching the list rhythm it had when it was a
+   nested block rather than a card. */
+#status-body,
+#host-telemetry-body,
+#local-port-body,
+#host-npub-body,
+#debug-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  min-width: 0;
+}
+
 #unlock-ui,
 #login-ui,
 #vault-save-prompt,
@@ -1710,32 +1730,18 @@ body {
   font-size: var(--fs-sm);
 }
 
-/* ── Services overview list (the only services view) ─────────────── */
-/* One column, one gap: the block's children are optional (health strip and
+/* ── Services section body (the only services view) ──────────────── */
+/* One column, one gap: the body's children are optional (health strip and
    the add-service form appear and disappear), so the rhythm comes from the
    container instead of per-child margins that would double up when the
-   optional pieces are absent. */
-.services-overview {
-  margin-top: var(--gap-lg);
-  padding-top: var(--gap-lg);
-  border-top: 1px solid var(--color-outline);
+   optional pieces are absent.
+   The card's own `.card-head` supplies the top edge and the spacing below it,
+   so unlike the `.sub-block`s inside there is no border or padding here —
+   that would draw a second divider across the card. */
+.services-body {
   display: flex;
   flex-direction: column;
   gap: var(--gap-sm);
-}
-
-.services-overview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gap-sm);
-}
-
-.services-overview-head h3 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
 }
 
 .services-overview-list {

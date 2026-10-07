@@ -11,6 +11,13 @@ import {
   SEG_UP,
   SEG_DOWN,
 } from './js/host_history.js';
+import { wireSegGroup } from './js/seg_control.js';
+import {
+  nextCollapsed,
+  collapseLabel,
+  storedCollapsed,
+  storedValue,
+} from './js/section_collapse.js';
 import { SessionManager } from './js/session_manager.js';
 import { startScan } from './js/qr_scanner.js';
 import {
@@ -70,8 +77,6 @@ import {
     saveHostNpub: $("save-host-npub"),
     btnToggleRelays: $("btn-toggle-relays"),
     relayPanel: $("relay-panel"),
-    btnCollapseRelays: $("btn-collapse-relays"),
-    relayPanelBody: $("relay-panel-body"),
     relaySummary: $("relay-summary"),
     btnTestAllRelays: $("btn-test-all-relays"),
     relayList: $("relay-list"),
@@ -115,10 +120,6 @@ import {
     autoLockStatus: $("auto-lock-status"),
     sessionSetup: $("session-setup"),
     sessionLive: $("session-live"),
-    sessionSetupBody: $("session-setup-body"),
-    sessionLiveBody: $("session-live-body"),
-    btnCollapseSessionSetup: $("btn-collapse-session-setup"),
-    btnCollapseSessionLive: $("btn-collapse-session-live"),
     sessionStatusText: $("session-status-text"),
     sessionStatePill: $("session-state-pill"),
     sessionNpub: $("session-npub"),
@@ -179,7 +180,9 @@ import {
     healthCountUp: $("health-count-up"),
     healthCountDown: $("health-count-down"),
     healthCountUnknown: $("health-count-unknown"),
-    servicesOverview: $("services-overview"),
+    // The whole services card. Its `hidden` class is the phase gate: the list
+    // and the "add service" button appear only once the tunnel answers.
+    servicesSection: $("services-section"),
     servicesOverviewList: $("services-overview-list"),
     servicesOverviewCount: $("services-overview-count"),
     btnToggleCustomService: $("btn-toggle-custom-service"),
@@ -234,23 +237,102 @@ import {
   const SERVICES_ORDER_KEY = "dl_conn_services_order";
 
   /**
-   * Whether the relay card's body starts collapsed. Persisted like the other
-   * appearance preferences so the panel opens the way it was last left —
-   * the relay list is a setup-time control, not something worth re-scrolling
-   * past on every load once the tunnel is live.
-   */
-  const RELAY_COLLAPSED_KEY = "dl_conn_relay_collapsed";
-
-  /**
-   * Whether the session card's body starts collapsed. Persisted like the relay
-   * one, and for the same reason: once the tunnel is up, the login/unlock
-   * controls and the auto-lock band are setup-time surfaces — the operator
-   * reads identity and session state from the head, which stays visible.
+   * Every collapsible section, declared once.
    *
-   * One preference drives both sides of the card (locked/setup and live), so
-   * collapsing the session once keeps it collapsed after the next login.
+   * The two sections that could already collapse each had their own toggle
+   * function, and "every section collapses" was unenforceable: adding a card
+   * meant remembering to hand-copy a fourth toggle. Here the button, the body
+   * it hides, the visible label and the storage key live in one row, and
+   * `layout_tests.js` diffs this list against the `<section>`s in index.html —
+   * so a new section without a collapse button fails the suite instead of
+   * quietly shipping one.
+   *
+   * The pattern is the one the relay and session cards already used: collapse
+   * the body in place and leave the `.card-head` visible, so the pills in the
+   * head (relay summary, session state, service count) stay readable while the
+   * body is closed.
+   *
+   * `bodies` and `buttons` are arrays because the session card has two mutually
+   * exclusive sides — setup and live — sharing one preference. A preference per
+   * side would make the card "remember" two different collapses and reappear
+   * expanded after the next login, which is exactly when the operator least
+   * wants to scroll to the unlock controls. Only the visible side is clickable,
+   * and the toggle reads the first listed body.
+   *
+   * `storageKey` is spelled out per row rather than derived from `key` so the
+   * relay and session preferences keep the names they already had on disk.
+   *
+   * `section` names the `<section>` element itself. Nothing reads it at
+   * runtime — it exists so the test can diff this table against the markup and
+   * fail when a section appears that has no row here, which is the only way
+   * "every section collapses" stays true as cards are added.
    */
-  const SESSION_COLLAPSED_KEY = "dl_conn_session_collapsed";
+  const COLLAPSIBLE_SECTIONS = [
+    {
+      key: "session",
+      section: "vault-section",
+      label: "sessão",
+      storageKey: "dl_conn_session_collapsed",
+      bodies: ["session-setup-body", "session-live-body"],
+      buttons: ["btn-collapse-session-setup", "btn-collapse-session-live"],
+    },
+    {
+      key: "relays",
+      section: "relay-panel",
+      label: "relays",
+      storageKey: "dl_conn_relay_collapsed",
+      bodies: ["relay-panel-body"],
+      buttons: ["btn-collapse-relays"],
+    },
+    {
+      key: "overview",
+      section: "status-section",
+      label: "visão geral",
+      storageKey: "dl_conn_overview_collapsed",
+      bodies: ["status-body"],
+      buttons: ["btn-collapse-status"],
+    },
+    {
+      key: "services",
+      section: "services-section",
+      label: "serviços",
+      storageKey: "dl_conn_services_collapsed",
+      bodies: ["services-body"],
+      buttons: ["btn-collapse-services"],
+    },
+    {
+      key: "host",
+      section: "host-telemetry-section",
+      label: "saúde do host",
+      storageKey: "dl_conn_host_collapsed",
+      bodies: ["host-telemetry-body"],
+      buttons: ["btn-collapse-host"],
+    },
+    {
+      key: "local-port",
+      section: "local-port-section",
+      label: "porta local",
+      storageKey: "dl_conn_local_port_collapsed",
+      bodies: ["local-port-body"],
+      buttons: ["btn-collapse-local-port"],
+    },
+    {
+      key: "host-npub",
+      section: "host-npub-section",
+      label: "npub do host",
+      storageKey: "dl_conn_host_npub_collapsed",
+      bodies: ["host-npub-body"],
+      buttons: ["btn-collapse-host-npub"],
+    },
+    {
+      key: "debug",
+      section: "debug-section",
+      label: "depuração",
+      storageKey: "dl_conn_debug_collapsed",
+      bodies: ["debug-body"],
+      buttons: ["btn-collapse-debug"],
+    },
+  ];
 
   /**
    * Discovery requests are numbered so a reply that beats its own publish
@@ -1278,28 +1360,21 @@ import {
 
   /** Wire the window and metric segmented controls. */
   function setupHistoryControls() {
-    const pick = (group, attr, apply) => {
-      if (!group) return;
-      group.addEventListener("click", (event) => {
-        const btn = event.target.closest(".seg[data-" + attr + "]");
-        if (!btn || !group.contains(btn)) return;
-        for (const other of group.querySelectorAll(".seg")) {
-          other.classList.toggle("is-on", other === btn);
-        }
-        apply(btn.dataset[attr]);
-      });
-    };
-    pick(el.histWindowGroup, "window", (v) => {
+    // The markup attribute is the only argument: `wireSegGroup` derives both
+    // the selector and the `dataset` key from it (see js/seg_control.js).
+    // Spelling the two separately is what left the availability toggle wired
+    // to a selector that matched nothing.
+    wireSegGroup(el.histWindowGroup, "data-window", (v) => {
       historyState.windowSec = Number(v) || 604800;
       // Forced: a new window invalidates whatever is already loaded, and
       // until it arrives the chart is showing the previous range.
       fetchHistory(true);
     });
-    pick(el.histMetricGroup, "metric", (v) => {
+    wireSegGroup(el.histMetricGroup, "data-metric", (v) => {
       historyState.metric = historyMetric(v).key;
       renderHistory();
     });
-    pick(el.availWindowGroup, "availWindow", (v) => {
+    wireSegGroup(el.availWindowGroup, "data-avail-window", (v) => {
       hostHistoryState.windowSec = Number(v) || 86400;
       fetchHostHistory(true);
     });
@@ -1751,8 +1826,7 @@ import {
       });
     }
     renderRelayList();
-    restoreRelayCollapse();
-    restoreSessionCollapse();
+    restoreSectionCollapses();
     loadCustomServices();
     populateCustomServiceIcons();
     state.session.on(onSessionEvent);
@@ -1903,14 +1977,13 @@ import {
     el.saveHostNpub.addEventListener("click", onSaveHostNpub);
     el.hostNpubInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onSaveHostNpub(); });
     el.btnToggleRelays.addEventListener("click", onToggleRelays);
-    el.btnCollapseRelays.addEventListener("click", onToggleRelayCollapse);
+    // Every section's disclosure button, in one loop — see COLLAPSIBLE_SECTIONS.
+    bindSectionCollapses();
     el.btnTestAllRelays.addEventListener("click", onTestAllRelays);
     el.btnAddRelay.addEventListener("click", onAddRelay);
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
     el.btnResetRelays.addEventListener("click", onResetRelays);
     el.btnLockSession.addEventListener("click", () => state.session.lock());
-    el.btnCollapseSessionSetup.addEventListener("click", onToggleSessionCollapse);
-    el.btnCollapseSessionLive.addEventListener("click", onToggleSessionCollapse);
     el.btnRefreshServices.addEventListener("click", onRefreshServices);
     el.btnClearServices.addEventListener("click", onClearServices);
     el.btnToggleCustomService.addEventListener("click", onToggleCustomServiceForm);
@@ -2116,7 +2189,7 @@ import {
       el.sessionSetup.classList.remove("hidden");
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
-      el.servicesOverview.classList.add("hidden");
+      el.servicesSection.classList.add("hidden");
       el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       if (state.nostr) state.nostr.disconnect();
@@ -2139,7 +2212,7 @@ import {
       el.sessionLive.classList.add("hidden");
       setSessionPendingVisual(false);
       setSessionPill("Bloqueada", "");
-      el.servicesOverview.classList.add("hidden");
+      el.servicesSection.classList.add("hidden");
       el.localPortSection.classList.add("hidden");
       if (el.hostTelemetrySection) el.hostTelemetrySection.classList.add("hidden");
       clearLiveTimers();
@@ -2245,7 +2318,7 @@ import {
     state.config.hostNpub = null;
     state.pendingIdentity = null;
     clearLiveTimers();
-    el.servicesOverview.classList.add("hidden");
+    el.servicesSection.classList.add("hidden");
     el.localPortSection.classList.add("hidden");
     setTunnelStatus("Aguardando túnel…");
     setSessionStatus("Bloqueada", "dim");
@@ -2534,7 +2607,7 @@ import {
     loadServicesOrder();
     startExpiryCountdown(data.expires_in_seconds || 0);
     renderServices();
-    el.servicesOverview.classList.remove("hidden");
+    el.servicesSection.classList.remove("hidden");
     el.localPortSection.classList.remove("hidden");
     if (data.host_telemetry) {
       telemetrySource = "nostr";
@@ -3366,15 +3439,15 @@ import {
   }
 
   /**
-   * Render the services list in the Visão geral section — the one and only
-   * services view. It carries the rows, the health strip and every management
-   * control, so the block's visibility follows the Live phase (the caller
-   * un-hides it) rather than the service count: with zero services the
-   * "add service" button has to stay reachable, which is why an empty list
-   * renders a message instead of collapsing the whole block.
+   * Render the services list in the Serviços section — the one and only services
+   * view. It carries the rows, the health strip and every management control,
+   * so the block's visibility follows the Live phase (the caller un-hides the
+   * section) rather than the service count: with zero services the "add
+   * service" button has to stay reachable, which is why an empty list renders a
+   * message instead of collapsing the whole block.
    */
   function renderServicesOverview() {
-    if (!el.servicesOverview || !el.servicesOverviewList || !el.servicesOverviewCount) return;
+    if (!el.servicesSection || !el.servicesOverviewList || !el.servicesOverviewCount) return;
 
     const total = state.services.length;
     el.servicesOverviewCount.textContent = total + (total === 1 ? " serviço" : " serviços");
@@ -3722,90 +3795,89 @@ import {
    * and the #relay-summary pill on screen, which is the point — how many
    * relays are reachable stays readable while the list is closed.
    */
-  function onToggleRelayCollapse() {
-    applyRelayCollapse(el.relayPanelBody.classList.contains("hidden"));
-  }
-
   /**
-   * @param {boolean} collapsed
-   */
-  function applyRelayCollapse(collapsed) {
-    el.relayPanelBody.classList.toggle("hidden", collapsed);
-    el.btnCollapseRelays.setAttribute("aria-expanded", String(!collapsed));
-    el.btnCollapseRelays.setAttribute("aria-label", collapsed
-      ? "Expandir relays"
-      : "Recolher relays");
-    // The tooltip is drawn from attr(data-tip) (see [data-tip]::after in
-    // style.css), so the label has to move with the attribute.
-    el.btnCollapseRelays.setAttribute("data-tip", collapsed
-      ? "Expandir relays"
-      : "Recolher relays");
-    try {
-      localStorage.setItem(RELAY_COLLAPSED_KEY, collapsed ? "1" : "0");
-    } catch {
-      // Storage can be unavailable (private mode, quota). The collapse still
-      // works for this page view; it just will not survive a reload.
-    }
-  }
-
-  /** Restore the relay card's collapsed state from the saved preference. */
-  function restoreRelayCollapse() {
-    let saved = null;
-    try {
-      saved = localStorage.getItem(RELAY_COLLAPSED_KEY);
-    } catch {
-      return; // unreadable storage: leave the panel open
-    }
-    applyRelayCollapse(saved === "1");
-  }
-
-  /**
-   * Collapse/expand the session card body in place. Like the relay card, the
-   * head stays visible: #vault-state-pill (setup side) and #session-state-pill
-   * with the npub (live side) are the quick read of "who am I and is the
-   * session alive", and they must survive the body being closed.
+   * Collapse/expand a section's body in place, driven by the declaration above.
    *
-   * The card has two mutually exclusive sides, so there are two bodies and two
-   * buttons; both follow one preference, and only the visible side can be
-   * clicked, so toggling reads the setup side and drives both.
-   */
-  function onToggleSessionCollapse() {
-    const isOpen = !el.sessionSetupBody.classList.contains("hidden");
-    applySessionCollapse(isOpen);
-  }
-
-  /**
+   * The previous version of this was one hand-written toggle per card, and
+   * every bug it produced was a sibling drifting from its copy: the relay card
+   * passed the collapsed state through un-inverted and its button did nothing
+   * at all, and "every section collapses" was a convention nobody could check
+   * because the set of sections was spread across the markup, the `el` map and
+   * the listeners. One table plus one controller removes the place for that
+   * drift; `layout_tests.js` asserts the table against the markup so a new
+   * section cannot ship without a button.
+   *
+   * @param {{bodies:string[],buttons:string[],label:string}} section
    * @param {boolean} collapsed
    */
-  function applySessionCollapse(collapsed) {
-    el.sessionSetupBody.classList.toggle("hidden", collapsed);
-    el.sessionLiveBody.classList.toggle("hidden", collapsed);
+  function applySectionCollapse(section, collapsed) {
+    for (const id of section.bodies) {
+      const body = $(id);
+      if (body) body.classList.toggle("hidden", collapsed);
+    }
     // aria-label and data-tip move together: the tooltip is drawn from
     // attr(data-tip) (see [data-tip]::after in style.css), so updating only one
-    // would leave a "Recolher sessão" tooltip on a button that only expands.
-    const label = collapsed ? "Expandir sessão" : "Recolher sessão";
-    for (const btn of [el.btnCollapseSessionSetup, el.btnCollapseSessionLive]) {
+    // would leave a "Recolher" tooltip on a button that only expands.
+    const label = collapseLabel(collapsed, section.label);
+    for (const id of section.buttons) {
+      const btn = $(id);
+      if (!btn) continue;
       btn.setAttribute("aria-expanded", String(!collapsed));
       btn.setAttribute("aria-label", label);
       btn.setAttribute("data-tip", label);
     }
     try {
-      localStorage.setItem(SESSION_COLLAPSED_KEY, collapsed ? "1" : "0");
+      localStorage.setItem(section.storageKey, storedValue(collapsed));
     } catch {
       // Storage can be unavailable (private mode, quota). The collapse still
       // works for this page view; it just will not survive a reload.
     }
   }
 
-  /** Restore the session card's collapsed state from the saved preference. */
-  function restoreSessionCollapse() {
-    let saved = null;
-    try {
-      saved = localStorage.getItem(SESSION_COLLAPSED_KEY);
-    } catch {
-      return; // unreadable storage: leave the card open
+  /**
+   * Flip one section between collapsed and expanded.
+   *
+   * The body's current class IS the state, so the next state is its inverse —
+   * see nextCollapsed() in js/section_collapse.js for why passing the read
+   * value straight through is silent rather than obvious.
+   *
+   * @param {{bodies:string[]}} section
+   */
+  function toggleSectionCollapse(section) {
+    const body = $(section.bodies[0]);
+    if (!body) return;
+    applySectionCollapse(section, nextCollapsed(body.classList.contains("hidden")));
+  }
+
+  /** Wire every declared section's disclosure button. */
+  function bindSectionCollapses() {
+    for (const section of COLLAPSIBLE_SECTIONS) {
+      for (const id of section.buttons) {
+        const btn = $(id);
+        if (btn) btn.addEventListener("click", () => toggleSectionCollapse(section));
+      }
     }
-    applySessionCollapse(saved === "1");
+  }
+
+  /**
+   * Restore every section's collapsed state from its saved preference.
+   *
+   * Runs on every load rather than only when a stored value exists: an absent
+   * preference means "expanded", and that is also the state the markup ships
+   * in, so the two agree without writing a redundant record. Reading the
+   * stored value and applying it are kept together so a section cannot end up
+   * displaying a state it did not persist.
+   */
+  function restoreSectionCollapses() {
+    for (const section of COLLAPSIBLE_SECTIONS) {
+      let saved = null;
+      try {
+        saved = localStorage.getItem(section.storageKey);
+      } catch {
+        continue; // unreadable storage: leave this section open
+      }
+      applySectionCollapse(section, storedCollapsed(saved));
+    }
   }
 
   async function onTestAllRelays() {

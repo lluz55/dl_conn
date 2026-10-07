@@ -47,7 +47,7 @@ assert(
 );
 assert(
   /li\.className = "service-overview-item"/.test(app) && /class="services-overview-list"/.test(html),
-  "Services render as rows in the Visão geral list",
+  "Services render as rows in the Serviços list",
 );
 assert(
   !/service-card|services-grid/.test(app) && !/service-card|services-grid/.test(html),
@@ -58,10 +58,10 @@ assert(
   "The CSS for the removed services grid is gone too",
 );
 assert(
-  /id="services-overview"[\s\S]*?id="btn-toggle-custom-service"[\s\S]*?id="btn-refresh-services"[\s\S]*?id="btn-clear-services"/.test(html) &&
+  /id="services-section"[\s\S]*?id="btn-toggle-custom-service"[\s\S]*?id="btn-refresh-services"[\s\S]*?id="btn-clear-services"/.test(html) &&
     /id="services-health"/.test(html) &&
     /id="custom-service-form"/.test(html),
-  "The services list block still owns the add / refresh / clear controls, the health strip and the custom-service form",
+  "The services card still owns the add / refresh / clear controls, the health strip and the custom-service form",
 );
 assert(
   /DOMContentLoaded",\s*async[\s\S]*?await init\(\)[\s\S]*?showApp\(\)/.test(app),
@@ -133,43 +133,102 @@ assert(
   "The saved-PIN unlock screen focuses and selects the PIN input for immediate typing",
 );
 
-// ── Collapsible relay card ──────────────────────────────────────────
-console.log("  [Collapsible relay card]");
+// ── Collapsible sections (one registry, every card) ─────────────────
+console.log("  [Collapsible sections]");
+
+// The registry is the single source of truth. Reading it here — rather than
+// hardcoding a list of card ids — is what lets the next section added to
+// index.html fail this suite if nobody gave it a collapse button.
+const registry = app.match(/const COLLAPSIBLE_SECTIONS = \[([\s\S]*?)\n  \];/);
 assert(
-  /<button id="btn-collapse-relays"[^>]*aria-expanded="true"[^>]*aria-controls="relay-panel-body"/.test(html),
-  "The relay card head carries a disclosure button wired to the body it controls",
+  registry !== null,
+  "app.js declares the collapsible sections in one registry",
+);
+const registrySrc = registry ? registry[1] : "";
+const declaredSections = [...registrySrc.matchAll(/section: "([^"]+)"/g)].map((m) => m[1]);
+const declaredBodies = [...registrySrc.matchAll(/bodies: \[([^\]]*)\]/g)]
+  .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
+const declaredButtons = [...registrySrc.matchAll(/buttons: \[([^\]]*)\]/g)]
+  .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
+const markupSections = [...html.matchAll(/<section id="([^"]+)"/g)].map((m) => m[1]);
+
+assert(
+  declaredSections.length > 0 && markupSections.length > 0 &&
+    markupSections.every((s) => declaredSections.includes(s)),
+  "EVERY <section> in index.html has a row in the collapse registry — no card ships without a collapse button",
 );
 assert(
-  /<div id="relay-panel-body" class="card-body">[\s\S]*?id="relay-list"[\s\S]*?id="btn-reset-relays"[\s\S]*?<\/div>\s*<\/section>/.test(html),
-  "Collapsing hides the list and the add/reset controls, but not the card head",
+  declaredSections.every((s) => markupSections.includes(s)),
+  "Every registry row points at a real <section>, so a renamed id cannot leave a stale entry behind",
 );
 assert(
-  /id="relay-summary"[\s\S]*?id="btn-collapse-relays"/.test(html),
-  "The relay summary pill stays in the head, so it remains readable while collapsed",
+  declaredBodies.every((b) => html.includes(`id="${b}"`)) &&
+    declaredButtons.every((b) => html.includes(`id="${b}"`)),
+  "Every body and button the registry toggles exists in the markup",
 );
 assert(
-  /function applyRelayCollapse\(collapsed\)/.test(app) &&
-    /el\.relayPanelBody\.classList\.toggle\("hidden", collapsed\)/.test(app),
-  "The collapse toggles the body only, leaving the card itself visible",
+  declaredButtons.every((b) => {
+    const btn = html.match(new RegExp(`<button id="${b}"[^>]*>`));
+    return btn && /aria-expanded="true"/.test(btn[0]) && /btn-collapse/.test(btn[0]);
+  }),
+  "Every disclosure button ships expanded and carries the rotating-chevron class",
 );
 assert(
-  /function applyRelayCollapse\(collapsed\)[\s\S]*?aria-expanded", String\(!collapsed\)/.test(app) &&
-    /function applyRelayCollapse\(collapsed\)[\s\S]*?setAttribute\("aria-label", collapsed/.test(app),
+  declaredButtons.every((b) => {
+    const btn = html.match(new RegExp(`<button id="${b}"[^>]*aria-controls="([^"]+)"`));
+    return btn && declaredBodies.includes(btn[1]);
+  }),
+  "Every disclosure button's aria-controls names a body this registry knows how to hide",
+);
+assert(
+  declaredSections.length === declaredBodies.length - 1 &&
+    declaredSections.every((s) => {
+      // The session card has two mutually exclusive sides sharing one preference.
+      const bodies = [...registrySrc.matchAll(new RegExp(`section: "${s}",[\\s\\S]*?bodies: \\[([^\\]]*)\\]`, "g"))]
+        .map((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]))[0];
+      return bodies.length === 1 || s === "vault-section";
+    }),
+  "One preference drives each card's bodies, so the session card's two sides cannot diverge",
+);
+
+// ── Collapse behaviour (shared controller) ──────────────────────────
+assert(
+  /function toggleSectionCollapse\(section\)[\s\S]*?nextCollapsed\(body\.classList\.contains\("hidden"\)\)/.test(app),
+  "The toggle delegates the inversion to nextCollapsed() — passing the read value through is what made the relay button a no-op",
+);
+assert(
+  /function applySectionCollapse\(section, collapsed\)[\s\S]*?body\.classList\.toggle\("hidden", collapsed\)/.test(app),
+  "Collapsing hides the body only, leaving the card and its head visible",
+);
+assert(
+  /function applySectionCollapse\(section, collapsed\)[\s\S]*?aria-expanded", String\(!collapsed\)/.test(app) &&
+    /function applySectionCollapse\(section, collapsed\)[\s\S]*?setAttribute\("aria-label", label\)/.test(app),
   "Collapsing updates aria-expanded and the accessible label, not just the CSS",
 );
 assert(
-  /setAttribute\("data-tip", collapsed/.test(app),
+  /setAttribute\("data-tip", label\)/.test(app),
   "The tooltip label follows the state, because it is drawn from attr(data-tip)",
 );
 assert(
-  /localStorage\.setItem\(RELAY_COLLAPSED_KEY, collapsed \? "1" : "0"\)/.test(app) &&
-    /function restoreRelayCollapse\(\)/.test(app) &&
-    /localStorage\.getItem\(RELAY_COLLAPSED_KEY\)/.test(app),
-  "The collapsed state is persisted and restored on the next load",
+  /function restoreSectionCollapses\(\)[\s\S]*?localStorage\.getItem\(section\.storageKey\)[\s\S]*?storedCollapsed\(saved\)/.test(app) &&
+    /function applySectionCollapse\(section, collapsed\)[\s\S]*?localStorage\.setItem\(section\.storageKey, storedValue\(collapsed\)\)/.test(app),
+  "Each section's collapsed state is persisted and restored on the next load",
 );
 assert(
-  /renderRelayList\(\);\s*\n\s*restoreRelayCollapse\(\);/.test(app),
-  "The saved state is restored during init, after the relay list is first rendered",
+  /const label = collapseLabel\(collapsed, section\.label\)/.test(app),
+  "Both buttons take their label from one helper, so aria-label and data-tip cannot disagree",
+);
+assert(
+  /function bindSectionCollapses\(\)[\s\S]*?for \(const section of COLLAPSIBLE_SECTIONS\)[\s\S]*?addEventListener\("click", \(\) => toggleSectionCollapse\(section\)\)/.test(app),
+  "One loop wires every declared button, instead of a hand-written listener per card",
+);
+assert(
+  /renderRelayList\(\);\s*\n\s*restoreSectionCollapses\(\);/.test(app),
+  "Saved states are restored during init, after the relay list is first rendered",
+);
+assert(
+  /function applySectionCollapse\(section, collapsed\)[\s\S]*?\}\s*catch \{/.test(app),
+  "A storage failure (private mode, quota) leaves the collapse usable for this page view",
 );
 assert(
   /\.btn-collapse\[aria-expanded="false"\]\s\.icon\s*\{[^}]*rotate\(-90deg\)/s.test(css) &&
@@ -177,56 +236,32 @@ assert(
   "A single chevron symbol rotates to point right when the body is collapsed",
 );
 assert(
-  /function applyRelayCollapse\(collapsed\)[\s\S]*?\}\s*catch \{/.test(app),
-  "A storage failure (private mode, quota) leaves the collapse usable for this page view",
+  /#status-body,[\s\S]*?#debug-body\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*var\(--gap-md\)/s.test(css),
+  "Every collapsible body re-declares the card's gap, which no longer reaches its grandchildren",
 );
 
-// ── Collapsible session card ────────────────────────────────────────
-console.log("  [Collapsible session card]");
+// ── Per-card collapse contract ──────────────────────────────────────
 assert(
-  /<button id="btn-collapse-session-setup"[^>]*aria-expanded="true"[^>]*aria-controls="session-setup-body"/.test(html) &&
-    /<button id="btn-collapse-session-live"[^>]*aria-expanded="true"[^>]*aria-controls="session-live-body"/.test(html),
-  "Both session states carry a disclosure button wired to the body it controls",
+  /id="relay-summary"[\s\S]*?id="btn-collapse-relays"/.test(html),
+  "The relay summary pill stays in the head, so it remains readable while collapsed",
 );
 assert(
   /id="vault-state-pill"[\s\S]*?id="btn-collapse-session-setup"/.test(html) &&
     /id="session-state-pill"[\s\S]*?id="btn-collapse-session-live"/.test(html),
-  "The state pills stay in each head, so session state remains readable while collapsed",
+  "The session state pills stay in each head, so session state remains readable while collapsed",
+);
+assert(
+  /id="services-overview-count"[\s\S]*?id="btn-collapse-services"/.test(html),
+  "The service count pill stays in the Services head, so it remains readable while collapsed",
+);
+assert(
+  /id="tel-uptime"[\s\S]*?id="btn-collapse-host"/.test(html),
+  "Uptime and the live badge stay in the host head, so 'is it reporting?' survives the collapse",
 );
 assert(
   /id="session-setup-body"[\s\S]*?id="unlock-ui"[\s\S]*?id="login-ui"[\s\S]*?id="btn-clear-all"/.test(html) &&
     /id="btn-collapse-session-live"[\s\S]*?id="session-live-body"[\s\S]*?id="auto-lock-section"[\s\S]*?id="biometric-enroll"/.test(html),
   "Collapsing hides the login/unlock controls and the auto-lock/biometric bands, but not the heads",
-);
-assert(
-  /function applySessionCollapse\(collapsed\)/.test(app) &&
-    /el\.sessionSetupBody\.classList\.toggle\("hidden", collapsed\)/.test(app) &&
-    /el\.sessionLiveBody\.classList\.toggle\("hidden", collapsed\)/.test(app),
-  "The collapse toggles both bodies, so the setup and live sides share one state",
-);
-assert(
-  /function applySessionCollapse\(collapsed\)[\s\S]*?for \(const btn of \[el\.btnCollapseSessionSetup, el\.btnCollapseSessionLive\]\)[\s\S]*?aria-expanded", String\(!collapsed\)/.test(app) &&
-    /function applySessionCollapse\(collapsed\)[\s\S]*?setAttribute\("aria-label", label\)/.test(app),
-  "Collapsing updates aria-expanded and the accessible label on both buttons",
-);
-assert(
-  /function applySessionCollapse\(collapsed\)[\s\S]*?setAttribute\("data-tip", label\)/.test(app),
-  "The tooltip label follows the state, because it is drawn from attr(data-tip)",
-);
-assert(
-  /localStorage\.setItem\(SESSION_COLLAPSED_KEY, collapsed \? "1" : "0"\)/.test(app) &&
-    /function restoreSessionCollapse\(\)/.test(app) &&
-    /localStorage\.getItem\(SESSION_COLLAPSED_KEY\)/.test(app),
-  "The collapsed state is persisted in the browser and restored on the next load",
-);
-assert(
-  /restoreRelayCollapse\(\);\s*\n\s*restoreSessionCollapse\(\);/.test(app),
-  "The saved session state is restored during init, next to the relay preference",
-);
-assert(
-  /el\.btnCollapseSessionSetup\.addEventListener\("click", onToggleSessionCollapse\)/.test(app) &&
-    /el\.btnCollapseSessionLive\.addEventListener\("click", onToggleSessionCollapse\)/.test(app),
-  "Both disclosure buttons drive the same toggle",
 );
 assert(
   /#session-setup-body,\s*\n#session-live-body\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*var\(--gap-md\)/s.test(css),
@@ -237,8 +272,56 @@ assert(
   "The live head's disclosure button is not squeezed by a long npub chip",
 );
 assert(
-  /function applySessionCollapse\(collapsed\)[\s\S]*?\}\s*catch \{/.test(app),
-  "A storage failure (private mode, quota) leaves the session collapse usable for this page view",
+  !/applyRelayCollapse|applySessionCollapse|onToggleSessionCollapse|RELAY_COLLAPSED_KEY|SESSION_COLLAPSED_KEY/.test(app),
+  "The per-card collapse copies are gone, so no sibling can drift out of sync with the shared controller",
+);
+
+// ── Overview / Services split ───────────────────────────────────────
+console.log("  [Overview and Services split]");
+assert(
+  /<section id="status-section" class="card">[\s\S]*?id="status-body"[\s\S]*?<\/section>/.test(html),
+  "Visão geral is its own card with a collapsible body",
+);
+assert(
+  /id="avail-window-group"[\s\S]*?data-avail-window="3600"[\s\S]*?data-avail-window="86400"[\s\S]*?data-avail-window="604800"/.test(html) &&
+    /wireSegGroup\(el\.availWindowGroup, "data-avail-window"/.test(app),
+  "The availability window toggle reads the attribute the buttons actually carry",
+);
+assert(
+  !/data-availWindow|data-availwindow/.test(app) && !/data-availWindow/.test(html),
+  "No camelCase spelling of the availability attribute survives — it would select nothing",
+);
+assert(
+  /id="status-body"[\s\S]*?status-grid[\s\S]*?tunnel-timeline-block[\s\S]*?<\/div>\s*<\/div>\s*<\/section>/.test(html),
+  "Visão geral keeps only the KPI grid and the tunnel timeline — it is the quick read",
+);
+assert(
+  /<section id="services-section" class="card">[\s\S]*?id="services-body"[\s\S]*?<\/section>/.test(html),
+  "Serviços is a card of its own, no longer a block nested inside Visão geral",
+);
+assert(
+  /id="status-body"[\s\S]*?<section id="services-section"/.test(html),
+  "The services section follows the overview rather than sitting inside it",
+);
+assert(
+  /el\.servicesSection/.test(app) && !/el\.servicesOverview\b/.test(app),
+  "app.js gates the Live phase on the services card, not on the removed nested container",
+);
+assert(
+  /id="services-section"[\s\S]*?id="services-health"[\s\S]*?id="custom-service-form"[\s\S]*?id="services-overview-list"[\s\S]*?id="services-availability"/.test(html),
+  "The services card still owns the health strip, the custom-service form, the list and the availability chart",
+);
+assert(
+  /id="services-overview-count"[\s\S]*?id="btn-toggle-custom-service"[\s\S]*?id="btn-refresh-services"[\s\S]*?id="btn-clear-services"/.test(html),
+  "The add / refresh / clear controls moved up into the services card head",
+);
+assert(
+  /\.services-body\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/s.test(css),
+  "The services body keeps the list rhythm it had as a nested block",
+);
+assert(
+  !/\.services-overview\s*\{|\.services-overview-head/.test(css),
+  "The CSS for the removed nested services block is gone, not left orphaned",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

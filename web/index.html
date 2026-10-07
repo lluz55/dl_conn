@@ -406,12 +406,19 @@
       <section id="host-npub-section" class="card hidden">
         <div class="card-head">
           <h2>Host dl_conn</h2>
+          <div class="card-head-actions">
+            <button id="btn-collapse-host-npub" class="btn-icon btn-collapse" aria-label="Recolher npub do host" data-tip-end data-tip="Recolher npub do host" aria-expanded="true" aria-controls="host-npub-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
+          </div>
         </div>
+        <div id="host-npub-body">
         <div class="field">
           <label for="host-npub-input" class="field-label">Npub do host dl_conn</label>
           <input type="text" id="host-npub-input" placeholder="npub1…" class="nsid-input" aria-label="Npub do host" />
         </div>
         <button id="save-host-npub" class="btn btn-primary btn-full" data-tip="Salvar npub do host e conectar">Salvar e conectar</button>
+        </div>
       </section>
 
       <!-- Diagnostics / debug console (developer tool) -->
@@ -425,21 +432,38 @@
             <button id="btn-clear-debug" class="btn-icon" aria-label="Limpar log" data-tip-end data-tip="Limpar log">
               <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
             </button>
+            <button id="btn-collapse-debug" class="btn-icon btn-collapse" aria-label="Recolher depuração" data-tip-end data-tip="Recolher depuração" aria-expanded="true" aria-controls="debug-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
           </div>
         </div>
+        <div id="debug-body">
         <p class="status-sub">Log de eventos do Nostr/relays. Use para investigar quando o backend "some" sem erro no console.</p>
         <div id="debug-log" class="debug-log" role="log" aria-live="polite"></div>
+        </div>
       </section>
         </div>
 
         <div class="col col-live">
 
-      <!-- Status: KPI overview (admin dashboard cards) -->
+      <!-- Overview: the four facts that decide whether the tunnel is worth
+           anything, plus the URL-rotation timeline. Deliberately lean —
+           services have their own section below, so nothing scrolls out of
+           view to reach them. -->
       <section id="status-section" class="card">
         <div class="card-head">
           <h2>Visão geral</h2>
-          <svg class="icon" aria-hidden="true"><use href="#i-dashboard"></use></svg>
+          <div class="card-head-actions">
+            <svg class="icon" aria-hidden="true"><use href="#i-dashboard"></use></svg>
+            <button id="btn-collapse-status" class="btn-icon btn-collapse" aria-label="Recolher visão geral" data-tip-end data-tip="Recolher visão geral" aria-expanded="true" aria-controls="status-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
+          </div>
         </div>
+        <!-- Collapse hides this block in place: the card head stays visible, so
+             the four KPI values are still readable while the timeline is
+             closed. -->
+        <div id="status-body">
         <div class="kpi-grid status-grid">
           <div class="kpi-card tone-primary">
             <div class="kpi-head">
@@ -491,26 +515,37 @@
             <span id="timeline-to">—</span>
           </div>
         </div>
+        </div>
+      </section>
 
-        <!-- Serviços: single list view. It owns the rows, the health strip
-             and every management control (add / refresh / clear) — there is
-             no second grid rendering of the same data. -->
-        <div id="services-overview" class="services-overview hidden" aria-label="Serviços">
-          <div class="services-overview-head">
-            <h3>Serviços</h3>
-            <div class="card-head-actions">
-              <span id="services-overview-count" class="pill p-info" aria-live="polite">0</span>
-              <button id="btn-toggle-custom-service" class="btn-icon" aria-label="Adicionar serviço" data-tip-end data-tip="Adicionar serviço" aria-expanded="false">
-                <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
-              </button>
-              <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip-end data-tip="Atualizar status dos serviços">
-                <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
-              </button>
-              <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip-end data-tip="Limpar lista de serviços">
-                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
-              </button>
-            </div>
+      <!-- Services: its own section. It owns the rows, the health strip, every
+           management control (add / refresh / clear) and the availability
+           chart. It used to be a block inside Visão geral, which made the
+           overview the longest card on the page and buried the four KPIs that
+           are supposed to be the quick read. -->
+      <section id="services-section" class="card">
+        <div class="card-head">
+          <h2>Serviços</h2>
+          <div class="card-head-actions">
+            <span id="services-overview-count" class="pill p-info" aria-live="polite">0</span>
+            <button id="btn-toggle-custom-service" class="btn-icon" aria-label="Adicionar serviço" data-tip-end data-tip="Adicionar serviço" aria-expanded="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            </button>
+            <button id="btn-refresh-services" class="btn-icon" aria-label="Atualizar status" data-tip-end data-tip="Atualizar status dos serviços">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+            </button>
+            <button id="btn-clear-services" class="btn-icon" aria-label="Limpar lista de serviços" data-tip-end data-tip="Limpar lista de serviços">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+            </button>
+            <button id="btn-collapse-services" class="btn-icon btn-collapse" aria-label="Recolher serviços" data-tip-end data-tip="Recolher serviços" aria-expanded="true" aria-controls="services-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
           </div>
+        </div>
+        <!-- The count pill stays in the head, so "3 serviços" remains readable
+             with the list closed. -->
+        <div id="services-body" class="services-body">
+
           <div id="services-health" class="health-bar-wrap hidden">
             <!-- Proportional strip drawn as SVG rects (x/width set from
                  app.js via setAttribute, same technique as the sparklines
@@ -605,8 +640,14 @@
             <span class="live-badge" id="tel-live" title="Telemetria do host em tempo real">
               <span class="live-dot" aria-hidden="true"></span><span id="tel-updated">—</span>
             </span>
+            <button id="btn-collapse-host" class="btn-icon btn-collapse" aria-label="Recolher saúde do host" data-tip-end data-tip="Recolher saúde do host" aria-expanded="true" aria-controls="host-telemetry-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
           </div>
         </div>
+        <!-- The uptime pill and the live badge stay in the head, so "is this
+             host reporting?" remains answerable while the meters are closed. -->
+        <div id="host-telemetry-body">
         <!-- Text equivalent of the meters below. A bar conveys "how full"
              at a glance, but a screen reader can only read numbers, so
              renderTelemetry fills both and the two must agree; the meters
@@ -697,14 +738,21 @@
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       <!-- Dynamic loopback service -->
       <section id="local-port-section" class="card hidden">
         <div class="card-head">
           <h2>Abrir porta local</h2>
-          <svg class="icon" aria-hidden="true"><use href="#i-router"></use></svg>
+          <div class="card-head-actions">
+            <svg class="icon" aria-hidden="true"><use href="#i-router"></use></svg>
+            <button id="btn-collapse-local-port" class="btn-icon btn-collapse" aria-label="Recolher porta local" data-tip-end data-tip="Recolher porta local" aria-expanded="true" aria-controls="local-port-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
+          </div>
         </div>
+        <div id="local-port-body">
         <p id="local-port-help" class="status-sub">Acessa um serviço HTTP no localhost do host usando a sessão atual. Portas privilegiadas e sensíveis são bloqueadas.</p>
         <div class="field">
           <label for="local-port-input" class="field-label">Porta do serviço</label>
@@ -715,6 +763,7 @@
             </button>
           </div>
           <p id="local-port-status" class="status-sub" role="status" aria-live="polite"></p>
+        </div>
         </div>
       </section>
 
