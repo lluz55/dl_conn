@@ -61,6 +61,8 @@ import {
     saveHostNpub: $("save-host-npub"),
     btnToggleRelays: $("btn-toggle-relays"),
     relayPanel: $("relay-panel"),
+    btnCollapseRelays: $("btn-collapse-relays"),
+    relayPanelBody: $("relay-panel-body"),
     relaySummary: $("relay-summary"),
     btnTestAllRelays: $("btn-test-all-relays"),
     relayList: $("relay-list"),
@@ -205,6 +207,14 @@ import {
   const RETURN_DELAY_MS = 2500;
 
   const SERVICES_ORDER_KEY = "dl_conn_services_order";
+
+  /**
+   * Whether the relay card's body starts collapsed. Persisted like the other
+   * appearance preferences so the panel opens the way it was last left —
+   * the relay list is a setup-time control, not something worth re-scrolling
+   * past on every load once the tunnel is live.
+   */
+  const RELAY_COLLAPSED_KEY = "dl_conn_relay_collapsed";
 
   /**
    * Discovery requests are numbered so a reply that beats its own publish
@@ -1235,6 +1245,7 @@ import {
       });
     }
     renderRelayList();
+    restoreRelayCollapse();
     loadCustomServices();
     populateCustomServiceIcons();
     state.session.on(onSessionEvent);
@@ -1385,6 +1396,7 @@ import {
     el.saveHostNpub.addEventListener("click", onSaveHostNpub);
     el.hostNpubInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onSaveHostNpub(); });
     el.btnToggleRelays.addEventListener("click", onToggleRelays);
+    el.btnCollapseRelays.addEventListener("click", onToggleRelayCollapse);
     el.btnTestAllRelays.addEventListener("click", onTestAllRelays);
     el.btnAddRelay.addEventListener("click", onAddRelay);
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
@@ -3193,6 +3205,49 @@ import {
     el.btnToggleRelays.setAttribute("aria-label", willShow
       ? "Ocultar configuração de relays"
       : "Mostrar configuração de relays");
+  }
+
+  /**
+   * Collapse/expand the relay card body in place. Distinct from
+   * onToggleRelays, which hides the entire card: collapsing keeps the head
+   * and the #relay-summary pill on screen, which is the point — how many
+   * relays are reachable stays readable while the list is closed.
+   */
+  function onToggleRelayCollapse() {
+    applyRelayCollapse(el.relayPanelBody.classList.contains("hidden"));
+  }
+
+  /**
+   * @param {boolean} collapsed
+   */
+  function applyRelayCollapse(collapsed) {
+    el.relayPanelBody.classList.toggle("hidden", collapsed);
+    el.btnCollapseRelays.setAttribute("aria-expanded", String(!collapsed));
+    el.btnCollapseRelays.setAttribute("aria-label", collapsed
+      ? "Expandir relays"
+      : "Recolher relays");
+    // The tooltip is drawn from attr(data-tip) (see [data-tip]::after in
+    // style.css), so the label has to move with the attribute.
+    el.btnCollapseRelays.setAttribute("data-tip", collapsed
+      ? "Expandir relays"
+      : "Recolher relays");
+    try {
+      localStorage.setItem(RELAY_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // Storage can be unavailable (private mode, quota). The collapse still
+      // works for this page view; it just will not survive a reload.
+    }
+  }
+
+  /** Restore the relay card's collapsed state from the saved preference. */
+  function restoreRelayCollapse() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem(RELAY_COLLAPSED_KEY);
+    } catch {
+      return; // unreadable storage: leave the panel open
+    }
+    applyRelayCollapse(saved === "1");
   }
 
   async function onTestAllRelays() {

@@ -52,6 +52,10 @@
     <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></symbol>
     <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+    <!-- Disclosure triangle. Points down while the panel is open and is
+         rotated by CSS when collapsed, so the same symbol serves both states
+         instead of shipping a second up-pointing icon. -->
+    <symbol id="i-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
 
     <!-- Service icons configurable from config.yaml -->
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
@@ -358,17 +362,26 @@
               <svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"></use></svg>
               Testar todos
             </button>
+            <button id="btn-collapse-relays" class="btn-icon btn-collapse" aria-label="Recolher relays" data-tip-end data-tip="Recolher relays" aria-expanded="true" aria-controls="relay-panel-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
           </div>
         </div>
-        <div id="relay-list" class="relay-list"></div>
-        <div class="relay-add-row">
-          <input type="text" id="relay-add-input" class="nsid-input" placeholder="wss://novo-relay.example.com" aria-label="Adicionar relay" />
-          <button id="btn-add-relay" class="btn btn-tonal" data-tip="Adicionar relay">
-            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>
-            Adicionar
-          </button>
+        <!-- Collapse collapses this block in place: the card head stays
+             visible, so the #relay-summary pill (how many relays are online)
+             is still readable with the list closed. The header's relay
+             button hides the whole card, summary included. -->
+        <div id="relay-panel-body" class="card-body">
+          <div id="relay-list" class="relay-list"></div>
+          <div class="relay-add-row">
+            <input type="text" id="relay-add-input" class="nsid-input" placeholder="wss://novo-relay.example.com" aria-label="Adicionar relay" />
+            <button id="btn-add-relay" class="btn btn-tonal" data-tip="Adicionar relay">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+              Adicionar
+            </button>
+          </div>
+          <button id="btn-reset-relays" class="btn-link" data-tip="Restaurar relays padrão">Restaurar padrões</button>
         </div>
-        <button id="btn-reset-relays" class="btn-link" data-tip="Restaurar relays padrão">Restaurar padrões</button>
       </section>
 
       <!-- Host npub input (shown when no host configured) -->

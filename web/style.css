@@ -567,6 +567,22 @@ body {
 
 .card-sub { margin: 0; font-size: var(--fs-sm); color: var(--color-text-2); }
 
+/* ── Collapsible card ─────────────────────────────────────────────── */
+/* A card whose body can be collapsed keeps its head visible, so the facts
+   shown there (a status pill, a count) stay readable while the body is
+   closed. `.hidden` on the body is what actually collapses it — this rule
+   only stops the body from being a flex item that overflows the card when
+   its content is wide (a long relay URL, a long service name). */
+.card-body { min-width: 0; }
+
+/* Disclosure chevron: it points down while the body is open and rotates to
+   point right once collapsed. Scoped to .btn-collapse because other toggles
+   (the header's relay switch, the debug panel) also carry aria-expanded but
+   show an icon that must not rotate. */
+.btn-collapse .icon { transition: transform var(--transition); }
+
+.btn-collapse[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+
 /* ── Icon system ──────────────────────────────────────────────────── */
 .icon {
   width: 20px; height: 20px;

@@ -133,5 +133,53 @@ assert(
   "The saved-PIN unlock screen focuses and selects the PIN input for immediate typing",
 );
 
+// ── Collapsible relay card ──────────────────────────────────────────
+console.log("  [Collapsible relay card]");
+assert(
+  /<button id="btn-collapse-relays"[^>]*aria-expanded="true"[^>]*aria-controls="relay-panel-body"/.test(html),
+  "The relay card head carries a disclosure button wired to the body it controls",
+);
+assert(
+  /<div id="relay-panel-body" class="card-body">[\s\S]*?id="relay-list"[\s\S]*?id="btn-reset-relays"[\s\S]*?<\/div>\s*<\/section>/.test(html),
+  "Collapsing hides the list and the add/reset controls, but not the card head",
+);
+assert(
+  /id="relay-summary"[\s\S]*?id="btn-collapse-relays"/.test(html),
+  "The relay summary pill stays in the head, so it remains readable while collapsed",
+);
+assert(
+  /function applyRelayCollapse\(collapsed\)/.test(app) &&
+    /el\.relayPanelBody\.classList\.toggle\("hidden", collapsed\)/.test(app),
+  "The collapse toggles the body only, leaving the card itself visible",
+);
+assert(
+  /function applyRelayCollapse\(collapsed\)[\s\S]*?aria-expanded", String\(!collapsed\)/.test(app) &&
+    /function applyRelayCollapse\(collapsed\)[\s\S]*?setAttribute\("aria-label", collapsed/.test(app),
+  "Collapsing updates aria-expanded and the accessible label, not just the CSS",
+);
+assert(
+  /setAttribute\("data-tip", collapsed/.test(app),
+  "The tooltip label follows the state, because it is drawn from attr(data-tip)",
+);
+assert(
+  /localStorage\.setItem\(RELAY_COLLAPSED_KEY, collapsed \? "1" : "0"\)/.test(app) &&
+    /function restoreRelayCollapse\(\)/.test(app) &&
+    /localStorage\.getItem\(RELAY_COLLAPSED_KEY\)/.test(app),
+  "The collapsed state is persisted and restored on the next load",
+);
+assert(
+  /renderRelayList\(\);\s*\n\s*restoreRelayCollapse\(\);/.test(app),
+  "The saved state is restored during init, after the relay list is first rendered",
+);
+assert(
+  /\.btn-collapse\[aria-expanded="false"\]\s\.icon\s*\{[^}]*rotate\(-90deg\)/s.test(css) &&
+    /<symbol id="i-chevron"/.test(html),
+  "A single chevron symbol rotates to point right when the body is collapsed",
+);
+assert(
+  /function applyRelayCollapse\(collapsed\)[\s\S]*?\}\s*catch \{/.test(app),
+  "A storage failure (private mode, quota) leaves the collapse usable for this page view",
+);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
