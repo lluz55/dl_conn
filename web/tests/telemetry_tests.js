@@ -119,6 +119,22 @@ const fetchHistoryBody = extractFunction(appJs, 'fetchHistory');
 const indexHtml = readFileSync(join(here, '..', 'index.html'), 'utf8');
 
 /**
+ * The GPU vocabulary — the vendor table and the three labels built from it —
+ * evaluated on its own so both the meter rendering and missingMetricReason()
+ * can be tested against the production functions instead of a copy of them.
+ * GPU_VENDOR_LABELS is passed in as a parameter for the same reason
+ * formatCapacity is below: a const is not hoisted into this scope.
+ */
+const gpuLabels = new Function(`
+  const GPU_VENDOR_LABELS = ${extractConstValue(appJs, 'GPU_VENDOR_LABELS')};
+  ${extractDeclaration(appJs, 'gpuVendorName')}
+  ${extractDeclaration(appJs, 'gpuMeterLabel')}
+  ${extractDeclaration(appJs, 'gpuSourceLabel')}
+  return { GPU_VENDOR_LABELS, gpuVendorName, gpuMeterLabel, gpuSourceLabel };
+`)();
+const { GPU_VENDOR_LABELS, gpuVendorName, gpuMeterLabel, gpuSourceLabel } = gpuLabels;
+
+/**
  * The history panel's real metric table and the helpers around it, evaluated
  * in one scope. Assembled from the production source on purpose: a test that
  * carried its own copy of the descriptor table would keep passing after the
@@ -160,6 +176,8 @@ const formatUptime = new Function('total', formatUptimeBody);
 const renderTelemetry = new Function(
   'snap', 'el', 'formatUptime', 'updateLiveBadgeTip',
   'const formatCapacity = ' + formatCapacity + ';\n' +
+  'const GPU_VENDOR_LABELS = ' + JSON.stringify(GPU_VENDOR_LABELS) + ';\n' +
+  extractDeclaration(appJs, 'gpuVendorName') + '\n' +
   renderTelemetryBody
 );
 
@@ -357,6 +375,8 @@ const downsample = new Function('points', 'maxPoints', downsampleBody);
 // of the generated function, so one call returns the answer.
 const reasonFor = new Function('lastSnapshot', 'key',
   'const hostTempC = ' + extractDeclaration(appJs, 'hostTempC') + ';\n' +
+  'const GPU_VENDOR_LABELS = ' + JSON.stringify(GPU_VENDOR_LABELS) + ';\n' +
+  extractDeclaration(appJs, 'gpuVendorName') + '\n' +
   extractDeclaration(appJs, 'missingMetricReason') +
   '\nreturn missingMetricReason(key);');
 const historyErrorLabel = new Function('status', historyErrorLabelBody);
@@ -420,20 +440,49 @@ assert(downsample([[1, 5], [2, 6]], 240).length === 2,
 
 // missingMetricReason tells a host that never reports the metric apart from a
 // window that happens to be empty — the difference between "GPU não existe
-// aqui" and "o gráfico quebrou".
+// aqui" and "o gráfico quebrou". The GPU case has three distinct answers now
+// that the daemon looks at whatever card the host has: no card at all, a card
+// that reports nothing, and a card with no utilization but a temperature.
 assert(reasonFor({ cpu: { load1: 1 }, num_cpu: 4 }, 'cpu') === "",
   "cpu presente: nenhuma desculpa inventada");
-assert(/nvidia-smi/.test(reasonFor({}, 'gpu')),
-  "host sem GPU explica que a coleta usa nvidia-smi");
+assert(/não tem placa de GPU/.test(reasonFor({}, 'gpu')),
+  "host sem card de GPU diz que não há placa: " + reasonFor({}, 'gpu'));
+assert(!/nvidia/i.test(reasonFor({}, 'gpu')),
+  "a mensagem não pode culpar a NVIDIA por uma GPU que o host não tem");
+assert(/drm/.test(reasonFor({}, 'gpu')),
+  "a ausência aponta para onde a coleta olha: " + reasonFor({}, 'gpu'));
+assert(/AMD/.test(reasonFor({ gpu: { vendor: "amd" } }, 'gpu')),
+  "card que não reporta nada é nomeada, não declarada ausente: " + reasonFor({ gpu: { vendor: "amd" } }, 'gpu'));
+assert(/sem leitura|não expõe/.test(reasonFor({ gpu: { vendor: "intel" } }, 'gpu')),
+  "GPU sem leituras explica o motivo: " + reasonFor({ gpu: { vendor: "intel" } }, 'gpu'));
 assert(/temperatura/.test(reasonFor({ cpu: {}, gpu: {} }, 'temp')),
   "host sem sensor de temperatura explica o motivo: " + reasonFor({ cpu: {}, gpu: {} }, 'temp'));
 assert(reasonFor({ cpu: { temp_c: 58 } }, 'temp') === "",
   "host com sensor não é julgado ausente");
-assert(/utilização/.test(reasonFor({ gpu: { temp_c: 60 } }, 'gpu')),
-  "GPU só com temperatura explica por que não há série");
+assert(/aba Temp/.test(reasonFor({ gpu: { temp_c: 60 } }, 'gpu')),
+  "GPU só com temperatura aponta para a aba que a mostra");
 assert(reasonFor({ gpu: { util_pct: 5 } }, 'gpu') === "",
   "GPU com utilização não é tratada como ausente");
+assert(reasonFor({ gpu: { vendor: "intel", util_pct: 5 } }, 'gpu') === "",
+  "GPU Intel com utilização não é tratada como ausente");
 assert(reasonFor(null, 'gpu') === "", "sem snapshot ainda: nada a concluir");
+
+console.log("\n=== Rótulos de vendor da GPU ===");
+assert(gpuVendorName("amd") === "AMD", "código amd → AMD");
+assert(gpuVendorName("intel") === "Intel", "código intel → Intel");
+assert(gpuVendorName("nvidia") === "NVIDIA", "código nvidia → NVIDIA");
+assert(gpuVendorName("qualquer-coisa") === "GPU",
+  "vendor desconhecido não vira um nome inventado");
+assert(gpuVendorName("") === "", "daemon antigo sem vendor não ganha um nome");
+assert(gpuMeterLabel({ vendor: "intel" }) === "GPU · Intel",
+  "o medidor nomeia a placa: " + gpuMeterLabel({ vendor: "intel" }));
+assert(gpuMeterLabel({}) === "GPU",
+  "sem vendor o medidor continua dizendo GPU, não um palpite");
+assert(gpuSourceLabel({ gpu: { vendor: "nvidia", util_pct: 10 } }) === "utilização da NVIDIA",
+  "a unidade da série nomeia a placa: " + gpuSourceLabel({ gpu: { vendor: "nvidia" } }));
+assert(gpuSourceLabel({ gpu: { util_pct: 10 } }) === "utilização da GPU",
+  "série sem vendor continua genérica");
+assert(gpuSourceLabel(null) === "utilização da GPU", "sem snapshot: unidade genérica");
 
 console.log("\n=== historyErrorLabel ===");
 assert(/limite/.test(historyErrorLabel(429)), "429 → limite de requisições");

@@ -94,7 +94,7 @@ export function mockSnapshot() {
       // Over the 97% critical line: the row should render red.
       { mountpoint: "/mnt/backups", total_mb: 1024000, used_mb: 1003520, used_pct: 98.0 },
     ],
-    gpu: { temp_c: 58 + walk(0, 0.4) * 0.2, util_pct: Math.round(12 + walk(0, 0.6) * 0.5) },
+    gpu: { vendor: "nvidia", driver: "nvidia", temp_c: 58 + walk(0, 0.4) * 0.2, util_pct: Math.round(12 + walk(0, 0.6) * 0.5) },
     battery: { capacity_pct: 78, status: "Discharging", available: true },
   };
 }
@@ -118,7 +118,7 @@ export function mockHistory(count, spanSeconds) {
       cpu: { temp_c: 46 + daily * 9, load1: (used / 100) * 4, load5: (used / 100) * 4, load15: (used / 100) * 4 },
       memory: { total_mb: 8192, used_mb: Math.round((used / 100) * 8192), used_pct: used },
       disks: [{ mountpoint: "/", total_mb: 512000, used_mb: 197632, used_pct: 38.6 }],
-      gpu: { temp_c: 55 + daily * 12, util_pct: Math.round(20 + daily * 45) },
+      gpu: { vendor: "nvidia", driver: "nvidia", temp_c: 55 + daily * 12, util_pct: Math.round(20 + daily * 45) },
       battery: { capacity_pct: 78, status: "Discharging", available: true },
       _at: at,
     });

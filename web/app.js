@@ -544,6 +544,8 @@ import {
     if (el.telGpu) {
       if (snap.gpu && (snap.gpu.temp_c != null || snap.gpu.util_pct != null)) {
         const g = [];
+        const name = gpuVendorName(snap.gpu.vendor);
+        if (name && name !== GPU_VENDOR_LABELS.other) g.push(name);
         if (snap.gpu.temp_c != null) g.push(snap.gpu.temp_c.toFixed(1) + "°C");
         if (snap.gpu.util_pct != null) g.push(snap.gpu.util_pct.toFixed(0) + "%");
         el.telGpu.textContent = g.join(" · ");
@@ -552,6 +554,11 @@ import {
         if (snap.gpu_temp_c != null) g.push(snap.gpu_temp_c.toFixed(1) + "°C");
         if (snap.gpu_util_pct != null) g.push(snap.gpu_util_pct.toFixed(0) + "%");
         el.telGpu.textContent = g.join(" · ") || "—";
+      } else if (snap.gpu && snap.gpu.vendor) {
+        // A card that reports nothing is still a card: naming it here is what
+        // tells the user the daemon found their GPU and the driver simply
+        // publishes no counters for it.
+        el.telGpu.textContent = gpuVendorName(snap.gpu.vendor) + " (sem leitura)";
       } else el.telGpu.textContent = "—";
     }
     if (el.telBatt) {
@@ -587,6 +594,58 @@ import {
   const METER_CRIT_PCT = { cpu: 95, ram: 95, disk: 97, gpu: 97, battery: 10 };
   /** A battery meter drains downward, so its states are inverted. */
   const BATTERY_METER = "battery";
+
+  /**
+   * Vendor names, keyed by the code the daemon reports in `gpu.vendor`.
+   *
+   * The daemon sends a stable code, never a translated name: the GPU it finds
+   * is whichever one the kernel enumerated, so it could be AMD, Intel, NVIDIA
+   * or a vendor nobody has a name for, and the words for those belong in one
+   * place on the client (see docs/okf/concepts/i18n.md).
+   *
+   * Naming the chip matters now that the reading is not NVIDIA-only. A host
+   * with an Intel iGPU used to report nothing at all, and "GPU" alone leaves
+   * the user unable to tell which card the panel is talking about on a machine
+   * that has two.
+   */
+  const GPU_VENDOR_LABELS = {
+    amd: "AMD", intel: "Intel", nvidia: "NVIDIA", other: "GPU",
+  };
+
+  /**
+   * The vendor's name for the UI, or "" when the daemon did not say.
+   *
+   * An empty string is a real answer, not a failure: a daemon that predates
+   * `gpu.vendor` still reports temperature and utilization, and inventing a
+   * vendor for it would be a claim about hardware nobody measured.
+   */
+  function gpuVendorName(vendor) {
+    if (!vendor) return "";
+    return GPU_VENDOR_LABELS[vendor] || GPU_VENDOR_LABELS.other;
+  }
+
+  /**
+   * Label for the GPU meter: the vendor when known, plain "GPU" otherwise.
+   * Shown next to the bar so the number is about a named card.
+   */
+  function gpuMeterLabel(gpu) {
+    const name = gpuVendorName(gpu && gpu.vendor);
+    return name && name !== GPU_VENDOR_LABELS.other ? "GPU · " + name : "GPU";
+  }
+
+  /**
+   * Unit caption for the GPU chart series, naming the card it reads — the same
+   * job `tempSourceLabel()` does for the temperature series. On a host with
+   * more than one card the daemon follows the busiest one, so the line is the
+   * host's GPU and not always the same silicon; the vendor is what makes that
+   * readable instead of surprising.
+   */
+  function gpuSourceLabel(snap) {
+    const gpu = snap && snap.gpu;
+    const name = gpuVendorName(gpu && gpu.vendor);
+    return name && name !== GPU_VENDOR_LABELS.other ? "utilização da " + name : "utilização da GPU";
+  }
+
   /**
    * Cap on drawn points: more than this is indistinguishable at 1px — and it
    * is also what we ask the daemon for. The two are the same number on
@@ -790,10 +849,11 @@ import {
     if (gpu && gpu.util_pct != null) {
       const bits = [];
       if (gpu.temp_c != null) bits.push(gpu.temp_c.toFixed(1) + " °C");
+      const label = gpuMeterLabel(gpu);
       setMeter(
-        ensureMeter(host, "gpu", "GPU"),
+        ensureMeter(host, "gpu", label),
         "gpu",
-        "GPU",
+        label,
         gpu.util_pct.toFixed(0) + "%",
         gpu.util_pct,
         bits.join(" · ") || "—"
@@ -1326,7 +1386,9 @@ import {
     const unit = metric.unit;
     if (el.histValue) el.histValue.textContent = last.toFixed(0) + unit;
     if (el.histUnit) {
-      el.histUnit.textContent = key === "temp" ? tempSourceLabel(lastSnapshot) : metric.caption;
+      el.histUnit.textContent = key === "temp" ? tempSourceLabel(lastSnapshot)
+        : key === "gpu" ? gpuSourceLabel(lastSnapshot)
+        : metric.caption;
     }
     if (el.histMin) el.histMin.textContent = min.toFixed(0) + unit;
     if (el.histAvg) el.histAvg.textContent = avg.toFixed(0) + unit;
@@ -1450,7 +1512,15 @@ import {
    * Why a metric has no series on this host at all, or "" when the absence is
    * just an empty window. Without it the chart says "sem amostras" for a GPU
    * the host never had, which reads as a broken chart rather than as a host
-   * that does not report one (GPU collection goes through nvidia-smi).
+   * that does not report one.
+   *
+   * The GPU branch has to separate three cases that used to collapse into one
+   * wrong sentence: no card in /sys/class/drm at all, a card that reports
+   * nothing, and a card that reports temperature but not utilization. The old
+   * text — "a coleta usa nvidia-smi" — was accurate only while that was the
+   * whole truth, and it stayed on screen on a host with a perfectly good AMD
+   * card, which is exactly the report that started this: the panel claiming a
+   * host had no GPU because the daemon only ever asked NVIDIA.
    */
   function missingMetricReason(key) {
     const snap = lastSnapshot;
@@ -1459,11 +1529,17 @@ import {
       return "Este host não expõe sensores de temperatura (lwtrace/coretemp).";
     }
     const gpu = snap.gpu || null;
-    if (key === "gpu" && !(gpu && (gpu.util_pct != null || gpu.temp_c != null))) {
-      return "Este host não reporta GPU — a coleta usa nvidia-smi.";
+    const card = gpu && (gpu.vendor || gpu.util_pct != null || gpu.temp_c != null);
+    if (key === "gpu" && !card) {
+      return "Este host não tem placa de GPU (/sys/class/drm não lista nenhuma).";
     }
-    if (key === "gpu" && gpu && gpu.util_pct == null) {
-      return "A GPU deste host não expõe utilização, só temperatura — veja a aba Temp.";
+    if (key === "gpu" && gpu.util_pct == null) {
+      const name = gpuVendorName(gpu.vendor);
+      const which = name && name !== GPU_VENDOR_LABELS.other ? " (" + name + ")" : "";
+      // Temperature first: it is the reading this host does publish, and the
+      // line below points at the tab that shows it.
+      return "A GPU deste host" + which + " não expõe utilização"
+        + (gpu.temp_c != null ? " — veja a aba Temp." : " — o driver não publica contadores de carga.");
     }
     return "";
   }
