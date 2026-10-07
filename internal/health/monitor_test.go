@@ -60,3 +60,37 @@ func TestHostPortDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitor_UpdateServices(t *testing.T) {
+	m := New([]config.ServiceConfig{{ID: "s1", Target: "http://127.0.0.1:1"}})
+	m.timeout = 200 * time.Millisecond
+	m.probeAll(context.Background())
+
+	if got := m.Status("s1"); got != StatusDown {
+		t.Fatalf("expected s1 to be down, got %q", got)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// Update services: s1 stays, s2 added (starts as StatusUnknown before probe)
+	m.UpdateServices([]config.ServiceConfig{
+		{ID: "s1", Target: "http://127.0.0.1:1"},
+		{ID: "s2", Target: "http://" + ln.Addr().String()},
+	})
+
+	if got := m.Status("s1"); got != StatusDown {
+		t.Errorf("s1 should preserve previous status down, got %q", got)
+	}
+	if got := m.Status("s2"); got != StatusUnknown {
+		t.Errorf("s2 should initially be unknown, got %q", got)
+	}
+
+	m.probeAll(context.Background())
+	if got := m.Status("s2"); got != StatusUp {
+		t.Errorf("s2 should be up after probe, got %q", got)
+	}
+}

@@ -50,6 +50,7 @@ Copie `config.example.yaml` para `config.yaml` e ajuste:
 - `auth.partitionedCookies` — adiciona o atributo CHIPS `Partitioned` aos cookies emitidos
 - `auth.stepUpProtected` — rotas que exigem prova de step-up além da sessão (vazio = desabilitado)
 - `services` — lista de serviços expostos (prefixo, target, WebSocket); `forwardAuthorization: true` em um serviço é a única forma de ele receber o `Authorization` do chamador
+- `servicesDir` — diretório drop-in de serviços (`*.yaml`); monitorado para recarga a quente sem root e sem restart do daemon
 - `dynamicPorts.deniedPorts` — portas adicionais bloqueadas no acesso dinâmico `/local/<porta>/`; o alvo é sempre `127.0.0.1`, e portas `<1024`, a porta do daemon e a de diagnóstico já são bloqueadas
 
 ## Instalação como serviço NixOS

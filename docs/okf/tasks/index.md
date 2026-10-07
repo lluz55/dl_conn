@@ -33,6 +33,7 @@ O objetivo do projeto é expor e acessar de forma segura serviços locais rodand
 | 14 | Telemetria completa do host no dashboard | [14-host-telemetry.md](14-host-telemetry.md) | ✅ concluída | 9/9 |
 | 15 | Redesign definitivo do SPA (protótipo → produção) | [15-web-redesign.md](15-web-redesign.md) | ✅ concluída | 10/10 |
 | 16 | Serviços personalizados no frontend | [16-custom-frontend-services.md](16-custom-frontend-services.md) | ✅ concluída | 9/9 |
+| 17 | Serviços drop-in e recarga a quente sem root | [17-dropin-services-reload.md](17-dropin-services-reload.md) | ✅ concluída | 8/8 |
 
 ### Trilha de segurança, performance e usabilidade (2026-10-02)
 

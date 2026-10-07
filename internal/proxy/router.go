@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dl_conn/internal/auth"
@@ -21,6 +22,7 @@ import (
 
 // Router multiplexes requests to configured services with Zero-Trust auth.
 type Router struct {
+	mu       sync.RWMutex
 	services []config.ServiceConfig
 	sessions *auth.SessionManager
 	proxies  map[string]*httputil.ReverseProxy
@@ -37,6 +39,29 @@ func NewRouter(services []config.ServiceConfig, sessions *auth.SessionManager) *
 		rt.buildProxy(i)
 	}
 	return rt
+}
+
+// UpdateServices replaces the configured services and rebuilds reverse proxies atomically.
+func (rt *Router) UpdateServices(services []config.ServiceConfig) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	newServices := make([]config.ServiceConfig, len(services))
+	copy(newServices, services)
+	rt.services = newServices
+	rt.proxies = make(map[string]*httputil.ReverseProxy, len(services))
+	for i := range rt.services {
+		rt.buildProxy(i)
+	}
+}
+
+// Services returns a copy of current configured services.
+func (rt *Router) Services() []config.ServiceConfig {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	res := make([]config.ServiceConfig, len(rt.services))
+	copy(res, rt.services)
+	return res
 }
 
 // buildProxy creates or rebuilds the reverse proxy for service at index i.
@@ -159,6 +184,8 @@ func (rt *Router) buildProxy(i int) {
 
 // rebuildProxy is used in tests to update a service's target.
 func (rt *Router) rebuildProxy(i int) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	rt.buildProxy(i)
 }
 
@@ -290,7 +317,9 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rt.mu.RLock()
 	proxy := rt.proxies[svc.ID]
+	rt.mu.RUnlock()
 	if proxy == nil {
 		log.Printf("proxy not initialized: service=%s path=%q remote=%s",
 			svc.ID, r.URL.Path, rt.clientIPForLog(r))
@@ -434,23 +463,34 @@ func hasBootstrappedLaunchSession(r *http.Request, svc *config.ServiceConfig) bo
 //     Frigate's hidden route by default, but to Home Assistant while that is
 //     what the browser is looking at.
 func (rt *Router) matchService(r *http.Request) *config.ServiceConfig {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
 	if svc := rt.matchPrefix(r.URL.Path, false); svc != nil {
-		return svc
+		svcCopy := *svc
+		return &svcCopy
 	}
 	if ref := r.Referer(); ref != "" {
 		if refURL, err := url.Parse(ref); err == nil {
 			if svc := rt.matchPrefix(refURL.Path, false); svc != nil {
-				return svc
+				svcCopy := *svc
+				return &svcCopy
 			}
 		}
 	}
 	if svc := rt.matchRootPath(r.URL.Path); svc != nil {
-		return svc
+		svcCopy := *svc
+		return &svcCopy
 	}
 	if svc := rt.matchServiceCookie(r); svc != nil {
-		return svc
+		svcCopy := *svc
+		return &svcCopy
 	}
-	return rt.matchPrefix(r.URL.Path, true)
+	if svc := rt.matchPrefix(r.URL.Path, true); svc != nil {
+		svcCopy := *svc
+		return &svcCopy
+	}
+	return nil
 }
 
 // matchServiceCookie resolves the service a browser is currently using, as

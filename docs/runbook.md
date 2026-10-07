@@ -255,3 +255,55 @@ revalidar o resultado) e envia `SIGHUP` ao processo do daemon — a allowlist
 recarrega sem derrubar o túnel. É idempotente: rodar de novo com o mesmo
 npub não duplica nem reescreve o arquivo.
 
+### 4. Adicionar serviços em runtime sem root ou reinício (`services.d` / drop-ins)
+
+O `dl_conn` suporta carregamento modular de serviços através de um diretório
+drop-in (`services.d`), permitindo cadastrar novos serviços locais (com WebSocket,
+`originHost`, `stripPrefix`, etc.) **sem precisar de root** e **sem reiniciar o daemon**
+(mantendo intacta a URL pública do túnel e as sessões Zero-Trust).
+
+#### Configuração do diretório no NixOS ou YAML:
+
+No `configuration.nix`:
+```nix
+services.dl-conn = {
+  enable = true;
+  # Aponta para diretório com permissão de escrita para o seu usuário:
+  servicesDir = "/etc/dl-conn/services.d"; # ou pasta do usuário
+};
+```
+
+Ou no `config.yaml`:
+```yaml
+servicesDir: "/home/lluz/.config/dl-conn/services.d"
+```
+*(Se omitido, o daemon procura automaticamente uma pasta `services.d` junto ao `config.yaml`).*
+
+#### Inserindo um serviço (como usuário comum):
+
+Basta criar um arquivo `.yaml` no diretório drop-in, por exemplo `grafana.yaml`:
+
+```yaml
+id: "grafana"
+name: "Grafana"
+icon: "dashboard"
+prefix: "/grafana"
+target: "http://127.0.0.1:3000"
+websocket: true
+```
+
+Formatos aceitos em cada arquivo drop-in:
+1. Objeto de serviço único (exemplo acima).
+2. Lista de serviços: `services: [ ... ]`.
+3. Sequência direta YAML: `- id: ...`.
+
+#### Recarregamento:
+- **Detecção automática**: O daemon monitora alterações na pasta e recarrega os
+  serviços, atualiza o proxy reverso, o monitor de saúde e a descoberta Nostr
+  automaticamente em segundos — dispensando comandos ou sinais de processo.
+- **Sinal manual**: Opcionalmente, envie `SIGHUP` para recarga imediata:
+  ```bash
+  systemctl reload dl-conn # ou kill -HUP <pid>
+  ```
+
+

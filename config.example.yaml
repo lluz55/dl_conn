@@ -80,6 +80,13 @@ auth:
   # stepUpProtected:
   #   - /api/host/telemetry
 
+# Drop-in directory for modular service definitions (*.yaml / *.yml).
+# Defaults to <configDir>/services.d if that directory exists.
+# Services defined in drop-in files are automatically merged with the list below.
+# The daemon monitors this directory and hot-reloads services without restarting
+# the process or interrupting active tunnel sessions.
+# servicesDir: "/etc/dl-conn/services.d"
+
 # Local services exposed through the reverse proxy.
 #
 # Per-service keys:

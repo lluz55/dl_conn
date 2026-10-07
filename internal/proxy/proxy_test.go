@@ -1207,3 +1207,62 @@ func TestRouter_IframeNotRedirectedToLogin(t *testing.T) {
 		t.Errorf("Location = %q, want empty (an iframe must not be sent to the login page)", loc)
 	}
 }
+
+func TestRouter_UpdateServices_LiveSwap(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	b1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend1"))
+	}))
+	defer b1.Close()
+
+	b2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend2"))
+	}))
+	defer b2.Close()
+
+	initial := []config.ServiceConfig{
+		{ID: "svc1", Prefix: "/svc1", Target: b1.URL, StripPrefix: true},
+	}
+	rt := NewRouter(initial, sm)
+
+	// Check svc1 works, svc2 404s
+	req1 := httptest.NewRequest("GET", "/svc1/test", nil)
+	req1.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w1 := httptest.NewRecorder()
+	rt.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK || w1.Body.String() != "backend1" {
+		t.Fatalf("svc1 failed: code=%d body=%q", w1.Code, w1.Body.String())
+	}
+
+	req2 := httptest.NewRequest("GET", "/svc2/test", nil)
+	req2.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w2 := httptest.NewRecorder()
+	rt.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unconfigured svc2, got %d", w2.Code)
+	}
+
+	// Update services to replace svc1 with svc2
+	updated := []config.ServiceConfig{
+		{ID: "svc2", Prefix: "/svc2", Target: b2.URL, StripPrefix: true},
+	}
+	rt.UpdateServices(updated)
+
+	// Now svc2 works, svc1 404s
+	w1After := httptest.NewRecorder()
+	rt.ServeHTTP(w1After, req1)
+	if w1After.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for removed svc1, got %d", w1After.Code)
+	}
+
+	w2After := httptest.NewRecorder()
+	rt.ServeHTTP(w2After, req2)
+	if w2After.Code != http.StatusOK || w2After.Body.String() != "backend2" {
+		t.Fatalf("svc2 failed after update: code=%d body=%q", w2After.Code, w2After.Body.String())
+	}
+}
+

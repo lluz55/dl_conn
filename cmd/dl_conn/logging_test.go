@@ -47,8 +47,10 @@ func TestLoggingMiddleware_AllowsWebSocketUpgrade(t *testing.T) {
 // recorder noticing the handover the access log would report the upgrade as
 // a plain 200.
 func TestStatusRecorder_RecordsUpgradeAndUnwraps(t *testing.T) {
+	done := make(chan struct{})
 	var rec *statusRecorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
 		rec = &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		if rec.Unwrap() != w {
 			t.Error("Unwrap did not return the wrapped ResponseWriter")
@@ -66,6 +68,7 @@ func TestStatusRecorder_RecordsUpgradeAndUnwraps(t *testing.T) {
 	if err == nil {
 		resp.Body.Close()
 	}
+	<-done
 	if rec == nil || rec.status != http.StatusSwitchingProtocols {
 		t.Errorf("recorded status = %v, want %d", rec, http.StatusSwitchingProtocols)
 	}

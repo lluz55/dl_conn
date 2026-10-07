@@ -593,6 +593,29 @@ func TestHandler_ServicesWithStatus(t *testing.T) {
 	}
 }
 
+func TestHandler_UpdateServices(t *testing.T) {
+	h := NewHandler(nil, nil, "https://x.trycloudflare.com", []ServiceInfo{
+		{ID: "s1", Name: "Service 1"},
+	})
+
+	if len(h.servicesWithStatus()) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(h.servicesWithStatus()))
+	}
+
+	h.UpdateServices([]ServiceInfo{
+		{ID: "s1", Name: "Service 1"},
+		{ID: "s2", Name: "Service 2"},
+	})
+
+	updated := h.servicesWithStatus()
+	if len(updated) != 2 {
+		t.Fatalf("expected 2 services after update, got %d", len(updated))
+	}
+	if updated[1].ID != "s2" {
+		t.Errorf("expected s2, got %s", updated[1].ID)
+	}
+}
+
 func TestResponsePayload_OmitsHostTelemetry(t *testing.T) {
 	resp := NewResponse("https://x.trycloudflare.com", "tok", 120*time.Second, []ServiceInfo{
 		{ID: "hass", Name: "HA", Prefix: "/hass"},

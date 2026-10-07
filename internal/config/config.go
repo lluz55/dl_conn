@@ -198,6 +198,7 @@ type Config struct {
 	Nostr        NostrConfig        `mapstructure:"nostr"`
 	Tunnel       TunnelConfig       `mapstructure:"tunnel"`
 	Services     []ServiceConfig    `mapstructure:"services"`
+	ServicesDir  string             `mapstructure:"servicesDir"`
 	DynamicPorts DynamicPortsConfig `mapstructure:"dynamicPorts"`
 	Auth         AuthConfig         `mapstructure:"auth"`
 	Telemetry    TelemetryConfig    `mapstructure:"telemetry"`
@@ -216,8 +217,15 @@ var DefaultRelays = []string{
 }
 
 // Load reads configuration from a YAML file and/or environment variables,
-// validates it, and returns a populated Config.
+// merges drop-in services from services.d if present, validates it, and returns
+// a populated Config.
 func Load(configPath string) (*Config, error) {
+	return LoadWithServicesDir(configPath, "")
+}
+
+// LoadWithServicesDir reads configuration, optionally overriding or scanning
+// the drop-in services directory, merges services, validates, and returns Config.
+func LoadWithServicesDir(configPath, servicesDirOverride string) (*Config, error) {
 	v := viper.New()
 
 	v.SetEnvPrefix("DL_CONN")
@@ -265,6 +273,21 @@ func Load(configPath string) (*Config, error) {
 	// re-parse duration from env strings that viper stores as string for time.Duration
 	if err := parseDurations(&cfg); err != nil {
 		return nil, err
+	}
+
+	// Load and merge drop-in services if directory exists
+	effectiveServicesDir := ResolveServicesDir(configPath, cfg.ServicesDir, servicesDirOverride)
+	if effectiveServicesDir != "" {
+		dropIns, err := LoadServicesDir(effectiveServicesDir)
+		if err != nil {
+			return nil, err
+		}
+		merged, err := MergeServices(cfg.Services, dropIns)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Services = merged
+		cfg.ServicesDir = effectiveServicesDir
 	}
 
 	if err := cfg.Validate(); err != nil {

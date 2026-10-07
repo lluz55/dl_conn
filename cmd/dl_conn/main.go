@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -35,9 +36,10 @@ var (
 		RunE:  run,
 	}
 
-	configPath   string
-	nsecOverride string
-	nsecFile     string
+	configPath      string
+	servicesDirFlag string
+	nsecOverride    string
+	nsecFile        string
 	// devMockAuth gates the local UI harness (web/dev.html + web/dev/*), which
 	// fakes a session and a Nostr host so the UI can be worked on without a
 	// real login. Default false, and the routes are explicitly 404'd when it
@@ -52,6 +54,7 @@ func init() {
 	_ = mime.AddExtensionType(".woff2", "font/woff2")
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "path to YAML config file")
+	rootCmd.PersistentFlags().StringVar(&servicesDirFlag, "services-dir", "", "path to drop-in services directory (default: <configDir>/services.d)")
 	rootCmd.PersistentFlags().StringVar(&nsecOverride, "nsec", "", "override Nostr nsec")
 	rootCmd.PersistentFlags().StringVar(&nsecFile, "nsec-file", "", "path to Nostr nsec secret file")
 	rootCmd.PersistentFlags().BoolVar(&devMockAuth, "dev-mock-auth", false,
@@ -59,7 +62,7 @@ func init() {
 }
 
 func run(cmd *cobra.Command, _ []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadWithServicesDir(configPath, servicesDirFlag)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -122,24 +125,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// Map services for the Nostr response. Hidden services (extra root-level
 	// routes a backend's own frontend needs, e.g. Frigate's "/api"/"/ws")
 	// are proxied but aren't a distinct thing the user should see or click.
-	visibleServices := make([]config.ServiceConfig, 0, len(cfg.Services))
-	for _, s := range cfg.Services {
-		if !s.Hidden {
-			visibleServices = append(visibleServices, s)
-		}
-	}
-	serviceInfos := make([]nostr.ServiceInfo, len(visibleServices))
-	for i, s := range visibleServices {
-		serviceInfos[i] = nostr.ServiceInfo{
-			ID:          s.ID,
-			Name:        s.Name,
-			Icon:        s.Icon,
-			Description: s.Description,
-			Prefix:      s.Prefix,
-			Websocket:   s.Websocket,
-			Status:      health.StatusUnknown,
-		}
-	}
+	visibleServices, serviceInfos := buildServiceInfos(cfg.Services)
 
 	// Phase 3: Nostr signaling
 	nsec, err := cfg.GetNsec()
@@ -327,6 +313,49 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// HTTP server: serve web + proxy + auth + tunnel target
 	router := proxy.NewRouter(cfg.Services, sessionMgr)
+
+	reloadServices := func() {
+		newCfg, err := config.LoadWithServicesDir(configPath, servicesDirFlag)
+		if err != nil {
+			log.Printf("reload failed: %v", err)
+			return
+		}
+		if err := client.SetAuthorized(newCfg.Nostr.AuthorizedNpubs); err != nil {
+			log.Printf("reload SetAuthorized failed: %v", err)
+		} else {
+			log.Printf("Allowlist reloaded: %d authorized npubs (including host)", client.AuthorizedCount())
+		}
+		router.UpdateServices(newCfg.Services)
+		visible, infos := buildServiceInfos(newCfg.Services)
+		monitor.UpdateServices(visible)
+		handler.UpdateServices(infos)
+		log.Printf("Services reloaded: %d total (%d visible)", len(newCfg.Services), len(visible))
+	}
+
+	// SIGHUP hot-reloads authorized npubs and services without restarting the
+	// daemon (tunnel URL, relays, and active sessions remain intact).
+	hupCh := make(chan os.Signal, 1)
+	signal.Notify(hupCh, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hupCh:
+				log.Println("Received SIGHUP — reloading configuration and services...")
+				reloadServices()
+			}
+		}
+	}()
+
+	// Automatic detection of drop-in changes without requiring root or signals
+	watchDir := config.ResolveServicesDir(configPath, cfg.ServicesDir, servicesDirFlag)
+	if watchDir == "" && configPath != "" {
+		watchDir = filepath.Join(filepath.Dir(configPath), "services.d")
+	}
+	if watchDir != "" {
+		go watchServicesDir(ctx, watchDir, reloadServices)
+	}
 
 	mux := http.NewServeMux()
 
@@ -688,6 +717,80 @@ func newNostrClient(secret []byte, relays, authorizedNpubs []string, fallbackNip
 	client, err := nostr.NewClient(string(secret), relays, authorizedNpubs, fallbackNip04)
 	clear(secret)
 	return client, err
+}
+
+func buildServiceInfos(services []config.ServiceConfig) ([]config.ServiceConfig, []nostr.ServiceInfo) {
+	visibleServices := make([]config.ServiceConfig, 0, len(services))
+	for _, s := range services {
+		if !s.Hidden {
+			visibleServices = append(visibleServices, s)
+		}
+	}
+	serviceInfos := make([]nostr.ServiceInfo, len(visibleServices))
+	for i, s := range visibleServices {
+		serviceInfos[i] = nostr.ServiceInfo{
+			ID:          s.ID,
+			Name:        s.Name,
+			Icon:        s.Icon,
+			Description: s.Description,
+			Prefix:      s.Prefix,
+			Websocket:   s.Websocket,
+			Status:      health.StatusUnknown,
+		}
+	}
+	return visibleServices, serviceInfos
+}
+
+func watchServicesDir(ctx context.Context, dir string, onReload func()) {
+	watchServicesDirWithInterval(ctx, dir, 3*time.Second, onReload)
+}
+
+func watchServicesDirWithInterval(ctx context.Context, dir string, interval time.Duration, onReload func()) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	lastFingerprint := dirFingerprint(dir)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current := dirFingerprint(dir)
+			if current != lastFingerprint {
+				lastFingerprint = current
+				log.Printf("Detected change in services directory %s — reloading...", dir)
+				onReload()
+			}
+		}
+	}
+}
+
+func dirFingerprint(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+	var b strings.Builder
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, "~") || strings.HasSuffix(name, ".bak") || strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "%s:%d:%d;", name, fi.ModTime().UnixNano(), fi.Size())
+	}
+	return b.String()
 }
 
 func main() {

@@ -93,6 +93,16 @@ in
       description = mdDoc "Environment file containing environment variables (e.g. DL_CONN_NOSTR_NSEC).";
     };
 
+    servicesDir = mkOption {
+      type = types.nullOr (types.either types.path types.str);
+      default = null;
+      description = mdDoc ''
+        Path to a drop-in directory containing `*.yaml` service definitions.
+        If set, passed via `--services-dir`.
+      '';
+      example = "/etc/dl-conn/services.d";
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [];
@@ -119,6 +129,7 @@ in
           ${cfg.package}/bin/dl_conn \
             --config ${finalConfigFile} \
             ${lib.optionalString (cfg.secretFile != null) "--nsec-file ${toString cfg.secretFile}"} \
+            ${lib.optionalString (cfg.servicesDir != null) "--services-dir ${toString cfg.servicesDir}"} \
             ${lib.escapeShellArgs cfg.extraArgs}
         '';
         Restart = "always";
@@ -143,6 +154,7 @@ in
         StateDirectory = "dl-conn";
         WorkingDirectory = "/var/lib/dl-conn";
         ReadWritePaths = [ "/var/lib/dl-conn" ];
+        ReadOnlyPaths = lib.optional (cfg.servicesDir != null) (toString cfg.servicesDir);
       };
     };
   };

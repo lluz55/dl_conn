@@ -1268,3 +1268,27 @@ Três decisões que mudaram o resultado:
 Os testes de layout e de UI de serviços personalizados foram atualizados: os
 dois afirmavam a existência da marcação da grade, então passaram a afirmar o
 contrário — que a duplicação não volta.
+
+## Fase 17 — Serviços modulares drop-in (`services.d`) e recarga a quente sem root
+
+Adicionado suporte ao carregamento modular de serviços via diretório drop-in
+(`services.d`), permitindo expor novas portas e aplicações locais sem precisar
+de privilégios de root e sem reiniciar o daemon (o que preserva a URL efêmera do
+Cloudflare tunnel e as sessões Zero-Trust).
+
+Registrado em [tasks/17-dropin-services-reload.md](tasks/17-dropin-services-reload.md).
+Principais decisões:
+
+1. **Desacoplamento de privilégios:** em ambientes NixOS com `DynamicUser = true`,
+   o arquivo principal do sistema (`/nix/store` ou `/var/lib/dl-conn/config.yaml`)
+   é inacessível a usuários comuns. O parâmetro `--services-dir` / `servicesDir`
+   permite que o diretório resida em caminhos do usuário (ex.: `~/.config/dl-conn/services.d`
+   ou `/etc/dl-conn/services.d`), conferindo autonomia ao operador local.
+2. **Monitoramento sem sinais:** o daemon inspeciona o diretório via polling
+   leve (a cada 3 s, calculando fingerprint de modtime/tamanho dos arquivos YAML).
+   Ao adicionar, editar ou remover um `.yaml`, o recarregamento ocorre de forma
+   completamente transparente, sem exigir envio de sinal `kill -HUP` entre UIDs diferentes.
+3. **Hot-reload atômico de rotas:** `proxy.Router`, `health.Monitor` e
+   `nostr.Handler` agora implementam `UpdateServices` sob `sync.RWMutex`. O roteador
+   atualiza as instâncias de `httputil.ReverseProxy` em memória sem interromper
+   requisições ativas.

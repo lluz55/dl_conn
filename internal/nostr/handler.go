@@ -13,6 +13,7 @@ import (
 type Handler struct {
 	client      *Client
 	tokenIssuer TokenIssuer
+	servicesMu  sync.RWMutex
 	services    []ServiceInfo
 
 	urlMu     sync.RWMutex
@@ -117,14 +118,24 @@ func (h *Handler) SetTelemetryFunc(fn func() *HostTelemetry) {
 	h.telemetryFn = fn
 }
 
+// UpdateServices replaces the advertised services list.
+func (h *Handler) UpdateServices(services []ServiceInfo) {
+	h.servicesMu.Lock()
+	defer h.servicesMu.Unlock()
+	h.services = make([]ServiceInfo, len(services))
+	copy(h.services, services)
+}
+
 // servicesWithStatus copies the advertised services with their current health
 // stamped in.
 func (h *Handler) servicesWithStatus() []ServiceInfo {
-	if h.statusFn == nil {
-		return h.services
-	}
+	h.servicesMu.RLock()
+	defer h.servicesMu.RUnlock()
 	out := make([]ServiceInfo, len(h.services))
 	copy(out, h.services)
+	if h.statusFn == nil {
+		return out
+	}
 	for i := range out {
 		out[i].Status = h.statusFn(out[i].ID)
 	}
