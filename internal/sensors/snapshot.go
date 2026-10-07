@@ -40,7 +40,14 @@ type DiskSnapshot struct {
 	UsedPct    float64 `json:"used_pct"`
 }
 
+// GPUSnapshot is the host's GPU — whichever one /sys/class/drm enumerated, not
+// a specific vendor. Vendor and Driver are stable codes rather than
+// translated names, so the frontend can name the chip in the user's language;
+// both are empty on daemons that predate them, and a client that does not know
+// them still reads the two readings below.
 type GPUSnapshot struct {
+	Vendor  string   `json:"vendor,omitempty"`
+	Driver  string   `json:"driver,omitempty"`
 	TempC   *float64 `json:"temp_c,omitempty"`
 	UtilPct *float64 `json:"util_pct,omitempty"`
 }

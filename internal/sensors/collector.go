@@ -13,6 +13,11 @@ type Collector struct {
 	sysRoot  string
 	procRoot string
 
+	// gpuUsage carries the previous DRM engine reading across samples: those
+	// counters are cumulative, and only their delta against the wall clock is
+	// a utilization.
+	gpuUsage *GPUUsage
+
 	mu       sync.RWMutex
 	latest   *Snapshot
 	onSample func(Snapshot) // optional persistence hook
@@ -23,7 +28,7 @@ func NewCollector(interval time.Duration) *Collector {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	return &Collector{interval: interval}
+	return &Collector{interval: interval, gpuUsage: &GPUUsage{}}
 }
 
 // WithRoots overrides /sys and /proc roots (for tests).
@@ -78,7 +83,11 @@ func (c *Collector) CollectOnce() Snapshot {
 	if disks, _ := ReadDisks(c.procRoot); disks != nil {
 		snap.Disks = disks
 	}
-	if gpu, _ := ReadGPU(); gpu != nil && (gpu.TempC != nil || gpu.UtilPct != nil) {
+	// A snapshot carrying only a vendor still counts: "this host has an Intel
+	// card and it reports nothing" is what lets the frontend tell a silent GPU
+	// apart from no GPU at all.
+	if gpu, _ := ReadGPU(c.sysRoot, c.procRoot, c.gpuUsage); gpu != nil &&
+		(gpu.Vendor != "" || gpu.TempC != nil || gpu.UtilPct != nil) {
 		snap.GPU = gpu
 	}
 	if batt, _ := ReadBattery(c.sysRoot); batt != nil && batt.Available {
