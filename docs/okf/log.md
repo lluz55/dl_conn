@@ -39,6 +39,32 @@ type: log
     precisa continuar lá. Um teste que descreve um elemento removido continua
     verde se ninguém o atualizar.
 
+- **Os 4 KPIs da Visão geral empilhavam no celular por acidente, não por
+  decisão.** `.status-grid` é `repeat(auto-fit, minmax(200px, 1fr))`. Abaixo de
+  `1024px` a coluna Live ocupa a largura toda da página, então esse piso de 200px
+  era quem decidia a forma: num celular de 375px (≈340px de cartão) só cabia
+  **uma** coluna — quatro cartões empilhados, o bloco mais alto da tela, com a
+  linha do tempo do túnel empurrada para baixo — e num tablet de 768px davam
+  **três** colunas, com um cartão órfão na última linha. A "2×2" nunca existiu
+  em lugar nenhum; era uma consequência aritmética que só funcionava na coluna
+  estreita do desktop.
+  - **O que é a leitura rápida não pode depender do piso de um `auto-fit`.**
+    Os quatro KPIs (Túnel / Expira em / Relays / Sessão) existem para serem lidos
+    de relance; empilhados, viram rolagem. `≤1023px` passa a fixar
+    `repeat(2, minmax(0, 1fr))` — 2×2 explícito em celular e tablet, em qualquer
+    largura, que é o que a seção [Os 4 KPIs em duas linhas e duas colunas no
+    celular e no tablet](concepts/web-frontend-layout.md#os-4-kpis-em-duas-linhas-e-duas-colunas-no-celular-e-no-tablet)
+    passa a declarar. `≥1024px` **não** muda: a coluna Live estreita continua
+    resolvendo 2–4 itens em linha, os "4 itens inline" do documento de layout.
+  - **`minmax(0, …)` e não `minmax(200px, …)` na trilha fixa.** Um piso fixo em
+    duas colunas estouraria o cartão nas telas mais estreitas; `minmax(0, 1fr)`
+    deixa a trilha encolher e o corte do valor longo continua sendo o
+    `text-overflow: ellipsis` + `title` que `.kpi-value` já fazia.
+  - **Escopo deliberado:** nada além da regra do `.status-grid` foi tocado — sem
+    alterar `.kpi-grid` (que segue lista vertical, e é o que
+    `layout_tests.js` afirma), sem mexer no `test.html` da galeria e sem
+    reescrever o `auto-fit` do desktop.
+
 - **Os botões 1h/24h/7d pintavam a seleção sem filtrar — e a lição é sobre
   estado, não sobre datas.** `fetchHistory()` (gráfico de `Saúde do host`) e
   `fetchHostHistory()` (faixa de `Disponibilidade`) guardavam apenas

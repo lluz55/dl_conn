@@ -192,6 +192,23 @@ posição. Um toque no **corpo** da linha não arrasta: ele rola a lista. A
 âncora de arraste é a linha da lista (`.service-overview-item`) — a grade que
 existia ao lado já não participa disso.
 
+## Os 4 KPIs em duas linhas e duas colunas no celular e no tablet
+
+A Visão geral (`#status-section` > `.status-grid`) é um `auto-fit` com piso de
+200px. Abaixo de `1024px` a coluna Live ocupa a largura toda da página, então
+esse piso decidia a forma sozinho: no celular (~340px de cartão) caía para
+**uma coluna** — quatro cartões empilhados, o bloco mais alto da tela — e num
+tablet de 768px dava **três colunas**, deixando um cartão sozinho na última
+linha. Os quatro KPIs existem para ser lidos de relance; empilhados, empurravam
+a linha do tempo do túnel (`#tunnel-timeline-block`) para baixo do cartão.
+
+Por isso `≤1023px` fixa `repeat(2, minmax(0, 1fr))`: o 2×2 explícito em celular
+e tablet, em qualquer largura, e o `auto-fit` continua valendo em `≥1024px`,
+onde a coluna Live estreita resolve 2–4 itens em linha (os "4 itens inline"
+deste documento). O `minmax(0, …)` deixa a trilha encolher abaixo do conteúdo em
+vez de estourar o cartão; o corte de valor longo continua sendo o
+`text-overflow: ellipsis` + `title` já described em `.kpi-value`.
+
 ## Onde isso vive no código
 
 - `web/index.html`: `.app-columns` / `.col-setup` / `.col-live`; `data-phase`
@@ -199,9 +216,9 @@ existia ao lado já não participa disso.
   irmão de `#status-section`, com `btn-clear-services` e
   `btn-collapse-services` no `.card-head-actions`.
 - `web/style.css`: `.app-columns`, `.col`, `.col-live` (display:none em setup,
-  flex em live), `.status-grid` (rail flex), `.card-head`, `.services-body`
-  (gap próprio do corpo), os `gap` re-declarados nos corpos colapsáveis,
-  header slim; breakpoints em `≥1024px`.
+  flex em live), `.status-grid` (grade `auto-fit` + o 2×2 de `≤1023px`),
+  `.card-head`, `.services-body` (gap próprio do corpo), os `gap` re-declarados
+  nos corpos colapsáveis, header slim; breakpoints em `≥1024px`.
 - `web/app.js`: `data-phase="live"` em `handleNostrResponse`; `data-phase="setup"`
   em `onSessionEvent` (`locked`/`wiped`); `renderRelayList()` no `init`;
   `COLLAPSIBLE_SECTIONS` + `bindSectionCollapses()`/`restoreSectionCollapses()`.
