@@ -6,6 +6,68 @@ type: log
 
 ## 2026-10-07
 
+- **Dois controles que "funcionavam" e não faziam nada — e a lição é
+  estrutural, não os dois botões.** O toggle 1h/24h/7d da disponibilidade e o
+  botão de colapsar o cartão de relays chegaram como dois bugs de sintaxe,
+  corrigidos aqui. O que vale registrar é que **os dois eram silenciosos**: o
+  botão de colapsar animava o próprio chevron e reescrevia o próprio tooltip
+  enquanto o corpo não se mexia, e o seletor do toggle não casava com elemento
+  nenhum, então o clique era descartado antes de qualquer efeito. Nenhum dos
+  dois aparece numa captura de tela do markup.
+
+  1. **O botão de relays passava o estado direto, sem inverter.**
+     `applyRelayCollapse(el.relayPanelBody.classList.contains("hidden"))`
+     reaplicava o que já estava em tela. A versão da sessão, escrita dezoito
+     linhas abaixo, fazia `!contains("hidden")` — e por isso funcionava. É a
+     assinatura exata de código copiado e depois ajustado no lugar errado.
+  2. **O seletor do toggle era construído a partir da chave de `dataset`.**
+     O markup escreve `data-avail-window`; `closest(".seg[data-availWindow]")`
+     não encontra nada, porque o motor de seletor reduz o nome do atributo para
+     `data-availwindow` — que é um **nome diferente**, não outra grafia do mesmo.
+     Um seletor sem correspondência não é erro, é ausência: o handler sai pelo
+     `return` e o controle fica inerte enquanto o botão se pinta de selecionado.
+
+  Duas decisões que mudam o resultado:
+
+  1. **Um registro declarativo, não um toggle por cartão.** As duas funções
+     por cartão viraram a tabela `COLLAPSIBLE_SECTIONS` em `app.js`: botão,
+     corpo, rótulo e chave de `localStorage` na mesma linha, com um controlador
+     único. "Todo cartão colapsa" era uma convenção impossível de conferir
+     (cartão novo = lembrar de copiar um quarto toggle); agora `layout_tests.js`
+     confronta a tabela com os `<section>` de `index.html` e **falha** quando
+     aparece uma seção sem linha. É a diferença entre um teste que descreve e
+     um teste que vigia.
+  2. **A regra de inversão e o nome do atributo viraram função testada.**
+     `web/js/section_collapse.js` (`nextCollapsed`, `collapseLabel`,
+     `storedCollapsed`) e `web/js/seg_control.js` (`datasetKeyFor`,
+     `segSelector`) ficam fora do IIFE, sem DOM, e são testados direto. Passar o
+     atributo do markup como **único** argumento e derivar a chave de `dataset`
+     dele elimina a possibilidade do desalinhamento — não há mais dois nomes
+     para discordar no call site.
+
+- **Serviços deixou de ser um bloco dentro da Visão geral e virou cartão
+  próprio.** A Visão geral deveria ser a leitura rápida dos quatro fatos que
+  decidem se o túnel serve para alguma coisa, e carregava também a barra de
+  saúde, o formulário de serviço, a lista e o gráfico de disponibilidade. Os
+  KPIs ficavam no topo de um cartão que ocupava a tela inteira para chegar nos
+  serviços.
+
+  Agora `#status-section` guarda só a grade de KPIs e a linha do tempo das
+  trocas de URL; `#services-section` é um `.card` independente, com os
+  controles de adicionar/atualizar/limpar **subindo para o head** — que é
+  também onde mora o botão de colapsar. A fase Live passou a_gatear
+  `el.servicesSection` (antes `el.servicesOverview`, o contêiner aninhado que
+  deixou de existir).
+
+  Um detalhe que só apareceu depois: `.card` é flex column com `gap`, e `gap`
+  só vale entre filhos **diretos**. Embrulhar o conteúdo de um cartão numa div
+  para dar algo ao head esconder muda quem são os filhos diretos, então todo
+  corpo colapsável precisa re-declarar o `gap` do cartão — sem isso os blocos
+  se encostam assim que o cartão pode ser colapsado. É o mesmo motivo do
+  `#session-setup-body` documentado acima, agora valendo para cinco corpos.
+
+## 2026-10-07
+
 - **A sessão também colapsa, e colapsar aqui tem duas voltas que o cartão de
   relays não tinha.** O pedido foi "todas as sessões devem poder colapsar, com
   o estado salvo no navegador". O frontend tem **um** cartão de sessão

@@ -12,12 +12,11 @@ zonas por ciclo de vida**, reveladas por fase via atributo `data-phase` no
 
 - **Setup** (sempre visível): Identidade (`#vault-section`) + Relays
   (`#relay-panel`, promovido de um toggle no header para card visível).
-- **Live** (revela após o túnel Nostr responder): Status rail
-  (`#status-section`, 4 itens inline) + Saúde do host
-  (`#host-telemetry-section`) + Abrir porta local
-  (`#local-port-section`). Os serviços são o bloco **Serviços** dentro da
-  própria Visão geral (`#services-overview`) — ver
-  [Uma única lista de serviços](#uma-única-lista-de-serviços).
+- **Live** (revela após o túnel Nostr responder): Visão geral
+  (`#status-section`, os 4 KPIs + linha do tempo das trocas de URL) +
+  **Serviços** (`#services-section`, cartão próprio — ver
+  [Uma única lista de serviços](#uma-única-lista-de-serviços)) + Saúde do host
+  (`#host-telemetry-section`) + Abrir porta local (`#local-port-section`).
 
 Em `≥1024px` as duas zonas ficam lado a lado (`grid 1fr 1fr`); abaixo,
 coluna única (Setup acima, Live abaixo). No modo setup em desktop a coluna
@@ -69,8 +68,8 @@ cartões em `#services-section` e, dentro da Visão geral, a lista compacta
 mesmos dados, foi ambiguidade de navegação, não riqueza: o usuário não tinha
 como saber qual era a canônica.
 
-A lista **ganhou**; a grade foi removida. `#services-overview` é hoje a única
-visualização de serviços e absorveu tudo que só existia no card eliminado:
+A lista **ganhou**; a grade foi removida. A lista é hoje a única visualização
+de serviços e absorveu tudo que só existia no card eliminado:
 
 - os controles de gestão (Adicionar / Atualizar / Limpar) no
   `.card-head-actions` do bloco;
@@ -85,6 +84,29 @@ visualização de serviços e absorveu tudo que só existia no card eliminado:
 renderizador. `statusDot()` foi dissolvido em `serviceStatusMeta()`, que
 resolve `{status, cls, title}` uma vez para o badge do ícone e para o texto da
 linha, em vez de as duas renderizações duplicarem a tabela de cores.
+
+### Serviços é um cartão próprio, não um bloco da Visão geral
+
+`#services-overview` **era** um `<div>` dentro de `#status-section`. A Visão
+geral é a leitura rápida dos quatro fatos que decidem se o túnel serve para
+alguma coisa, e carregava também barra de saúde, formulário, lista e gráfico de
+disponibilidade: os KPIs ficavam no topo de um cartão do tamanho da tela para
+chegar-se aos serviços.
+
+Hoje são dois `.card` irmãos — `#status-section` (grade de KPIs + linha do
+tempo das trocas de URL) e `#services-section` (saúde + formulário + lista +
+disponibilidade). Os controles de adicionar/atualizar/limpar e a pílula de
+contagem **subiram para o `.card-head`**, que é também onde mora o botão de
+colapsar; assim a contagem continua legível com a lista fechada.
+
+A fase Live passou a gatear `el.servicesSection` (o cartão) em vez do
+contêiner aninhado que deixou de existir. O `id` `services-overview` sobrou só
+na lista (`#services-overview-list`) e nas classes `.service-overview-item`,
+que descrevem a linha da lista, não a seção.
+
+Relacionado: [Colapso de todas as seções](#colapso-de-todas-as-seções),
+[Reordenação de serviços](#reordenação-de-serviços) e
+[Serviços personalizados no frontend](#serviços-personalizados-no-frontend).
 
 Duas consequências que valem o registro:
 
@@ -143,6 +165,16 @@ O card Saúde do host tem três blocos, nesta ordem:
    - A carga é autolimitada (cooldown de 30 s por tentativa, cadência de 5 min
      por sucesso) e falha **não** apaga a série já desenhada. O botão de janela
      passa `force`, porque um intervalo novo invalida a resposta anterior.
+   - Os seletores `.seg` são ligados por `wireSegGroup()`
+     (`web/js/seg_control.js`), que recebe **o atributo do markup como único
+     argumento** e deriva dele tanto o seletor quanto a chave de `dataset`.
+     Isso não é estilo: o markup escreve `data-avail-window`, o seletor precisa
+     casar com esse nome, e `dataset` expõe `availWindow`. Montar o seletor a
+     partir da chave produz `.seg[data-availWindow]`, que não casa com nada —
+     o motor reduz o nome do atributo para `data-availwindow`, que é outro
+     atributo, não outra grafia. Um seletor sem correspondência não gera erro,
+     gera ausência: o toggle de disponibilidade da página ficou inerte e nenhum
+     teste estrutural o percebeu.
 
 Os medidores têm um equivalente textual em `.sr-only` (`#tel-cpu` e afins,
 preenchido por `renderTelemetry`). Uma barra comunica "quanto está cheio" de
@@ -163,13 +195,18 @@ existia ao lado já não participa disso.
 ## Onde isso vive no código
 
 - `web/index.html`: `.app-columns` / `.col-setup` / `.col-live`; `data-phase`
-  em `.app-container`; relay panel sem `hidden`; `btn-clear-services` dentro
-  de `.card-head-actions` em `#services-overview`.
+  em `.app-container`; relay panel sem `hidden`; `#services-section` como cartão
+  irmão de `#status-section`, com `btn-clear-services` e
+  `btn-collapse-services` no `.card-head-actions`.
 - `web/style.css`: `.app-columns`, `.col`, `.col-live` (display:none em setup,
-  flex em live), `.status-grid` (rail flex), `.card-head`, header slim;
-  breakpoints em `≥1024px`.
+  flex em live), `.status-grid` (rail flex), `.card-head`, `.services-body`
+  (gap próprio do corpo), os `gap` re-declarados nos corpos colapsáveis,
+  header slim; breakpoints em `≥1024px`.
 - `web/app.js`: `data-phase="live"` em `handleNostrResponse`; `data-phase="setup"`
-  em `onSessionEvent` (`locked`/`wiped`); `renderRelayList()` no `init`.
+  em `onSessionEvent` (`locked`/`wiped`); `renderRelayList()` no `init`;
+  `COLLAPSIBLE_SECTIONS` + `bindSectionCollapses()`/`restoreSectionCollapses()`.
+- `web/js/section_collapse.js` e `web/js/seg_control.js`: as regras puras do
+  colapso e do seletor `.seg`, sem DOM, testadas direto.
 
 ## Armadilha: quem dispara a fase Live
 
@@ -205,7 +242,7 @@ CSP (`style-src 'self'`, sem `'unsafe-inline'`) bloquearia. Os dados vêm de um
 cada reload da aba e nunca mostra mais que o último ~1 minuto observado
 (30 amostras × polling de 2s).
 
-`#services-overview` ganhou uma **barra de saúde proporcional**
+`#services-section` ganhou uma **barra de saúde proporcional**
 (`#services-health` > `svg.health-bar` com três `<rect>` — ativos/inativos/
 aguardando) mais a legenda com contagem. Mesma técnica dos sparklines: largura
 de cada `<rect>` é `x`/`width` calculados em `renderServicesHealth()` e
@@ -307,6 +344,51 @@ Isso cria duas decisões que não existiam no cartão de relays:
 O estado é preferência, não estado de sessão: fica em `localStorage`, em
 try/catch, como `dl_conn_relay_collapsed` — em modo privado o colapso funciona
 na página, só não sobrevive ao reload.
+
+## Colapso de todas as seções
+
+Hoje **todo `<section>` de `index.html` colapsa**, sem exceção — cartão de
+sessão, relays, Visão geral, Serviços, Saúde do host, porta local, npub do host
+e depuração. O padrão é sempre o mesmo: colapsa o corpo no lugar e deixa o
+`.card-head` visível, para que as pílulas do head continuem legíveis (resumo de
+relays, estado da sessão, contagem de serviços, uptime do host).
+
+Duas decisões distinguem isto do par de toggles que existia antes (ver
+[log.md](../log.md), 2026-10-07):
+
+1. **Um registro declarativo, não um toggle por cartão.** `COLLAPSIBLE_SECTIONS`
+   em `app.js` lista, por linha, o `section`, o `label` visível, a
+   `storageKey`, os `bodies` e os `buttons`; um controlador único
+   (`applySectionCollapse`/`toggleSectionCollapse`/`bindSectionCollapses`/
+   `restoreSectionCollapses`) faz o resto. Havia um toggle escrito à mão por
+   cartão, e o do relays havia passado o estado direto sem inverter — ele
+   re-aplicava o que já estava em tela, então o botão animava o próprio chevron
+   e não mexia no corpo. Código copiado e ajustado no lugar errado é a
+   assinatura desse defeito; um controlador só elimina o lugar para ele.
+   `layout_tests.js` confronta a tabela com os `<section>` de `index.html` e
+   **falha** quando uma seção aparece sem linha — é o que torna "todo cartão
+   colapsa" verificável em vez de convenção.
+2. **A regra de inversão e o rótulo saíram do IIFE.** `web/js/section_collapse.js`
+   expõe `nextCollapsed()`, `collapseLabel()` e `storedCollapsed()` sem DOM, e
+   são testados diretamente. `nextCollapsed()` é literalmente a inversão que o
+   relays fazia de menos; `collapseLabel()` garante que `aria-label` e `data-tip`
+   (de onde o CSS desenha o tooltip) nunca discordem entre si.
+
+O `storageKey` é escrito por linha em vez de derivado de `key` só para que
+`dl_conn_relay_collapsed` e `dl_conn_session_collapsed` continuem com os nomes
+que já tinham no disco dos operadores.
+
+### O `gap` do cartão não atravessa o corpo
+
+`.card` é `display: flex; flex-direction: column; gap: var(--gap-md)`, e
+`gap` só conta **filhos diretos**. Dar um corpo a um cartão para poder escondê-lo
+muda quem são esses filhos, então `#status-body`, `#host-telemetry-body`,
+`#local-port-body`, `#host-npub-body` e `#debug-body` re-declaram
+`flex-direction: column` + `gap: var(--gap-md)` + `min-width: 0`. Sem isso os
+blocos se encostam assim que o cartão pode ser colapsado — o defeito só aparece
+quando alguém colapsa, nunca com o cartão aberto. `.services-body` é a
+exceção: mantém o `--gap-sm` mais apertado, que é o ritmo que a lista já tinha
+quando era bloco aninhado.
 
 ## Serviços personalizados no frontend
 
