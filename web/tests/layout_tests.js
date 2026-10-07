@@ -255,8 +255,12 @@ assert(
   "The service count pill stays in the Services head, so it remains readable while collapsed",
 );
 assert(
-  /id="tel-uptime"[\s\S]*?id="btn-collapse-host"/.test(html),
-  "Uptime and the live badge stay in the host head, so 'is it reporting?' survives the collapse",
+  /id="tel-live"[\s\S]*?id="btn-collapse-host"/.test(html),
+  "The live badge stays in the host head, so 'is it reporting?' survives the collapse",
+);
+assert(
+  !/tel-uptime|formatUptime/.test(html) && !/telUptime|formatUptime/.test(app),
+  "The host uptime indicator is gone from the markup and the app — the live badge answers liveness",
 );
 assert(
   /id="session-setup-body"[\s\S]*?id="unlock-ui"[\s\S]*?id="login-ui"[\s\S]*?id="btn-clear-all"/.test(html) &&

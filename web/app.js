@@ -136,7 +136,6 @@ import {
     biometricPin: $("biometric-pin"),
     btnEnableBiometricLater: $("btn-enable-biometric-later"),
     hostTelemetrySection: $("host-telemetry-section"),
-    telUptime: $("tel-uptime"),
     telLive: $("tel-live"),
     telUpdated: $("tel-updated"),
     telMeters: $("tel-meters"),
@@ -430,47 +429,6 @@ import {
   }
 
   /**
-   * Host uptime as the two largest units that carry the magnitude.
-   *
-   * Hours stop being readable early: a box up 45 days read as "1080h", which
-   * is not obviously "since last month" and cannot be placed on a calendar
-   * at all, so the duration is decomposed instead. The month is the usual
-   * 30-day convention — an uptime is a duration, not a date, and there is no
-   * calendar to divide by.
-   *
-   * Minutes are the floor: below an hour they are the only unit that applies
-   * ("42 min"); from one hour up the value shows the largest unit and the one
-   * below it ("1 h 0 min", "3 d 17 h", "2 sem 3 d", "1 mês 1 sem"). Two units
-   * is what fits the pill, and the pair is enough to read the value as a date.
-   * "min" stays spelled out: a bare "m" would be ambiguous between minute and
-   * month, and "sem" is the abbreviation a pt-BR dashboard uses for week.
-   */
-  function formatUptime(total) {
-    if (total == null || isNaN(total) || total < 0) return "—";
-    // [singular, plural, seconds]: the month is the only unit that inflects,
-    // since it is the only one spelled out and long enough to read as a word.
-    const units = [
-      ["mês", "meses", 30 * 24 * 3600],
-      ["sem", "sem", 7 * 24 * 3600],
-      ["d", "d", 24 * 3600],
-      ["h", "h", 3600],
-      ["min", "min", 60],
-    ];
-    let rest = Math.floor(total);
-    // A leading zero is not a unit of the value: under an hour nothing above
-    // "min" applies, so the first shown unit becomes the last real one.
-    let i = 0;
-    while (i < units.length - 1 && rest < units[i][2]) i++;
-    const parts = [];
-    for (; i < units.length && parts.length < 2; i++) {
-      const n = Math.floor(rest / units[i][2]);
-      rest -= n * units[i][2];
-      parts.push(n + " " + units[i][n === 1 ? 0 : 1]);
-    }
-    return parts.join(" ");
-  }
-
-  /**
    * Render a capacity given in mebibytes (the unit the Go daemon emits) using
    * the most readable binary unit (base 1024): MB -> GB -> TB -> PB.
    * Input is always an integer count of 1 MiB blocks, so 1024 MiB = 1 GiB and
@@ -502,7 +460,7 @@ import {
       el.telCpu.textContent = parts.length ? parts.join(" · ") : "—";
       // Guarded via typeof: telemetry_tests.js evaluates this function body
       // in isolation (extractFunction + `new Function`) with only
-      // formatUptime/formatCapacity inlined, so the panel renderers below are
+      // formatCapacity inlined, so the panel renderers below are
       // undeclared there. `typeof x === "function"` never throws on an
       // undeclared identifier, unlike calling it directly would.
     }
@@ -552,7 +510,6 @@ import {
       else if (snap.batt_capacity_pct != null) el.telBatt.textContent = snap.batt_capacity_pct + "% " + (snap.batt_status || "");
       else el.telBatt.textContent = "—";
     }
-    if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
     if (typeof renderMeters === "function") renderMeters(snap);
     if (typeof renderStorage === "function") renderStorage(snap);
   }
@@ -760,7 +717,6 @@ import {
     if (!host || !snap) return;
     meterRefs.clear();
     host.replaceChildren();
-    if (el.telUptime) el.telUptime.textContent = formatUptime(snap.uptime_s);
 
     // CPU
     const cpu = snap.cpu || (snap.cpu_load1 != null || snap.cpu_temp_c != null || snap.cpu_freq_mhz != null ? {

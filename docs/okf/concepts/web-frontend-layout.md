@@ -351,7 +351,7 @@ Hoje **todo `<section>` de `index.html` colapsa**, sem exceção — cartão de
 sessão, relays, Visão geral, Serviços, Saúde do host, porta local, npub do host
 e depuração. O padrão é sempre o mesmo: colapsa o corpo no lugar e deixa o
 `.card-head` visível, para que as pílulas do head continuem legíveis (resumo de
-relays, estado da sessão, contagem de serviços, uptime do host).
+relays, estado da sessão, contagem de serviços, badge ao vivo da telemetria).
 
 Duas decisões distinguem isto do par de toggles que existia antes (ver
 [log.md](../log.md), 2026-10-07):

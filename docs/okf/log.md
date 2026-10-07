@@ -6,6 +6,29 @@ type: log
 
 ## 2026-10-07
 
+- **A pill de uptime do host saiu do painel — e o campo continua no
+  protocolo.** A pílula `#tel-uptime` e o formatador `formatUptime()` foram
+  removidos do `web/index.html` e do `web/app.js`: nenhuma escrita sobrou em
+  `renderTelemetry()` nem em `renderMeters()`, e o `el.telUptime` saiu do
+  registro de elementos.
+  - **A remoção é de frontend, não de protocolo.** O daemon segue coletando
+    `/proc/uptime` e emitindo `uptime_s` em `/api/host/telemetry` e no campo
+    Nostr; o mock do harness também. Tirar o campo da API mudaria o formato
+    do protocolo e afetaria clientes que ainda o leem — o pedido foi tirar o
+    *indicador*, não o dado. Se o uptime voltar a aparecer, o formatador
+    documentado em [concepts/host-telemetry.md](concepts/host-telemetry.md)
+    é o ponto de partida, não uma reescrita.
+  - **Liveness continua respondida pelo badge ao vivo** (`tel-live` /
+    `tel-updated`), que é o que sobrevive ao colapso do cartão. A pergunta que
+    a pill respondia — "isto ainda está reportando?" — já tinha dono melhor:
+    o badge mostra o atraso da última leitura e marca `indisponivel` quando o
+    polling falha, coisa que uma duração estática não distingia.
+  - **`layout_tests.js` passou a vigiar a ausência**, com um `!` sobre
+    `tel-uptime` / `formatUptime` no markup e no app. O teste anterior exigia
+    o pill no head; sem ele, o contrato do head colapsável é só o badge ao
+    vivo. Um teste que descreve um elemento removido continua verde se
+    ninguém o atualizar — daí a asserção negativa.
+
 - **Dois controles que "funcionavam" e não faziam nada — e a lição é
   estrutural, não os dois botões.** O toggle 1h/24h/7d da disponibilidade e o
   botão de colapsar o cartão de relays chegaram como dois bugs de sintaxe,
