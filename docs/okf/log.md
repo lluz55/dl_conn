@@ -6,6 +6,40 @@ type: log
 
 ## 2026-10-07
 
+- **A sessão também colapsa, e colapsar aqui tem duas voltas que o cartão de
+  relays não tinha.** O pedido foi "todas as sessões devem poder colapsar, com
+  o estado salvo no navegador". O frontend tem **um** cartão de sessão
+  (`#vault-section`), mas ele tem **dois lados** — `#session-setup` (login /
+  desbloqueio) e `#session-live` (identidade + contagem de bloqueio) — e são
+  mutuamente exclusivos, então "todas as sessões" virou "os dois estados do
+  cartão, com uma preferência só".
+
+  Três decisões que mudaram o resultado:
+
+  1. **Um colapso, dois corpos, uma chave.** Existem
+     `#session-setup-body`/`#session-live-body` e dois botões
+     (`#btn-collapse-session-setup`/`-live`), mas `dl_conn_session_collapsed`
+     governa os dois: `applySessionCollapse()` alterna os corpos e atualiza o
+     `aria-expanded`, o `aria-label` e o `data-tip` dos dois botões. Duas
+     chaves fariam o cartão lembrar dois colapsos diferentes e abrir expandido
+     logo depois do login — quando os controles de setup menos importam.
+     O toggle lê o lado do setup e comanda os dois, porque só o lado visível
+     recebe clique.
+  2. **O head de cada lado sobrevive ao colapso.** No setup é o `.card-head`
+     com `#vault-state-pill`; no live é o `.session-main` inteiro (identicon,
+     npub, `#session-state-pill`) — a mesma leitura de "estado sobrevive ao
+     corpo fechado" que motivou o colapso do cartão de relays.
+  3. **O `gap` do pai não atravessa a div nova.** `#session-setup` é flex
+     column e o `gap: var(--gap-md)` só vale entre filhos diretos, então
+     `#session-setup-body` re-declara direção e `gap` — sem isso os controles
+     de login/desbloqueio/apagar-dados se encostam uns nos outros, e o defeito
+     só apareceria com o cartão expandido. Já `#session-live-body` usa `gap: 0`,
+     porque os `.session-foot` são bandas adjacentes sem ritmo entre elas.
+
+  Coberto por 11 asserções novas em `web/tests/layout_tests.js`.
+
+## 2026-10-07
+
 - **O histórico do host virou dado persistido, não observação do navegador.**
   Disponibilidade por serviço (item 4) e trocas de URL do túnel (item 6) foram
   escolhidas com backend, porque nenhum dos dois cumpre o papel quando a

@@ -229,74 +229,84 @@
           <div class="vault-head">
             <div class="card-head">
               <h2>Identidade Nostr</h2>
-              <span id="vault-state-pill" class="pill p-warn" role="status" aria-live="polite">
-                <span class="dot dot-warn" aria-hidden="true"></span>sem sessão
-              </span>
+              <div class="card-head-actions">
+                <span id="vault-state-pill" class="pill p-warn" role="status" aria-live="polite">
+                  <span class="dot dot-warn" aria-hidden="true"></span>sem sessão
+                </span>
+                <button id="btn-collapse-session-setup" class="btn-icon btn-collapse" aria-label="Recolher sessão" data-tip-end data-tip="Recolher sessão" aria-expanded="true" aria-controls="session-setup-body">
+                  <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                </button>
+              </div>
             </div>
             <span id="vault-status" class="status" role="status" aria-live="polite"></span>
           </div>
 
-          <!-- Vault locked: unlock UI -->
-          <div id="unlock-ui" class="hidden">
-            <div id="unlock-identity" class="identity-hint" aria-label="Identidade salva"></div>
+          <!-- Collapse hides this block in place: the card head stays
+               visible, so #vault-state-pill (whether an identity is saved)
+               is still readable while the login/unlock controls are closed. -->
+          <div id="session-setup-body">
+            <!-- Vault locked: unlock UI -->
+            <div id="unlock-ui" class="hidden">
+              <div id="unlock-identity" class="identity-hint" aria-label="Identidade salva"></div>
 
-            <div class="pin-input-group">
-              <input type="password" id="pin-input" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN" />
-              <button id="btn-unlock-pin" class="btn btn-primary" data-tip="Desbloquear com PIN">Desbloquear</button>
-            </div>
-
-            <div class="row">
-              <button id="btn-unlock-bio" class="btn btn-tonal btn-sm hidden" data-tip="Desbloquear com biometria">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
-                Desbloquear com biometria
-              </button>
-              <div class="spacer"></div>
-              <button id="btn-wipe" class="btn-link-danger" data-tip="Esqueci o PIN / usar outra conta">Esqueci o PIN / usar outra conta</button>
-            </div>
-          </div>
-
-          <!-- Vault empty: login / creation -->
-          <div id="login-ui" class="hidden">
-            <div class="btn-stack">
-              <button id="login-nip07" class="btn btn-primary btn-full" data-tip="Login via NIP-07 (Alby, nos2x, Amber)">
-                <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
-                Login via NIP-07
-              </button>
-
-              <button id="btn-scan-qr" class="btn btn-tonal btn-full" data-tip="Ler o nsec de um QR code com a câmera">
-                <svg class="icon" aria-hidden="true"><use href="#i-qr"></use></svg>
-                Ler nsec via QR
-              </button>
-
-              <div class="divider-label"><span>ou</span></div>
-
-              <details id="nsec-fallback" class="nsec-fallback">
-                <summary>Inserir nsec manualmente</summary>
-                <input type="password" id="nsec-input" class="nsid-input" placeholder="nsec1…" autocomplete="off" aria-label="nsec" />
-                <button id="btn-login-nsec" class="btn btn-tonal btn-full" data-tip="Login inserindo o nsec manualmente">Login</button>
-              </details>
-            </div>
-
-            <!-- Vault save prompt (shown after nsec login) -->
-            <div id="vault-save-prompt" class="hidden">
-              <p class="status">Salvar esta identidade no dispositivo com segurança?</p>
-              <div class="pin-input-group pin-input-group--stack">
-                <input type="password" id="pin-create" class="nsid-input" placeholder="Defina o PIN (4-8 dígitos)" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Novo PIN" />
-                <input type="password" id="pin-confirm" class="nsid-input" placeholder="Confirme o PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Confirme o PIN" />
+              <div class="pin-input-group">
+                <input type="password" id="pin-input" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN" />
+                <button id="btn-unlock-pin" class="btn btn-primary" data-tip="Desbloquear com PIN">Desbloquear</button>
               </div>
-              <button id="btn-save-vault" class="btn btn-primary btn-full" data-tip="Salvar identidade no cofre">
-                <svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
-                Salvar identidade
-              </button>
-              <label class="checkbox-row">
-                <input type="checkbox" id="enable-biometric" />
-                <span>Habilitar desbloqueio biométrico</span>
-              </label>
-              <button id="btn-skip-vault" class="btn-link" data-tip="Seguir sem salvar a identidade neste dispositivo">Agora não</button>
-            </div>
-          </div>
 
-          <button id="btn-clear-all" class="btn-link-danger" data-tip="Apagar todos os dados do frontend">Apagar todos os dados</button>
+              <div class="row">
+                <button id="btn-unlock-bio" class="btn btn-tonal btn-sm hidden" data-tip="Desbloquear com biometria">
+                  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
+                  Desbloquear com biometria
+                </button>
+                <div class="spacer"></div>
+                <button id="btn-wipe" class="btn-link-danger" data-tip="Esqueci o PIN / usar outra conta">Esqueci o PIN / usar outra conta</button>
+              </div>
+            </div>
+
+            <!-- Vault empty: login / creation -->
+            <div id="login-ui" class="hidden">
+              <div class="btn-stack">
+                <button id="login-nip07" class="btn btn-primary btn-full" data-tip="Login via NIP-07 (Alby, nos2x, Amber)">
+                  <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
+                  Login via NIP-07
+                </button>
+
+                <button id="btn-scan-qr" class="btn btn-tonal btn-full" data-tip="Ler o nsec de um QR code com a câmera">
+                  <svg class="icon" aria-hidden="true"><use href="#i-qr"></use></svg>
+                  Ler nsec via QR
+                </button>
+
+                <div class="divider-label"><span>ou</span></div>
+
+                <details id="nsec-fallback" class="nsec-fallback">
+                  <summary>Inserir nsec manualmente</summary>
+                  <input type="password" id="nsec-input" class="nsid-input" placeholder="nsec1…" autocomplete="off" aria-label="nsec" />
+                  <button id="btn-login-nsec" class="btn btn-tonal btn-full" data-tip="Login inserindo o nsec manualmente">Login</button>
+                </details>
+              </div>
+
+              <!-- Vault save prompt (shown after nsec login) -->
+              <div id="vault-save-prompt" class="hidden">
+                <p class="status">Salvar esta identidade no dispositivo com segurança?</p>
+                <div class="pin-input-group pin-input-group--stack">
+                  <input type="password" id="pin-create" class="nsid-input" placeholder="Defina o PIN (4-8 dígitos)" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Novo PIN" />
+                  <input type="password" id="pin-confirm" class="nsid-input" placeholder="Confirme o PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="Confirme o PIN" />
+                </div>
+                <button id="btn-save-vault" class="btn btn-primary btn-full" data-tip="Salvar identidade no cofre">
+                  <svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
+                  Salvar identidade
+                </button>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="enable-biometric" />
+                  <span>Habilitar desbloqueio biométrico</span>
+                </label>
+                <button id="btn-skip-vault" class="btn-link" data-tip="Seguir sem salvar a identidade neste dispositivo">Agora não</button>
+              </div>
+            </div>
+
+            <button id="btn-clear-all" class="btn-link-danger" data-tip="Apagar todos os dados do frontend">Apagar todos os dados</button>
+          </div>
         </div>
 
         <!-- Live side: identity, state and auto-lock countdown in one place -->
@@ -317,36 +327,44 @@
               </div>
             </div>
             <span class="pill session-state" id="session-state-pill" role="status" aria-live="polite">Bloqueada</span>
+            <button id="btn-collapse-session-live" class="btn-icon btn-collapse" aria-label="Recolher sessão" data-tip-end data-tip="Recolher sessão" aria-expanded="true" aria-controls="session-live-body">
+              <svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>
+            </button>
           </div>
 
-          <div id="auto-lock-section" class="session-foot hidden">
-            <span class="status" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-timer"></use></svg></span>
-            <div class="countdown-track" id="countdown-wrap" role="progressbar" aria-label="Tempo até bloqueio automático">
-              <svg class="countdown-svg" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
-                <rect class="countdown-fill" id="countdown-rect" x="0" y="0" width="100" height="4"></rect>
-              </svg>
+          <!-- Same collapse preference as the setup side: #session-main stays
+               visible (identicon, npub and the state pill), so identity and
+               session state remain readable while this block is closed. -->
+          <div id="session-live-body">
+            <div id="auto-lock-section" class="session-foot hidden">
+              <span class="status" aria-hidden="true"><svg class="icon icon-sm"><use href="#i-timer"></use></svg></span>
+              <div class="countdown-track" id="countdown-wrap" role="progressbar" aria-label="Tempo até bloqueio automático">
+                <svg class="countdown-svg" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
+                  <rect class="countdown-fill" id="countdown-rect" x="0" y="0" width="100" height="4"></rect>
+                </svg>
+              </div>
+              <span class="countdown-text num" id="countdown-text">—</span>
+              <select id="auto-lock-timeout" class="nsid-select" aria-label="Tempo de bloqueio automático">
+                <option value="0">Sem bloqueio</option>
+                <option value="1">1 min</option>
+                <option value="3">3 min</option>
+                <option value="5">5 min</option>
+                <option value="10">10 min</option>
+                <option value="15" selected>15 min</option>
+                <option value="30">30 min</option>
+                <option value="60">1 hora</option>
+              </select>
             </div>
-            <span class="countdown-text num" id="countdown-text">—</span>
-            <select id="auto-lock-timeout" class="nsid-select" aria-label="Tempo de bloqueio automático">
-              <option value="0">Sem bloqueio</option>
-              <option value="1">1 min</option>
-              <option value="3">3 min</option>
-              <option value="5">5 min</option>
-              <option value="10">10 min</option>
-              <option value="15" selected>15 min</option>
-              <option value="30">30 min</option>
-              <option value="60">1 hora</option>
-            </select>
-          </div>
 
-          <div id="biometric-enroll" class="session-foot hidden">
-            <p class="status-sub">Desbloqueio biométrico disponível e ainda não ativado.</p>
-            <div class="pin-input-group">
-              <input type="password" id="biometric-pin" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN para ativar biometria" />
-              <button id="btn-enable-biometric-later" class="btn btn-tonal" data-tip="Ativar desbloqueio biométrico">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
-                Ativar biometria
-              </button>
+            <div id="biometric-enroll" class="session-foot hidden">
+              <p class="status-sub">Desbloqueio biométrico disponível e ainda não ativado.</p>
+              <div class="pin-input-group">
+                <input type="password" id="biometric-pin" class="nsid-input" placeholder="PIN" autocomplete="off" inputmode="numeric" maxlength="8" aria-label="PIN para ativar biometria" />
+                <button id="btn-enable-biometric-later" class="btn btn-tonal" data-tip="Ativar desbloqueio biométrico">
+                  <svg class="icon icon-sm" aria-hidden="true"><use href="#i-fingerprint"></use></svg>
+                  Ativar biometria
+                </button>
+              </div>
             </div>
           </div>
         </div>

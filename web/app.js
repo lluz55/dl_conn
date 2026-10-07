@@ -115,6 +115,10 @@ import {
     autoLockStatus: $("auto-lock-status"),
     sessionSetup: $("session-setup"),
     sessionLive: $("session-live"),
+    sessionSetupBody: $("session-setup-body"),
+    sessionLiveBody: $("session-live-body"),
+    btnCollapseSessionSetup: $("btn-collapse-session-setup"),
+    btnCollapseSessionLive: $("btn-collapse-session-live"),
     sessionStatusText: $("session-status-text"),
     sessionStatePill: $("session-state-pill"),
     sessionNpub: $("session-npub"),
@@ -236,6 +240,17 @@ import {
    * past on every load once the tunnel is live.
    */
   const RELAY_COLLAPSED_KEY = "dl_conn_relay_collapsed";
+
+  /**
+   * Whether the session card's body starts collapsed. Persisted like the relay
+   * one, and for the same reason: once the tunnel is up, the login/unlock
+   * controls and the auto-lock band are setup-time surfaces — the operator
+   * reads identity and session state from the head, which stays visible.
+   *
+   * One preference drives both sides of the card (locked/setup and live), so
+   * collapsing the session once keeps it collapsed after the next login.
+   */
+  const SESSION_COLLAPSED_KEY = "dl_conn_session_collapsed";
 
   /**
    * Discovery requests are numbered so a reply that beats its own publish
@@ -1737,6 +1752,7 @@ import {
     }
     renderRelayList();
     restoreRelayCollapse();
+    restoreSessionCollapse();
     loadCustomServices();
     populateCustomServiceIcons();
     state.session.on(onSessionEvent);
@@ -1893,6 +1909,8 @@ import {
     el.relayAddInput.addEventListener("keypress", (e) => { if (e.key === "Enter") onAddRelay(); });
     el.btnResetRelays.addEventListener("click", onResetRelays);
     el.btnLockSession.addEventListener("click", () => state.session.lock());
+    el.btnCollapseSessionSetup.addEventListener("click", onToggleSessionCollapse);
+    el.btnCollapseSessionLive.addEventListener("click", onToggleSessionCollapse);
     el.btnRefreshServices.addEventListener("click", onRefreshServices);
     el.btnClearServices.addEventListener("click", onClearServices);
     el.btnToggleCustomService.addEventListener("click", onToggleCustomServiceForm);
@@ -3739,6 +3757,55 @@ import {
       return; // unreadable storage: leave the panel open
     }
     applyRelayCollapse(saved === "1");
+  }
+
+  /**
+   * Collapse/expand the session card body in place. Like the relay card, the
+   * head stays visible: #vault-state-pill (setup side) and #session-state-pill
+   * with the npub (live side) are the quick read of "who am I and is the
+   * session alive", and they must survive the body being closed.
+   *
+   * The card has two mutually exclusive sides, so there are two bodies and two
+   * buttons; both follow one preference, and only the visible side can be
+   * clicked, so toggling reads the setup side and drives both.
+   */
+  function onToggleSessionCollapse() {
+    const isOpen = !el.sessionSetupBody.classList.contains("hidden");
+    applySessionCollapse(isOpen);
+  }
+
+  /**
+   * @param {boolean} collapsed
+   */
+  function applySessionCollapse(collapsed) {
+    el.sessionSetupBody.classList.toggle("hidden", collapsed);
+    el.sessionLiveBody.classList.toggle("hidden", collapsed);
+    // aria-label and data-tip move together: the tooltip is drawn from
+    // attr(data-tip) (see [data-tip]::after in style.css), so updating only one
+    // would leave a "Recolher sessão" tooltip on a button that only expands.
+    const label = collapsed ? "Expandir sessão" : "Recolher sessão";
+    for (const btn of [el.btnCollapseSessionSetup, el.btnCollapseSessionLive]) {
+      btn.setAttribute("aria-expanded", String(!collapsed));
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("data-tip", label);
+    }
+    try {
+      localStorage.setItem(SESSION_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // Storage can be unavailable (private mode, quota). The collapse still
+      // works for this page view; it just will not survive a reload.
+    }
+  }
+
+  /** Restore the session card's collapsed state from the saved preference. */
+  function restoreSessionCollapse() {
+    let saved = null;
+    try {
+      saved = localStorage.getItem(SESSION_COLLAPSED_KEY);
+    } catch {
+      return; // unreadable storage: leave the card open
+    }
+    applySessionCollapse(saved === "1");
   }
 
   async function onTestAllRelays() {

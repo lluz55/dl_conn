@@ -583,6 +583,11 @@ body {
 
 .btn-collapse[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 
+/* The session card's live head is a flex row without flex-wrap on phones, so
+   the disclosure button keeps its control height instead of being squeezed by
+   a long npub chip. */
+.session-main .btn-collapse { flex-shrink: 0; }
+
 /* ── Icon system ──────────────────────────────────────────────────── */
 .icon {
   width: 20px; height: 20px;
@@ -1102,6 +1107,21 @@ body {
   padding: var(--gap-lg);
   min-width: 0;
 }
+
+/* The collapsible body re-declares the parent's gap and column direction:
+   wrapping the controls in a div would otherwise collapse them against one
+   another, because the parent's gap only applies between direct children. */
+#session-setup-body,
+#session-live-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  min-width: 0;
+}
+
+/* #session-live-body stacks session-foot blocks, which are adjacent bands with
+   no rhythm between them — the gap would draw a seam through them. */
+#session-live-body { gap: 0; }
 
 #unlock-ui,
 #login-ui,

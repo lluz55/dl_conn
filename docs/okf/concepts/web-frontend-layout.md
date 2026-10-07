@@ -279,6 +279,35 @@ há nome de host nem pill de URL do túnel no `.session-meta` — esse contexto
 já vive no KPI "Túnel" da Visão geral, e duplicá-lo aqui reintroduziria a
 fragmentação que a fusão do cartão de sessão eliminou.
 
+### Colapso do cartão de sessão
+
+O cartão de sessão colapsa no lugar, com o mesmo vocabulário do cartão de
+relays (ver [log.md](../log.md), 2026-10-06): o **head continua visível** e
+só o corpo some. No lado setup, `#vault-state-pill` continua legível; no lado
+live, o `.session-main` inteiro (identicon, npub, `#session-state-pill`) — que
+é a leitura rápida de "quem sou eu e a sessão está viva".
+
+Isso cria duas decisões que não existiam no cartão de relays:
+
+1. **O cartão tem dois lados, o colapso tem uma preferência só.**
+   `#session-setup` e `#session-live` são mutuamente exclusivos, então há dois
+   corpos (`#session-setup-body`, `#session-live-body`) e dois botões
+   (`#btn-collapse-session-setup`, `#btn-collapse-session-live`), mas uma chave
+   só: `dl_conn_session_collapsed`. Uma preferência por lado faria o cartão
+   "lembrar" dois colapsos distintos e reaparecer expandido depois do login, que
+   é exatamente quando o operador menos quer rolar até os controles. O toggle lê
+   o lado do setup e dirige os dois corpos — só o lado visível é clicável.
+2. **O corpo do setup re-declara o `gap` do pai.** `#session-setup` é um flex
+   column e o `gap` só vale entre filhos diretos; ao embrulhar os controles em
+   uma div, `#session-setup-body` precisa repetir `flex-direction: column` +
+   `gap: var(--gap-md)`, senão login/PIN/apagar-dados se encostam uns nos
+   outros. `#session-live-body` é a exceção: os `.session-foot` são bandas
+   adjacentes sem ritmo entre elas, então o `gap` é `0`.
+
+O estado é preferência, não estado de sessão: fica em `localStorage`, em
+try/catch, como `dl_conn_relay_collapsed` — em modo privado o colapso funciona
+na página, só não sobrevive ao reload.
+
 ## Serviços personalizados no frontend
 
 O bloco `#services-overview` permite adicionar um serviço local por nome,

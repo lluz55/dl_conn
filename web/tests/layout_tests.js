@@ -181,5 +181,65 @@ assert(
   "A storage failure (private mode, quota) leaves the collapse usable for this page view",
 );
 
+// ── Collapsible session card ────────────────────────────────────────
+console.log("  [Collapsible session card]");
+assert(
+  /<button id="btn-collapse-session-setup"[^>]*aria-expanded="true"[^>]*aria-controls="session-setup-body"/.test(html) &&
+    /<button id="btn-collapse-session-live"[^>]*aria-expanded="true"[^>]*aria-controls="session-live-body"/.test(html),
+  "Both session states carry a disclosure button wired to the body it controls",
+);
+assert(
+  /id="vault-state-pill"[\s\S]*?id="btn-collapse-session-setup"/.test(html) &&
+    /id="session-state-pill"[\s\S]*?id="btn-collapse-session-live"/.test(html),
+  "The state pills stay in each head, so session state remains readable while collapsed",
+);
+assert(
+  /id="session-setup-body"[\s\S]*?id="unlock-ui"[\s\S]*?id="login-ui"[\s\S]*?id="btn-clear-all"/.test(html) &&
+    /id="btn-collapse-session-live"[\s\S]*?id="session-live-body"[\s\S]*?id="auto-lock-section"[\s\S]*?id="biometric-enroll"/.test(html),
+  "Collapsing hides the login/unlock controls and the auto-lock/biometric bands, but not the heads",
+);
+assert(
+  /function applySessionCollapse\(collapsed\)/.test(app) &&
+    /el\.sessionSetupBody\.classList\.toggle\("hidden", collapsed\)/.test(app) &&
+    /el\.sessionLiveBody\.classList\.toggle\("hidden", collapsed\)/.test(app),
+  "The collapse toggles both bodies, so the setup and live sides share one state",
+);
+assert(
+  /function applySessionCollapse\(collapsed\)[\s\S]*?for \(const btn of \[el\.btnCollapseSessionSetup, el\.btnCollapseSessionLive\]\)[\s\S]*?aria-expanded", String\(!collapsed\)/.test(app) &&
+    /function applySessionCollapse\(collapsed\)[\s\S]*?setAttribute\("aria-label", label\)/.test(app),
+  "Collapsing updates aria-expanded and the accessible label on both buttons",
+);
+assert(
+  /function applySessionCollapse\(collapsed\)[\s\S]*?setAttribute\("data-tip", label\)/.test(app),
+  "The tooltip label follows the state, because it is drawn from attr(data-tip)",
+);
+assert(
+  /localStorage\.setItem\(SESSION_COLLAPSED_KEY, collapsed \? "1" : "0"\)/.test(app) &&
+    /function restoreSessionCollapse\(\)/.test(app) &&
+    /localStorage\.getItem\(SESSION_COLLAPSED_KEY\)/.test(app),
+  "The collapsed state is persisted in the browser and restored on the next load",
+);
+assert(
+  /restoreRelayCollapse\(\);\s*\n\s*restoreSessionCollapse\(\);/.test(app),
+  "The saved session state is restored during init, next to the relay preference",
+);
+assert(
+  /el\.btnCollapseSessionSetup\.addEventListener\("click", onToggleSessionCollapse\)/.test(app) &&
+    /el\.btnCollapseSessionLive\.addEventListener\("click", onToggleSessionCollapse\)/.test(app),
+  "Both disclosure buttons drive the same toggle",
+);
+assert(
+  /#session-setup-body,\s*\n#session-live-body\s*\{[^}]*flex-direction:\s*column[^}]*gap:\s*var\(--gap-md\)/s.test(css),
+  "The wrapped setup body keeps the vertical rhythm its parent used to provide",
+);
+assert(
+  /\.session-main \.btn-collapse\s*\{[^}]*flex-shrink:\s*0/s.test(css),
+  "The live head's disclosure button is not squeezed by a long npub chip",
+);
+assert(
+  /function applySessionCollapse\(collapsed\)[\s\S]*?\}\s*catch \{/.test(app),
+  "A storage failure (private mode, quota) leaves the session collapse usable for this page view",
+);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
