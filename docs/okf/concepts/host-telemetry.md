@@ -108,6 +108,15 @@ produção (extraída do fonte) em vez de manter uma cópia que derivaria dela.
   seria uma mentira sobre o host.
 - `gpu` continua sendo **utilização**, que é a grandeza da barra do medidor.
   A temperatura tem sua própria métrica em vez de dividirem um eixo.
+- **"Carga" saiu do seletor porque duplicava "CPU".** As duas leriam
+  `(load1 / num_cpu) × 100` do mesmo campo do mesmo snapshot — não duas
+  grandezas parecidas, a mesma série ponto a ponto. O que só a duplicata
+  mostrava eram as médias de 5 e 15 min; isso é sinal real (separa pico de
+  saturação), mas pertence a uma métrica que se sustente, não a uma segunda
+  leitura do mesmo instante. "CPU" ficou com o nome e com a série de 1 min.
+  O renderizador multi-série (`drawSecondarySeries`, a legenda e as duas
+  polilinhas soft) **permanece**: ele é dirigido por `metric.series`, não por
+  esta métrica, e a próxima métrica multi-curva não precisa de código novo.
 - `historyMetric(key)` devolve o descritor e cai no primeiro quando a chave é
   desconhecida, então um `data-metric` obsoleto no markup não quebra o painel.
 

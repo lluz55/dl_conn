@@ -129,7 +129,6 @@ const history = new Function(`
   const THROTTLE_TEMP_C = ${extractConstValue(appJs, 'THROTTLE_TEMP_C')};
   const HISTORY_METRICS = ${extractConstValue(appJs, 'HISTORY_METRICS')};
   ${extractDeclaration(appJs, 'cpuPercent')}
-  ${extractDeclaration(appJs, 'loadPerCore')}
   ${extractDeclaration(appJs, 'referenceFreqMHz')}
   ${extractDeclaration(appJs, 'hostTempC')}
   ${extractDeclaration(appJs, 'tempSourceLabel')}
@@ -137,7 +136,7 @@ const history = new Function(`
   ${extractDeclaration(appJs, 'historyValue')}
   return {
     historyValue, historyMetric, hostTempC, tempSourceLabel,
-    HISTORY_METRICS, loadPerCore, referenceFreqMHz,
+    HISTORY_METRICS, referenceFreqMHz,
     THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C,
   };
 `)();
@@ -260,7 +259,7 @@ console.log("\n=== History series tests ===");
 // The history panel's real metric table and its helpers, evaluated together in
 // the `history` scope above — this file keeps no hand-written copy of the table.
 const { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS,
-  loadPerCore, referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C } = history;
+  referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C } = history;
 const downsample = new Function('points', 'maxPoints', downsampleBody);
 // Both free variables of the body (`lastSnapshot` and the key) are parameters
 // of the generated function, so one call returns the answer.
@@ -282,8 +281,17 @@ assert(historyValue({ disks: [{ used_pct: 40 }, { used_pct: 60 }] }, 'disk') ===
   "disco: o mountpoint mais cheio representa a série");
 
 console.log("\n=== History metric table (categoria de temperatura) ===");
-assert(HISTORY_METRICS.map((m) => m.key).join(",") === "cpu,load,ram,disk,gpu,temp",
-  "a tabela cobre CPU, carga, memória, disco, GPU e temperatura: " + HISTORY_METRICS.map((m) => m.key).join(","));
+assert(HISTORY_METRICS.map((m) => m.key).join(",") === "cpu,ram,disk,gpu,temp",
+  "a tabela cobre CPU, memória, disco, GPU e temperatura: " + HISTORY_METRICS.map((m) => m.key).join(","));
+// "Carga" was removed for drawing the same line as "CPU" — its 1-minute curve
+// read exactly what cpuPercent reads. Asserted as absence because a test that
+// describes a removed element stays green if nobody updates it.
+assert(!HISTORY_METRICS.some((m) => m.key === "load"),
+  "a métrica de carga não volta: ela duplicava a série de CPU");
+assert(!/data-metric="load"/.test(indexHtml),
+  "o seletor não oferece mais a aba de carga");
+assert(/data-metric="cpu"/.test(indexHtml),
+  "a aba de CPU permanece no seletor");
 const temp = historyMetric("temp");
 assert(temp.unit === "°C", "temperatura carrega a unidade °C, veio " + temp.unit);
 assert(typeof temp.warn === "number" && temp.warn > 0 && temp.warn <= 100,
@@ -651,32 +659,13 @@ async function makeDeferredHostHistoryFetch() {
 assert(/pendingReload/.test(appJs),
   "os dois carregadores de janela têm uma recarga pendente");
 
-console.log("\n=== Carga por núcleo (métrica multi-série) ===");
-const loadMetric = historyMetric('load');
-assert(!!loadMetric, "a métrica de carga existe");
-assert(loadMetric.unit === '%' && loadMetric.domain[0] === 0 && loadMetric.domain[1] === 100,
-  "carga é uma porcentagem com domínio 0..100");
-assert(Array.isArray(loadMetric.series) && loadMetric.series.length === 3,
-  "carga desenha três curvas (1, 5 e 15 min)");
-assert(loadMetric.series.map((s) => s.label).join(',') === '1 min,5 min,15 min',
-  "as curvas da carga são as médias suavizadas do kernel: " + loadMetric.series.map((s) => s.label).join(','));
-// value must stay the 1-minute curve so the stats row and the meter keep
-// reading one well-defined number.
-assert(loadMetric.value({ num_cpu: 4, cpu: { load1: 2, load5: 1, load15: 0.5 } }) === 50,
-  "value da carga é a curva de 1 min");
-
-const four = { num_cpu: 4, cpu: { load1: 2, load5: 1, load15: 0.5 } };
-assert(loadPerCore(four, 1) === 50, "load1 normalizado: 2/4 = 50%");
-assert(loadPerCore(four, 5) === 25, "load5 normalizado: 1/4 = 25%");
-assert(loadPerCore(four, 15) === 12.5, "load15 normalizado: 0.5/4 = 12,5%");
-assert(loadPerCore({ cpu: { load1: 2 } }, 1) === null,
-  "sem contagem de núcleos não há denominador: a carga não vira porcentagem");
-assert(loadPerCore({ num_cpu: 4, cpu: { load1: 2 } }, 15) === null,
-  "uma janela ausente é ausente, não zero");
-assert(loadPerCore({ num_cpu: 4, cpu_load1: 3 }, 1) === 75,
-  "o snapshot achatado (cpu_load1) também é lido");
-assert(loadPerCore(null, 1) === null, "snapshot ausente não quebra a extração");
-
+console.log("\n=== Curvas secundárias (infraestrutura multi-série) ===");
+// No metric declares `series` today: "Carga", the only one that did, drew the
+// same line as "CPU". The renderer, the polylines and the legend stay because
+// they key off `metric.series` — so these assert the machinery survives and
+// stays correct for the next multi-curve metric, not that it is in use now.
+assert(HISTORY_METRICS.every((m) => !m.series),
+  "nenhuma métrica declara séries extras: o renderizador está ocioso, não quebrado");
 assert(/histLine2/.test(appJs) && /histLine3/.test(appJs) && /drawSecondarySeries/.test(appJs),
   "as curvas secundárias têm polilinhas próprias e uma função que as desenha");
 assert(/class="series-line series-line--soft" id="hist-line-2"/.test(indexHtml) &&
@@ -684,17 +673,15 @@ assert(/class="series-line series-line--soft" id="hist-line-2"/.test(indexHtml) 
   "as polilinhas secundárias são marcadas como soft no markup");
 assert(/\.series-line--soft\s*\{[^}]*stroke:\s*var\(--color-chart-\d\)/s.test(readFileSync(join(here, '..', 'style.css'), 'utf8')),
   "a curva soft usa um token de cor, não uma cor fixa");
-// Switching metrics must clear them, or a disk chart would keep two load
-// curves drawn on an axis they have nothing to do with.
+// Switching metrics must clear them, or a disk chart would keep two curves
+// drawn on an axis they have nothing to do with.
 assert(/for \(const node of secondary\)[\s\S]*?setAttribute\("points", ""\)/.test(appJs),
   "as curvas secundárias são limpas a cada render, não só quando redesenhadas");
 assert(/function renderHistoryLegend\(metric\)/.test(appJs) &&
   /series\.length < 2/.test(appJs),
   "a legenda aparece só para métrica com mais de uma curva");
 assert(/id="hist-legend"/.test(indexHtml) && /id="hist-line-2"/.test(indexHtml),
-  "a legenda e as linhas extras existem no markup");
-assert((indexHtml.match(/class="seg[^"]*" data-metric="load"/g) || []).length === 1,
-  "a métrica de carga tem um botão no seletor");
+  "a legenda e as linhas extras continuam no markup");
 
 console.log("\n=== Detecção de throttling térmico ===");
 assert(/function referenceFreqMHz\(samples\)/.test(appJs),

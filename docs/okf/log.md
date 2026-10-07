@@ -6,6 +6,39 @@ type: log
 
 ## 2026-10-07
 
+- **A métrica "Carga" saiu do seletor: ela desenhava a mesma linha de "CPU".**
+  A aba "Carga" e a aba "CPU" não eram duas grandezas parecidas — eram a mesma
+  série. `cpuPercent()` faz `(load1 / num_cpu) × 100` e a curva de 1 min da
+  "Carga" fazia `(load1 / cores) × 100`, lendo o mesmo `cpu.load1` do mesmo
+  snapshot e até o mesmo fallback (`cpu_load1`). Ponto por ponto, a mesma
+  linha, em duas abas.
+  - **O que se perde é real, e vale registrar.** As curvas de 5 e 15 min eram
+    a única coisa que a duplicata acrescentava: elas separam **pico** (load1
+    sobe, load5 fica plano — algo compilando) de **saturação** (as três
+    convergem alto). O painel não mostra mais essa distinção.
+  - **O que se ganha é a honestidade do rótulo.** "CPU" não mede CPU: o
+    coletor nunca leu `/proc/stat`, só `/proc/loadavg`, então os dois gráficos
+    mediam load average normalizado. Sobravam duas abas para uma leitura, uma
+    delas nomeada como se fosse outra coisa. A correção de raiz seria coletar
+    CPU% de verdade (delta de `user`+`system` contra `idle` entre amostras) e
+    manter as duas — aí "CPU" seria ocupação instantânea e "Carga" seria
+    pressão suavizada incluindo espera de I/O, que no Linux conta tarefa em
+    D-state. Não foi o que se fez: mexer no payload é decisão de protocolo,
+    não de botão.
+  - **O renderizador multi-série ficou, e é proposital.** `drawSecondarySeries`,
+    a legenda e as duas polilinhas soft não têm mais nenhuma métrica que os
+    use, mas são dirigidos por `metric.series` e não por "Carga": a próxima
+    métrica multi-curva não precisa de código novo, e as polilinhas já estão
+    no markup. Apagá-los junto com a métrica seria refatoração especulativa —
+    e o teste agora afirma que a máquina está *ociosa*, não quebrada.
+  - **`loadPerCore()` foi junto**, porque existia só para as janelas de 1/5/15
+    min da métrica removida. `cpuPercent()` continua, fazendo o mesmo cálculo
+    para a série que ficou.
+  - **A asserção é negativa**, dos dois lados: a tabela não pode voltar a ter
+    `load`, o markup não pode voltar a ter `data-metric="load"`, e `CPU`
+    precisa continuar lá. Um teste que descreve um elemento removido continua
+    verde se ninguém o atualizar.
+
 - **Os botões 1h/24h/7d pintavam a seleção sem filtrar — e a lição é sobre
   estado, não sobre datas.** `fetchHistory()` (gráfico de `Saúde do host`) e
   `fetchHostHistory()` (faixa de `Disponibilidade`) guardavam apenas

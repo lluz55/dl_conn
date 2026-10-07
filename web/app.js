@@ -661,35 +661,6 @@ import {
   }
 
   /**
-   * Load average divided by the core count, as a percentage of one core's
-   * worth of work per core.
-   *
-   * Normalising is the whole point: a load1 of 4.0 is 25% of capacity on a
-   * 16-core host and 100% on a quad-core one, so the raw number is not
-   * comparable across machines and cannot be read against a threshold.
-   *
-   * `window` is 1, 5 or 15 — the smoothing the kernel itself applies. The
-   * smoothed values are what separate a burst from saturation: load1 alone
-   * spikes on every compile and stays flat on a host that is quietly pegged.
-   *
-   * Returns null when the host reports no core count, because a load average
-   * with no denominator cannot honestly be drawn as a percentage.
-   */
-  function loadPerCore(snap, window_) {
-    if (!snap) return null;
-    const cores = snap.num_cpu;
-    if (!cores) return null;
-    const cpu = snap.cpu || null;
-    let load = null;
-    if (cpu) load = window_ === 5 ? cpu.load5 : (window_ === 15 ? cpu.load15 : cpu.load1);
-    else if (window_ === 1) load = snap.cpu_load1 != null ? snap.cpu_load1 : null;
-    else if (window_ === 5) load = snap.cpu_load5 != null ? snap.cpu_load5 : null;
-    else if (window_ === 15) load = snap.cpu_load15 != null ? snap.cpu_load15 : null;
-    if (load == null) return null;
-    return (load / cores) * 100;
-  }
-
-  /**
    * The clock this CPU reaches when it is not thermally limited — the highest
    * frequency anywhere in the loaded window.
    *
@@ -907,22 +878,16 @@ import {
    */
   const HISTORY_METRICS = [
     {
+      // There used to be a "Carga" metric here next to this one, and its
+      // 1-minute curve was this exact series: both read `load1 / num_cpu`. Two
+      // tabs drawing the same line is one too many, so the duplicate went and
+      // this kept the name. What the duplicate alone could show was the 5- and
+      // 15-minute smoothing; that is a real signal, but it is not this
+      // metric's job to fake it — it belongs to the load average the daemon
+      // sends, not to a second reading of the same instant.
       key: "cpu", label: "CPU", unit: "%", caption: "de capacidade",
       domain: [0, 100], warn: METER_WARN_PCT.cpu,
       value: (s) => cpuPercent(s),
-    },
-    {
-      // The load metric is the one that draws three lines. `value` stays the
-      // 1-minute curve so the stats row, the meter and the missing-sensor
-      // message all keep reading a single well-defined number.
-      key: "load", label: "Carga", unit: "%", caption: "da capacidade total",
-      domain: [0, 100], warn: METER_WARN_PCT.cpu,
-      value: (s) => loadPerCore(s, 1),
-      series: [
-        { label: "1 min", value: (s) => loadPerCore(s, 1) },
-        { label: "5 min", value: (s) => loadPerCore(s, 5) },
-        { label: "15 min", value: (s) => loadPerCore(s, 15) },
-      ],
     },
     {
       key: "ram", label: "Memória", unit: "%", caption: "de capacidade",
@@ -1045,8 +1010,13 @@ import {
    * polylines, sharing the primary's x positions.
    *
    * A curve with no data at a given instant breaks the line there instead of
-   * being interpolated across the gap: a load average the host never reported
-   * must not be drawn as though it had been measured.
+   * being interpolated across the gap: a reading the host never produced must
+   * not be drawn as though it had been measured.
+   *
+   * No metric declares `series` today — the one that did, "Carga", was removed
+   * for drawing the same line as "CPU". The renderer stays because it is keyed
+   * on `metric.series`, not on that metric: the next multi-curve metric needs
+   * no new code, and the polylines it would draw are already in the markup.
    */
   function drawSecondarySeries(metric, reduced, toY, nodes) {
     const extra = (metric.series || []).slice(1);
@@ -1151,8 +1121,8 @@ import {
     }
 
     // The secondary curves are cleared on every render, not only when they are
-    // redrawn: switching from "Carga" to "Disco" leaves two lines behind
-    // otherwise, drawn on an axis that has nothing to do with them.
+    // redrawn: a metric with fewer curves would otherwise leave the previous
+    // metric's lines behind, drawn on an axis that has nothing to do with them.
     const secondary = [el.histLine2, el.histLine3];
     for (const node of secondary) {
       if (node) node.setAttribute("points", "");

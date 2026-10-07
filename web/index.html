@@ -699,7 +699,6 @@
           </div>
           <div class="seg-group" id="hist-metric-group" role="group" aria-label="Métrica">
             <button type="button" class="seg is-on" data-metric="cpu">CPU</button>
-            <button type="button" class="seg" data-metric="load">Carga</button>
             <button type="button" class="seg" data-metric="ram">Memória</button>
             <button type="button" class="seg" data-metric="disk">Disco</button>
             <button type="button" class="seg" data-metric="gpu">GPU</button>
@@ -716,19 +715,20 @@
                 <div class="chart-stat"><dt>máx</dt><dd class="num" id="hist-max">—</dd></div>
               </dl>
             </div>
-            <!-- Legend for the extra load curves. Only the CPU metric draws
-                 more than one line; for every other metric this stays empty
-                 rather than showing a single swatch with nothing to compare
-                 it against. -->
+            <!-- Legend for a multi-curve metric. No metric declares one today, so this
+                 stays hidden rather than showing a single swatch with nothing
+                 to compare it against; it is here because the renderer keys
+                 off metric.series, not off a particular metric. -->
             <div class="chart-legend" id="hist-legend" hidden></div>
             <div class="chart-frame">
               <svg class="series-chart" id="hist-chart" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Série temporal">
                 <g class="chart-grid" id="hist-grid"></g>
                 <line class="chart-threshold" id="hist-threshold" x1="0" x2="100" y1="0" y2="0"></line>
                 <polygon class="series-fill" id="hist-fill" points=""></polygon>
-                <!-- Secondary load curves (5 and 15 minute averages). Drawn
-                     under the primary so a spike in load1 still reads on top;
-                     they share hist-line's path data format. -->
+                <!-- Secondary curves, drawn under the primary so a spike still reads on top;
+                     they share hist-line's path data format. Unused while no
+                     metric declares a series — kept because adding one is then
+                     markup-free. -->
                 <polyline class="series-line series-line--soft" id="hist-line-2" points=""></polyline>
                 <polyline class="series-line series-line--soft" id="hist-line-3" points=""></polyline>
                 <polyline class="series-line" id="hist-line" points=""></polyline>
