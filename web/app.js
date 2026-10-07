@@ -3597,8 +3597,32 @@ import {
       key: "key",
       qr: "qr",
       fingerprint: "fingerprint",
+      // Crown: Agent of Empires is the canonical case. Accept the icon id
+      // (`crown`), the service id (`aoe`), the slug (`agent-of-empires`),
+      // and the singular/plural English name — all resolve to the same
+      // monochrome sprite.
+      crown: "crown",
+      aoe: "crown",
+      "agent-of-empires": "crown",
+      "agent-of-empire": "crown",
+      empire: "crown",
+      empires: "crown",
     };
     const target = aliases[normalized] || normalized;
+    // Coarse emoji strip: if the icon string still contains an emoji after
+    // normalization (e.g. the legacy 👑 used by Agent of Empires, or a
+    // accidental 🎉), drop to a known sprite. Currently only the crown has
+    // a real mapping; everything else falls back to the crown so we never
+    // ship a colored emoji into the otherwise-monochrome icon palette.
+    const targetHasEmoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(target);
+    if (targetHasEmoji) {
+      const stripped = target.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "");
+      const fallback = stripped && aliases[stripped] || "crown";
+      if (document.getElementById("i-" + fallback)) {
+        return '<span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-' + escapeHtml(fallback) + '"></use></svg>' + dot + "</span>";
+      }
+      return '<span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-crown"></use></svg>' + dot + "</span>";
+    }
     if (document.getElementById("i-" + target)) {
       return '<span class="service-icon"><svg class="icon" aria-hidden="true"><use href="#i-' + escapeHtml(target) + '"></use></svg>' + dot + "</span>";
     }

@@ -11,12 +11,15 @@ zonas por ciclo de vida**, reveladas por fase via atributo `data-phase` no
 `.app-container`:
 
 - **Setup** (sempre visível): Identidade (`#vault-section`) + Relays
-  (`#relay-panel`, promovido de um toggle no header para card visível).
+  (`#relay-panel`, promovido de um toggle no header para card visível) +
+  Npub do host (`#host-npub-section`, quando não há host configurado) +
+  Saúde do host (`#host-telemetry-section`, quando a telemetria está
+  habilitada).
 - **Live** (revela após o túnel Nostr responder): Visão geral
   (`#status-section`, os 4 KPIs + linha do tempo das trocas de URL) +
   **Serviços** (`#services-section`, cartão próprio — ver
-  [Uma única lista de serviços](#uma-única-lista-de-serviços)) + Saúde do host
-  (`#host-telemetry-section`) + Abrir porta local (`#local-port-section`).
+  [Uma única lista de serviços](#uma-única-lista-de-serviços)) + Abrir porta
+  local (`#local-port-section`).
 
 Em `≥1024px` as duas zonas ficam lado a lado (`grid 1fr 1fr`); abaixo,
 coluna única (Setup acima, Live abaixo). No modo setup em desktop a coluna
@@ -37,6 +40,21 @@ de espaço horizontal no desktop. A divisão faseada elimina os três de uma vez
 e respeita as amarras do projeto: CSP `style-src 'self'` (zero inline
 `style`, zero CDN), sem gradientes, light/dark, tudo tokenizado em
 `--color-*` / `--gap-*` / `--radius-*`.
+
+## Balanceamento entre as colunas em `≥1024px`
+
+A divisão Setup × Live é a âncora, mas a Live concentra naturalmente os
+cards mais altos (Visão geral, Serviços com várias linhas, Abrir porta
+local) e fica visualmente sobrecarregada quando a Saúde do host entra em
+cena — meters + gráfico de histórico têm o potencial de ser o maior card
+da página. Para evitar que a coluna direita cresça muito além da esquerda
+em desktop, `#host-telemetry-section` foi movido para a coluna Setup,
+ao lado de `#host-npub-section` (também é "estado do host", não "túnel em
+uso"). A Live passa a ter só o que depende do túnel vivo: status, serviços
+e ações de loopback. Em mobile (`<1024px`) a ordem de leitura continua
+sendo Setup em cima, Live embaixo, então a telemetria aparece antes do
+primeiro KPI de túnel — coerente com a leitura "vejo o host, depois o
+túnel".
 
 ## Status rail (passo seguinte)
 
@@ -408,6 +426,30 @@ blocos se encostam assim que o cartão pode ser colapsado — o defeito só apar
 quando alguém colapsa, nunca com o cartão aberto. `.services-body` é a
 exceção: mantém o `--gap-sm` mais apertado, que é o ritmo que a lista já tinha
 quando era bloco aninhado.
+
+## Ícones de serviço: paleta monocromática via sprite SVG
+
+Todos os ícones de `#services-section` vêm de um único `<svg><defs>` no
+início de `web/index.html` com `<symbol id="i-…">` para cada glifo (casa,
+roteador, banco, escudo, coroa etc.). A renderização final é um
+`<svg><use href="#i-NOME">` dentro de `.service-icon`, então o ícone
+herda `currentColor` do `.service-icon` (`--color-primary-ink`) e
+acompanha tema claro/escuro, paleta e densidade sem nenhum PNG. Não há
+fallback para emoji colorido: se `serviceIcon()` recebe um identificador
+desconhecido, devolve o `i-package`; se recebe um emoji (ex.: `👑` que o
+Agent of Empires carrega desde
+[log.md](../../okf/log.md)), o glifo é descartado e cai no `i-crown`,
+mantendo a paleta monocromática coerente com os demais serviços.
+
+O mapeamento `aliases → sprite` em `app.js` é a única fonte de verdade:
+aceita tanto o `id` da sprite (`crown`, `router`, `home`) quanto o `id` do
+serviço declarado pelo host (`aoe`, `agent-of-empires`, `frigate`,
+`zigbee2mqtt`, `hass`), com um fallback de "nome humano" para os serviços
+mais comuns (`grafana → dashboard`, `nextcloud → cloud`,
+`portainer → docker`). Adicionar um serviço novo no `config.yaml` cujo
+`icon` não bate em nada na tabela é uma escolha consciente: o ícone vira
+`i-package` em vez de explodir; isso também é um teste estrutural no
+`layout_tests.js` ("serviceIcon não envia emoji colorido para o DOM").
 
 ## Serviços personalizados no frontend
 

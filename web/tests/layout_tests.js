@@ -352,5 +352,49 @@ assert(
   "The CSS for the removed nested services block is gone, not left orphaned",
 );
 
+// Crown sprite exists so Agent of Empires (icon: 👑 / "aoe" / "crown") can
+// render as a monochrome SVG instead of a colored emoji.
+assert(
+  /<symbol id="i-crown"/.test(html),
+  "Service icons ship a monochrome crown sprite (no colored emoji in the palette)",
+);
+assert(
+  /aoe:\s*"crown"/.test(app) &&
+    /"agent-of-empires":\s*"crown"/.test(app) &&
+    /empire:\s*"crown"/.test(app) &&
+    /crown:\s*"crown"/.test(app),
+  "serviceIcon maps the Agent of Empires identifiers to the crown sprite",
+);
+// The emoji strip: a literal 👑 (or any emoji) must not bleed through as a
+// colored character — it always resolves to a sprite, and the default for
+// unknown emoji is the crown.
+assert(
+  /[\u{1F300}-\u{1FAFF}]/u.test(app) &&
+    /#i-crown/.test(app) &&
+    /document\.getElementById\("i-" \+ /.test(app),
+  "serviceIcon strips emoji inputs and routes them through the sprite lookup",
+);
+
+// Host Telemetry moved from col-live to col-setup so the meters/chart stop
+// piling up next to the services list. In source order, host-telemetry must
+// come before the col-live opener, and local-port must come after.
+const telemetryIdx = html.indexOf("host-telemetry-section");
+const colLiveIdx = html.indexOf('class="col col-live"');
+const colSetupIdx = html.indexOf('class="col col-setup"');
+const debugIdx = html.indexOf("debug-section");
+const localPortIdx = html.indexOf("local-port-section");
+assert(
+  colSetupIdx >= 0 && telemetryIdx > colSetupIdx && telemetryIdx < colLiveIdx,
+  "Host Telemetry sits inside col-setup (before the col-live opener)",
+);
+assert(
+  telemetryIdx < debugIdx,
+  "Host Telemetry is ordered before the debug card in source order",
+);
+assert(
+  localPortIdx > colLiveIdx,
+  "Local-port stays inside col-live (Live phase preserved)",
+);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

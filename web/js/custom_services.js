@@ -8,7 +8,7 @@ export const SAFE_SERVICE_ICONS = Object.freeze([
   "dashboard", "activity", "terminal", "code", "shield", "cloud", "globe",
   "music", "film", "tv", "hard-drive", "cpu", "zap", "sliders", "bell",
   "thermometer", "printer", "download", "lightbulb", "docker", "eye",
-  "folder", "package",
+  "folder", "package", "crown",
 ]);
 
 export const CUSTOM_SERVICE_STRINGS = Object.freeze({

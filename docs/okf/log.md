@@ -4,6 +4,37 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-08
+
+- **Os ícones de serviço: o Agent of Empires (`icon: 👑`) era o único ponto
+  colorido da paleta.** Todos os outros serviços renderizam via
+  `<svg><use href="#i-…">` dentro de `.service-icon`, com `currentColor`
+  puxando `--color-primary-ink` — portanto monocromático, tema-aware e
+  consistente entre claro/escuro/paleta/densidade. O `👑` caía num
+  *fallback* de texto cru e o browser desenhava o emoji amarelo/dourado.
+  A correção mantém compatibilidade: o sprite agora tem
+  `<symbol id="i-crown">` (mesmo estilo *line-art* que os demais), o
+  alias map de `serviceIcon()` aceita `crown`, `aoe`, `agent-of-empires`,
+  `empire` e `empires`, e qualquer emoji no `icon` é descartado em favor
+  do sprite (o `👑` resolve para o `i-crown`; um `🎉` desconhecido também
+  cai na coroa, em vez de vazar como caractere colorido). A allowlist
+  `SAFE_SERVICE_ICONS` ganhou `"crown"`, então serviços personalizados
+  também podem usar.
+  - Registrado em [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md).
+
+- **A coluna direita do desktop estava sobrecarregada.** A divisão Setup ×
+  Live mantém a fase, mas com a telemetria ligada `#host-telemetry-section`
+  (meters + gráfico de histórico) empilhava ao lado de
+  `#services-section` e a coluna direita ficava nitidamente mais alta.
+  Moveu-se `#host-telemetry-section` para a coluna Setup, ao lado de
+  `#host-npub-section`: o conteúdo já é "estado do host" (CPU/RAM/GPU/
+  bateria/disco + histórico), não "túnel em uso". A Live passa a ter só o
+  que depende do túnel vivo: status, serviços, abrir porta local. Em
+  mobile a ordem de leitura continua Setup em cima, Live embaixo — a
+  telemetria aparece antes do primeiro KPI de túnel, o que combina com a
+  leitura "vejo o host, depois o túnel".
+  - Registrado em [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md).
+
 ## 2026-10-07
 
 - **A coleta de GPU perguntava à NVIDIA num host que tinha uma Intel.** O
