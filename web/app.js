@@ -990,12 +990,19 @@ import {
    * reading. `lastAttempt` is the cooldown that keeps the 2s live poll from
    * re-firing a failed range request on every tick, and `lastSuccess` (0 =
    * never loaded) is what tells a fresh load from a loaded-but-empty window.
+   *
+   * `pendingReload` is what keeps the window buttons honest. A click that lands
+   * while a request is in flight cannot open a second request, so it parks here
+   * and the in-flight one issues it on the way out — otherwise the button
+   * repainted as selected while nothing was ever asked for, and the old window
+   * stayed on screen until HISTORY_REFRESH_MS let the poll through.
    */
   const historyState = {
     windowSec: 604800,
     metric: "cpu",
     samples: null,
     inFlight: false,
+    pendingReload: false,
     lastAttempt: 0,
     lastSuccess: 0,
     error: null,
@@ -1232,12 +1239,20 @@ import {
    * `force` bypasses both gates and is what a window change uses: the user
    * asked for a different range, so the previous answer is stale by
    * definition, not a reason to skip the request.
+   *
+   * `force` is also why a call that collides with an open request is parked in
+   * `pendingReload` instead of dropped: `force` means "this answer no longer
+   * counts", and returning quietly is how the window buttons ended up
+   * repainting as selected while nothing was ever asked for.
    */
   async function fetchHistory(force) {
     if (typeof canPollTelemetry === "function" && !canPollTelemetry()) {
       return;
     }
-    if (historyState.inFlight) return;
+    if (historyState.inFlight) {
+      if (force) historyState.pendingReload = true;
+      return;
+    }
     const now = Date.now();
     if (!force) {
       if (now - historyState.lastAttempt < HISTORY_RETRY_MS) return;
@@ -1246,7 +1261,11 @@ import {
     historyState.inFlight = true;
     historyState.lastAttempt = now;
     const to = Math.floor(now / 1000);
-    const from = to - historyState.windowSec;
+    // The window this request answers. A response that lands after the user
+    // picked another one describes a range nobody is looking at any more, and
+    // painting it under the new label is a chart lying about its own window.
+    const windowSec = historyState.windowSec;
+    const from = to - windowSec;
     try {
       // `points` is what the chart can actually draw, so it is all we ask
       // for; the daemon caps it again on its side.
@@ -1261,16 +1280,28 @@ import {
       // work against that binary no matter what this code does.
       if (data && !Array.isArray(data)) throw new Error(historyStaleDaemonLabel());
       if (!Array.isArray(data)) throw new Error("resposta fora do contrato do histórico");
+      // Window abandoned while this was in flight: neither the series nor its
+      // freshness moves, so the poll stays free to answer the selected window.
+      if (windowSec !== historyState.windowSec) return;
       historyState.samples = data;
       historyState.lastSuccess = Date.now();
       historyState.error = null;
     } catch (err) {
       // The previous series stays on screen. `error` drives the status line
-      // and the retry cooldown, never the data.
-      historyState.error = (err && err.message) || "falha desconhecida";
+      // and the retry cooldown, never the data. A failure for a window the user
+      // already left is not this window's failure either.
+      if (windowSec === historyState.windowSec) {
+        historyState.error = (err && err.message) || "falha desconhecida";
+      }
     } finally {
       historyState.inFlight = false;
-      renderHistory();
+      if (windowSec === historyState.windowSec) renderHistory();
+      // The window change that arrived mid-flight is answered now, for the
+      // window it ended up selecting rather than the one it started on.
+      if (historyState.pendingReload) {
+        historyState.pendingReload = false;
+        fetchHistory(true);
+      }
     }
   }
 
@@ -1345,11 +1376,17 @@ import {
    * failed reload for the same reason the telemetry series is: a transient
    * error should not wipe a strip the user is reading. `error` drives the
    * status line and the retry cooldown, never the drawing.
+   *
+   * `pendingReload` is the availability strip's half of the same rule the
+   * telemetry chart follows: a window click that lands while a request is open
+   * parks here and is issued on the way out, rather than leaving the strip on
+   * the previous window until the next refresh tick.
    */
   const hostHistoryState = {
     windowSec: 86400,
     data: null,
     inFlight: false,
+    pendingReload: false,
     lastAttempt: 0,
     lastSuccess: 0,
     error: null,
@@ -1365,7 +1402,10 @@ import {
    */
   async function fetchHostHistory(force) {
     if (typeof canPollTelemetry === "function" && !canPollTelemetry()) return;
-    if (hostHistoryState.inFlight) return;
+    if (hostHistoryState.inFlight) {
+      if (force) hostHistoryState.pendingReload = true;
+      return;
+    }
     const now = Date.now();
     if (!force) {
       if (now - hostHistoryState.lastAttempt < HISTORY_RETRY_MS) return;
@@ -1374,7 +1414,10 @@ import {
     hostHistoryState.inFlight = true;
     hostHistoryState.lastAttempt = now;
     const to = Math.floor(now / 1000);
-    const from = to - hostHistoryState.windowSec;
+    // As in fetchHistory: the window this response belongs to, so a strip
+    // answering for a range the user has since left is not drawn.
+    const windowSec = hostHistoryState.windowSec;
+    const from = to - windowSec;
     try {
       const path = HOST_HISTORY_PATH + "?from=" + from + "&to=" + to + "&points=" + AVAILABILITY_SLOTS;
       const endpoint = typeof telemetryEndpoint === "function" ? telemetryEndpoint(path) : path;
@@ -1388,15 +1431,24 @@ import {
           typeof data.services !== "object" || !Array.isArray(data.tunnel)) {
         throw new Error(hostHistoryStaleDaemonLabel());
       }
+      if (windowSec !== hostHistoryState.windowSec) return;
       hostHistoryState.data = data;
       hostHistoryState.lastSuccess = Date.now();
       hostHistoryState.error = null;
     } catch (err) {
-      hostHistoryState.error = (err && err.message) || "falha desconhecida";
+      if (windowSec === hostHistoryState.windowSec) {
+        hostHistoryState.error = (err && err.message) || "falha desconhecida";
+      }
     } finally {
       hostHistoryState.inFlight = false;
-      renderAvailability();
-      renderTunnelTimeline();
+      if (windowSec === hostHistoryState.windowSec) {
+        renderAvailability();
+        renderTunnelTimeline();
+      }
+      if (hostHistoryState.pendingReload) {
+        hostHistoryState.pendingReload = false;
+        fetchHostHistory(true);
+      }
     }
   }
 

@@ -6,6 +6,40 @@ type: log
 
 ## 2026-10-07
 
+- **Os botões 1h/24h/7d pintavam a seleção sem filtrar — e a lição é sobre
+  estado, não sobre datas.** `fetchHistory()` (gráfico de `Saúde do host`) e
+  `fetchHostHistory()` (faixa de `Disponibilidade`) guardavam apenas
+  `inFlight`. Um clique que chegava com um request aberto caía no
+  `if (inFlight) return` — o `force` era ignorado, **nenhum** request saía, e o
+  botão já tinha ganhado o `is-on`. Pior: o request em voo terminava gravando
+  `lastSuccess`, e o próximo poll não-forçado ficava barrado por
+  `HISTORY_REFRESH_MS` (5 min) ou `HOST_HISTORY_REFRESH_MS` (2 min). O segundo
+  defeito era o espelho: `historyState.samples = data` era aplicado
+  incondicionalmente, então a resposta de 7d que chegava tarde preenchia a
+  série **depois** do clique em 1h — e como o rótulo de status é derivado de
+  `windowSec`, o gráfico anunciava "janela de 1h" por cima dos dados de 7d.
+  - **Um filtro que não filtra é pior do que um filtro ausente**, porque o
+    rótulo mente junto. O gráfico continua parecendo correto: linha contínua,
+    eixo fixo, status coerente. Só o número está errado. A correção trata a
+    janela como parte da identidade da resposta: `windowSec` é capturado no
+    envio, e uma resposta cuja janela já não é a selecionada não toca
+    `samples`, `lastSuccess` nem `error`.
+  - **`force` significa "esta resposta deixou de valer".** Descartá-la é a
+    própria falha; então a chamada forçada que colide agora é guardada em
+    `pendingReload` e emitida na saída da requisição anterior, para a janela
+    que o clique acabou por selecionar — não para a que começou.
+  - **A lacuna era do teste, não do código.** Todos os casos de
+    `telemetry_tests.js` fazem `await` sequencial, então `inFlight` nunca
+    estava `true` numa segunda chamada — exatamente a situação em que um clique
+    sempre cai. Os novos casos prendem a resposta de propósito e colidem de
+    verdade, e `spanOf`/`fromOf` devolvem `null` em vez de estourar, para uma
+    requisição ausente virar asserção vermelha em vez de derrubar a suíte.
+  - **O daemon nunca esteve envolvido.** `?from=`/`?to=`/`?points=` chegam
+    corretos e o bucketing em `RangeBucketed`/`RangeServiceHealth` está certo;
+    `go test ./internal/store/... ./internal/telemetry/...` passa sem tocar em
+    nada. A assimetria entre "o servidor filtra certo" e "o cliente pede a
+    janela errada" é o que torna esses botões parecerem quebrados.
+
 - **A pill de uptime do host saiu do painel — e o campo continua no
   protocolo.** A pílula `#tel-uptime` e o formatador `formatUptime()` foram
   removidos do `web/index.html` e do `web/app.js`: nenhuma escrita sobrou em

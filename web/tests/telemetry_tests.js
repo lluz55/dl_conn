@@ -457,6 +457,200 @@ const respondOk = () => Promise.resolve({ ok: true, status: 200, json: () => Pro
 assert(/fetchHistory\(true\)/.test(appJs),
   "trocar a janela força a recarga mesmo com série já carregada");
 
+/* ── Window switching while a request is open ──────────────────────────
+ *
+ * Every case above awaits each call before the next, so `inFlight` is never
+ * true when a second one arrives — which is the one situation a window click
+ * always lands in, since the live poll has a request open most of the time.
+ * Dropping a forced call there is what left 1h/24h/7d repainting as selected
+ * while the previous window stayed on screen, so these keep a response
+ * pending on purpose and collide with it for real.
+ */
+console.log("\n=== Janela: troca com um request em voo ===");
+
+/** `to - from` of a range URL, in seconds. Returns null for anything that is
+ *  not a range URL, so a missing request reports a failed assertion instead of
+ *  crashing the suite and hiding every case after it. */
+function spanOf(url) {
+  if (typeof url !== "string") return null;
+  return Number(url.match(/&to=(\d+)/)[1]) - Number(url.match(/from=(\d+)/)[1]);
+}
+/** The `from=` of a range URL, tagged into the sample so the test can tell
+ *  which window the series on screen actually came from. */
+function fromOf(url) {
+  if (typeof url !== "string") return null;
+  return url.match(/from=(\d+)/)[1];
+}
+
+async function makeDeferredHistoryFetch(respond) {
+  const state = {
+    windowSec: 604800, metric: "cpu", samples: null, inFlight: false,
+    pendingReload: false, lastAttempt: 0, lastSuccess: 0, error: null,
+  };
+  const calls = [];
+  const pending = [];
+  const fetchHistory = await new Function('deps', `
+    const { historyState, TELEMETRY_PATH, HISTORY_MAX_POINTS, HISTORY_RETRY_MS,
+            HISTORY_REFRESH_MS, renderHistory, historyErrorLabel,
+            historyStaleDaemonLabel, telemetryGet } = deps;
+    return (async () => {
+      ${extractDeclaration(appJs, 'fetchHistory')}
+      return fetchHistory;
+    })();
+  `)({
+    historyState: state,
+    TELEMETRY_PATH: "/api/host/telemetry",
+    HISTORY_MAX_POINTS: 240,
+    HISTORY_RETRY_MS: 30000,
+    HISTORY_REFRESH_MS: 300000,
+    renderHistory: () => {},
+    historyErrorLabel,
+    historyStaleDaemonLabel,
+    // Each request parks until the test releases it, so a second call really
+    // does arrive while the first is still open.
+    telemetryGet: (url) => {
+      calls.push(url);
+      return new Promise((resolve) => {
+        pending.push(() => resolve(respond ? respond(url) : {
+          ok: true, status: 200,
+          json: () => Promise.resolve([{ ...SAMPLE, _from: fromOf(url) }]),
+        }));
+      });
+    },
+  });
+  // The queued reload is issued from the previous call's `finally`, so one
+  // macrotask is enough for it to reach telemetryGet.
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  return { state, calls, pending, fetchHistory, flush };
+}
+
+// The button click that could not open its own request.
+{
+  const h = await makeDeferredHistoryFetch();
+  h.fetchHistory(true);
+  await h.flush();
+  assert(h.state.inFlight, "o primeiro request fica em voo até o teste liberar");
+
+  h.state.windowSec = 3600; // clique em 1h
+  await h.fetchHistory(true);
+  assert(h.state.pendingReload,
+    "a troca de janela é lembrada em vez de descartada");
+
+  h.pending[0](); // a resposta de 7d chega
+  await h.flush();
+  assert(h.calls.length === 2,
+    "a troca dispara um request assim que o anterior termina (got " + h.calls.length + ")");
+  assert(spanOf(h.calls[1]) === 3600,
+    "o novo request cobre a janela de 1h: " + h.calls[1]);
+
+  h.pending[1]();
+  await h.flush();
+  assert(h.state.samples && h.state.samples[0]._from === fromOf(h.calls[1]),
+    "os dados em tela são os da janela selecionada");
+}
+
+// A response for a window the user already left.
+{
+  const h = await makeDeferredHistoryFetch();
+  h.fetchHistory(true);
+  await h.flush();
+
+  h.state.windowSec = 3600; // clique em 1h
+  await h.fetchHistory(true);
+  h.pending[0](); // a resposta de 7d chega tarde
+  await h.flush();
+  assert(h.state.samples === null,
+    "uma resposta de 7d não preenche a série quando a janela já é 1h");
+  assert(h.state.windowSec === 3600, "a janela selecionada continua sendo 1h");
+  assert(h.state.lastSuccess === 0,
+    "a resposta obsoleta não marca a série como fresca: o poll segue livre para recarregar");
+}
+
+// A failure for a window the user already left is not this window's failure.
+{
+  const h = await makeDeferredHistoryFetch(() => ({ ok: false, status: 500 }));
+  h.fetchHistory(true);
+  await h.flush();
+  h.state.windowSec = 3600;
+  await h.fetchHistory(true);
+  h.pending[0]();
+  await h.flush();
+  assert(h.state.error === null,
+    "a falha de uma janela abandonada não aparece na linha de status da atual");
+}
+
+// The availability strip runs the same rule on its own route.
+console.log("\n=== Disponibilidade: janela com um request em voo ===");
+
+async function makeDeferredHostHistoryFetch() {
+  const state = {
+    windowSec: 86400, data: null, inFlight: false,
+    pendingReload: false, lastAttempt: 0, lastSuccess: 0, error: null,
+  };
+  const calls = [];
+  const pending = [];
+  const fetchHostHistory = await new Function('deps', `
+    const { hostHistoryState, HOST_HISTORY_PATH, AVAILABILITY_SLOTS, HISTORY_RETRY_MS,
+            HOST_HISTORY_REFRESH_MS, renderAvailability, renderTunnelTimeline,
+            hostHistoryErrorLabel, hostHistoryStaleDaemonLabel, telemetryGet } = deps;
+    return (async () => {
+      ${extractDeclaration(appJs, 'fetchHostHistory')}
+      return fetchHostHistory;
+    })();
+  `)({
+    hostHistoryState: state,
+    HOST_HISTORY_PATH: "/api/host/history",
+    AVAILABILITY_SLOTS: 60,
+    HISTORY_RETRY_MS: 30000,
+    HOST_HISTORY_REFRESH_MS: 120000,
+    renderAvailability: () => {},
+    renderTunnelTimeline: () => {},
+    hostHistoryErrorLabel: (s) => "HTTP " + s,
+    hostHistoryStaleDaemonLabel: () => "daemon antigo",
+    telemetryGet: (url) => {
+      calls.push(url);
+      return new Promise((resolve) => {
+        pending.push(() => resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({
+            services: { frigate: [{ ts: fromOf(url), status: "up" }] },
+            tunnel: [],
+            from: Number(fromOf(url)),
+            to: Number(url.match(/&to=(\d+)/)[1]),
+          }),
+        }));
+      });
+    },
+  });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  return { state, calls, pending, fetchHostHistory, flush };
+}
+
+{
+  const h = await makeDeferredHostHistoryFetch();
+  h.fetchHostHistory(true);
+  await h.flush();
+  h.state.windowSec = 604800; // clique em 7d
+  await h.fetchHostHistory(true);
+  assert(h.state.pendingReload,
+    "a troca de janela da disponibilidade também é lembrada");
+
+  h.pending[0]();
+  await h.flush();
+  assert(h.calls.length === 2,
+    "a troca dispara um request de /api/host/history (got " + h.calls.length + ")");
+  assert(spanOf(h.calls[1]) === 604800,
+    "o novo request cobre 7d: " + h.calls[1]);
+
+  h.pending[1]();
+  await h.flush();
+  assert(h.state.data && h.state.data.to - h.state.data.from === 604800,
+    "a faixa desenhada é a da janela selecionada");
+}
+
+assert(/pendingReload/.test(appJs),
+  "os dois carregadores de janela têm uma recarga pendente");
+
 console.log("\n=== Carga por núcleo (métrica multi-série) ===");
 const loadMetric = historyMetric('load');
 assert(!!loadMetric, "a métrica de carga existe");
