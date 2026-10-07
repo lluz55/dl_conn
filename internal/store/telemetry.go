@@ -41,8 +41,47 @@ func (s *Store) migrate() error {
 		data TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS telemetry_samples_ts ON telemetry_samples(ts);
+	CREATE TABLE IF NOT EXISTS service_health_samples (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts INTEGER NOT NULL,
+		service_id TEXT NOT NULL,
+		status TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS service_health_ts ON service_health_samples(ts);
+	CREATE INDEX IF NOT EXISTS service_health_svc_ts ON service_health_samples(service_id, ts);
+	CREATE TABLE IF NOT EXISTS tunnel_incarnations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		started_at INTEGER NOT NULL,
+		ended_at INTEGER,
+		url TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS tunnel_incarnations_started ON tunnel_incarnations(started_at);
 	`)
 	return err
+}
+
+// bucketWidth returns the width in Unix seconds of each of at most maxPoints
+// buckets the inclusive window [fromUnix, toUnix] is cut into, floored at 1s.
+//
+// It is ceiling division over the window's *integer offsets* — there are
+// span+1 of them, from 0 at `fromUnix` to span at `toUnix` — which is what
+// makes the group count a hard ceiling: with span+1 <= maxPoints*bucket, no
+// offset reaches maxPoints*bucket, so the highest index is maxPoints-1.
+// Dividing span instead would hand back maxPoints+1 groups exactly when the
+// window divides evenly. Floored at 1s, because a zero-width bucket would
+// collapse every sample into one group.
+//
+// The bucket is a divisor of the window in Unix seconds and SQLite groups on
+// `(ts - from) / bucket`, so a bucket is exactly one aligned interval and no
+// sample is counted twice.
+func bucketWidth(fromUnix, toUnix int64, maxPoints int) int64 {
+	bucket := int64(1)
+	if span := toUnix - fromUnix; span >= 0 {
+		if b := (span + int64(maxPoints)) / int64(maxPoints); b > 1 {
+			bucket = b
+		}
+	}
+	return bucket
 }
 
 // Insert stores a snapshot.
@@ -119,19 +158,7 @@ func (s *Store) RangeBucketed(from, to time.Time, maxPoints int) ([]sensors.Snap
 		maxPoints = 1
 	}
 	fromUnix, toUnix := from.Unix(), to.Unix()
-	// Ceiling division over the window's *integer offsets* — there are
-	// span+1 of them, from 0 at `from` to span at `to` — which is what makes
-	// the group count a hard ceiling: with span+1 <= maxPoints*bucket, no
-	// offset reaches maxPoints*bucket, so the highest index is maxPoints-1.
-	// Dividing span instead would hand back maxPoints+1 groups exactly when
-	// the window divides evenly. Floored at 1s, because a zero-width bucket
-	// would collapse every sample into one group.
-	bucket := int64(1)
-	if span := toUnix - fromUnix; span >= 0 {
-		if b := (span + int64(maxPoints)) / int64(maxPoints); b > 1 {
-			bucket = b
-		}
-	}
+	bucket := bucketWidth(fromUnix, toUnix, maxPoints)
 	return s.scan(`
 		SELECT newest AS ts, data FROM (
 			SELECT data, MAX(ts) AS newest FROM telemetry_samples
@@ -178,8 +205,10 @@ func (s *Store) scan(query string, args ...any) ([]sensors.Snapshot, error) {
 // Prune removes samples older than d.
 func (s *Store) Prune(olderThan time.Duration) error {
 	cutoff := time.Now().Add(-olderThan).Unix()
-	_, err := s.db.Exec(`DELETE FROM telemetry_samples WHERE ts < ?`, cutoff)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM telemetry_samples WHERE ts < ?`, cutoff); err != nil {
+		return err
+	}
+	return s.pruneHistory(olderThan)
 }
 
 func (s *Store) Close() error { return s.db.Close() }

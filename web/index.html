@@ -462,6 +462,18 @@
           </div>
         </div>
 
+        <div id="tunnel-timeline-block" class="sub-block" hidden>
+          <div class="sub-head">
+            <h3>Trocas de URL do túnel</h3>
+            <span class="status-sub" id="tunnel-timeline-count"></span>
+          </div>
+          <svg class="timeline" id="tunnel-timeline" viewBox="0 0 100 26" preserveAspectRatio="none" role="img" aria-label="Linha do tempo das incarnações do túnel"></svg>
+          <div class="timeline-axis">
+            <span id="timeline-from">—</span>
+            <span id="timeline-to">—</span>
+          </div>
+        </div>
+
         <!-- Serviços: single list view. It owns the rows, the health strip
              and every management control (add / refresh / clear) — there is
              no second grid rendering of the same data. -->
@@ -542,6 +554,27 @@
             <p id="custom-service-status" class="status-sub" role="status" aria-live="polite"></p>
           </form>
           <ul id="services-overview-list" class="services-overview-list" role="list"></ul>
+
+          <!-- Availability: one strip per service over the selected window.
+               Backed by /api/host/history, so it survives a reload — the
+               question it answers ("por que meu serviço caiu?") cannot be
+               answered by a page that was closed at the time. -->
+          <div class="sub-block" id="services-availability" hidden>
+            <div class="sub-head">
+              <h3>Disponibilidade</h3>
+              <div class="seg-group" id="avail-window-group" role="group" aria-label="Janela de disponibilidade">
+                <button type="button" class="seg" data-avail-window="3600">1h</button>
+                <button type="button" class="seg is-on" data-avail-window="86400">24h</button>
+                <button type="button" class="seg" data-avail-window="604800">7d</button>
+              </div>
+            </div>
+            <div class="availability-list" id="avail-list"></div>
+            <div class="availability-legend">
+              <span class="availability-legend-item"><span class="dot dot-good" aria-hidden="true"></span>no ar</span>
+              <span class="availability-legend-item"><span class="dot dot-bad" aria-hidden="true"></span>fora do ar</span>
+              <span class="availability-legend-item"><span class="dot dot-unknown" aria-hidden="true"></span>sem dado</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -575,6 +608,13 @@
              --color-threshold-* so a palette switch recolors them all. -->
         <div class="meter-grid" id="tel-meters"></div>
 
+        <!-- Thermal throttling. Only rendered when frequency has actually
+             dropped well below what this host has recently reached *and* the
+             package is hot — a low clock on its own is just an idle CPU, and
+             warning about that every time would train the reader to ignore
+             the warning. -->
+        <p class="throttle-note hidden" id="tel-throttle" role="status" aria-live="polite"></p>
+
         <!-- Per-mount storage. `disks` is an array in the snapshot, so each
              volume gets its own row: averaging them into a single number
              hides exactly the disk that is filling up. -->
@@ -601,6 +641,7 @@
           </div>
           <div class="seg-group" id="hist-metric-group" role="group" aria-label="Métrica">
             <button type="button" class="seg is-on" data-metric="cpu">CPU</button>
+            <button type="button" class="seg" data-metric="load">Carga</button>
             <button type="button" class="seg" data-metric="ram">Memória</button>
             <button type="button" class="seg" data-metric="disk">Disco</button>
             <button type="button" class="seg" data-metric="gpu">GPU</button>
@@ -617,11 +658,21 @@
                 <div class="chart-stat"><dt>máx</dt><dd class="num" id="hist-max">—</dd></div>
               </dl>
             </div>
+            <!-- Legend for the extra load curves. Only the CPU metric draws
+                 more than one line; for every other metric this stays empty
+                 rather than showing a single swatch with nothing to compare
+                 it against. -->
+            <div class="chart-legend" id="hist-legend" hidden></div>
             <div class="chart-frame">
               <svg class="series-chart" id="hist-chart" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Série temporal">
                 <g class="chart-grid" id="hist-grid"></g>
                 <line class="chart-threshold" id="hist-threshold" x1="0" x2="100" y1="0" y2="0"></line>
                 <polygon class="series-fill" id="hist-fill" points=""></polygon>
+                <!-- Secondary load curves (5 and 15 minute averages). Drawn
+                     under the primary so a spike in load1 still reads on top;
+                     they share hist-line's path data format. -->
+                <polyline class="series-line series-line--soft" id="hist-line-2" points=""></polyline>
+                <polyline class="series-line series-line--soft" id="hist-line-3" points=""></polyline>
                 <polyline class="series-line" id="hist-line" points=""></polyline>
               </svg>
               <p class="status-sub" id="hist-status" role="status" aria-live="polite"></p>

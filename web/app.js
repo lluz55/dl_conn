@@ -2,6 +2,15 @@
 import { NostrAuth } from './js/nostr_auth.js';
 import { NostrClient } from './js/nostr_client.js';
 import { RelayManager } from './js/relay_manager.js';
+import { RelayRttHistory, sparklinePoints } from './js/relay_rtt_history.js';
+import {
+  availabilityStrip,
+  availabilitySummary,
+  incarnationSpan,
+  incarnationSeconds,
+  SEG_UP,
+  SEG_DOWN,
+} from './js/host_history.js';
 import { SessionManager } from './js/session_manager.js';
 import { startScan } from './js/qr_scanner.js';
 import {
@@ -126,11 +135,23 @@ import {
     telLive: $("tel-live"),
     telUpdated: $("tel-updated"),
     telMeters: $("tel-meters"),
+    telThrottle: $("tel-throttle"),
     telStorage: $("tel-storage"),
     telStorageList: $("tel-storage-list"),
     telStorageCount: $("tel-storage-count"),
     histWindowGroup: $("hist-window-group"),
+    servicesAvailability: $("services-availability"),
+    availList: $("avail-list"),
+    availWindowGroup: $("avail-window-group"),
+    tunnelTimeline: $("tunnel-timeline"),
+    tunnelTimelineBlock: $("tunnel-timeline-block"),
+    tunnelTimelineCount: $("tunnel-timeline-count"),
+    timelineFrom: $("timeline-from"),
+    timelineTo: $("timeline-to"),
     histMetricGroup: $("hist-metric-group"),
+    histLegend: $("hist-legend"),
+    histLine2: $("hist-line-2"),
+    histLine3: $("hist-line-3"),
     histValue: $("hist-value"),
     histUnit: $("hist-unit"),
     histMin: $("hist-min"),
@@ -256,6 +277,17 @@ import {
   const TELEMETRY_POLL_MS = 2000;
   /** Host telemetry endpoint, the one route the operator can put behind step-up. */
   const TELEMETRY_PATH = "/api/host/telemetry";
+
+  /**
+   * Host history endpoint: service probe rounds and tunnel incarnations. It
+   * is served by the same handler as TELEMETRY_PATH and therefore shares its
+   * credential, step-up gate and rate-limit budget.
+   */
+  const HOST_HISTORY_PATH = "/api/host/history";
+
+  /** Cells in one availability strip. Matches the widest strip that stays
+      legible as separate cells on a phone. */
+  const AVAILABILITY_SLOTS = 60;
 
   /**
    * Resolves a path (such as /api/host/telemetry) against the discovered
@@ -461,6 +493,15 @@ import {
    * window still gets a bounded series.
    */
   const HISTORY_MAX_POINTS = 240;
+
+  /**
+   * How often the event histories (availability, tunnel incarnations) reload.
+   * Deliberately much slower than the live chart: a probe round lands every
+   * 30s and the tunnel URL changes on the order of hours, so re-reading this
+   * every few seconds would spend a shared rate-limit budget on numbers that
+   * cannot have moved.
+   */
+  const HOST_HISTORY_REFRESH_MS = 2 * 60 * 1000;
   /**
    * How long a failed history load waits before the 2s poll tries again. The
    * poll re-checks on every tick, so without a cooldown one bad response
@@ -565,6 +606,57 @@ import {
     return (load1 / cores) * 100;
   }
 
+  /**
+   * Load average divided by the core count, as a percentage of one core's
+   * worth of work per core.
+   *
+   * Normalising is the whole point: a load1 of 4.0 is 25% of capacity on a
+   * 16-core host and 100% on a quad-core one, so the raw number is not
+   * comparable across machines and cannot be read against a threshold.
+   *
+   * `window` is 1, 5 or 15 — the smoothing the kernel itself applies. The
+   * smoothed values are what separate a burst from saturation: load1 alone
+   * spikes on every compile and stays flat on a host that is quietly pegged.
+   *
+   * Returns null when the host reports no core count, because a load average
+   * with no denominator cannot honestly be drawn as a percentage.
+   */
+  function loadPerCore(snap, window_) {
+    if (!snap) return null;
+    const cores = snap.num_cpu;
+    if (!cores) return null;
+    const cpu = snap.cpu || null;
+    let load = null;
+    if (cpu) load = window_ === 5 ? cpu.load5 : (window_ === 15 ? cpu.load15 : cpu.load1);
+    else if (window_ === 1) load = snap.cpu_load1 != null ? snap.cpu_load1 : null;
+    else if (window_ === 5) load = snap.cpu_load5 != null ? snap.cpu_load5 : null;
+    else if (window_ === 15) load = snap.cpu_load15 != null ? snap.cpu_load15 : null;
+    if (load == null) return null;
+    return (load / cores) * 100;
+  }
+
+  /**
+   * The clock this CPU reaches when it is not thermally limited — the highest
+   * frequency anywhere in the loaded window.
+   *
+   * There is no rated maximum in the snapshot, so the window's own peak is the
+   * reference. That is a weaker claim than a datasheet number and is treated
+   * as such: it is only ever used together with a high temperature, because
+   * "low frequency" alone is indistinguishable from "the CPU is idle", and a
+   * throttling warning that fires on every idle host is worse than none.
+   */
+  function referenceFreqMHz(samples) {
+    let best = null;
+    if (!samples) return null;
+    for (const s of samples) {
+      const f = s && s.cpu && s.cpu.freq_mhz != null ? s.cpu.freq_mhz
+        : (s && s.cpu_freq_mhz != null ? s.cpu_freq_mhz : null);
+      if (f == null) continue;
+      if (best == null || f > best) best = f;
+    }
+    return best;
+  }
+
   /** Render the live meters for every resource the host actually reports. */
   function renderMeters(snap) {
     const host = el.telMeters;
@@ -649,6 +741,54 @@ import {
         batt.status || ""
       );
     }
+
+    renderThrottleNote(cpu);
+  }
+
+  /**
+   * How far below its own recent peak the clock has to sit, and how hot the
+   * package has to be, before this is called throttling rather than idle.
+   *
+   * The 10% margin absorbs the ordinary movement of frequency governors: a
+   * CPU that is simply unloaded sits at its lowest P-state, and without the
+   * temperature half of the test every idle host would be flagged.
+   */
+  const THROTTLE_FREQ_RATIO = 0.90;
+  const THROTTLE_TEMP_C = 75;
+
+  /**
+   * Report thermal throttling, or say nothing.
+   *
+   * The verdict is a heuristic and the wording says so. It combines two facts
+   * the snapshot already carries — the clock and the package temperature —
+   * against the highest clock seen anywhere in the loaded window. It cannot
+   * distinguish thermal throttling from power limiting or from a host that
+   * simply never boosts, which is why it claims "possível" rather than
+   * asserting a cause.
+   *
+   * Silently absent otherwise: a warning that clears itself is the only kind
+   * worth showing here, because there is no history of throttling events to
+   * browse and a permanently visible badge would just be furniture.
+   */
+  function renderThrottleNote(cpu) {
+    const host = el.telThrottle;
+    if (!host) return;
+    const freq = cpu ? cpu.freq_mhz : null;
+    const temp = cpu ? cpu.temp_c : null;
+    const reference = referenceFreqMHz(historyState.samples);
+
+    if (freq == null || temp == null || reference == null ||
+        freq >= reference * THROTTLE_FREQ_RATIO || temp < THROTTLE_TEMP_C) {
+      host.classList.add("hidden");
+      host.textContent = "";
+      return;
+    }
+    const pct = Math.round((1 - freq / reference) * 100);
+    host.classList.remove("hidden");
+    host.textContent =
+      "Possível throttling térmico: a CPU está a " + (freq / 1000).toFixed(2) +
+      " GHz, cerca de " + pct + "% abaixo do pico recente de " +
+      (reference / 1000).toFixed(2) + " GHz, a " + temp.toFixed(0) + " °C.";
   }
 
   /** One row per mount: the volume that is filling up must be its own line. */
@@ -717,6 +857,19 @@ import {
       key: "cpu", label: "CPU", unit: "%", caption: "de capacidade",
       domain: [0, 100], warn: METER_WARN_PCT.cpu,
       value: (s) => cpuPercent(s),
+    },
+    {
+      // The load metric is the one that draws three lines. `value` stays the
+      // 1-minute curve so the stats row, the meter and the missing-sensor
+      // message all keep reading a single well-defined number.
+      key: "load", label: "Carga", unit: "%", caption: "da capacidade total",
+      domain: [0, 100], warn: METER_WARN_PCT.cpu,
+      value: (s) => loadPerCore(s, 1),
+      series: [
+        { label: "1 min", value: (s) => loadPerCore(s, 1) },
+        { label: "5 min", value: (s) => loadPerCore(s, 5) },
+        { label: "15 min", value: (s) => loadPerCore(s, 15) },
+      ],
     },
     {
       key: "ram", label: "Memória", unit: "%", caption: "de capacidade",
@@ -805,6 +958,11 @@ import {
    * Bucket-average the series down to at most HISTORY_MAX_POINTS. A 7-day
    * window can hold tens of thousands of samples; drawing them all is
    * wasted work and, at sub-pixel spacing, a smear rather than a line.
+   *
+   * Each output point keeps the snapshot it came from as a third element. That
+   * is what lets a metric with more than one curve read every curve off the
+   * *same* instants: without it, the extra curves would have to be downsampled
+   * on their own and could drift out of alignment with the primary one.
    */
   function downsample(points, maxPoints) {
     if (points.length <= maxPoints) return points;
@@ -817,9 +975,72 @@ import {
       let n = 0;
       for (let j = start; j < end; j++) { sum += points[j][1]; n++; }
       if (!n) continue;
-      out.push([points[start][0], sum / n]);
+      out.push([points[start][0], sum / n, points[start][2]]);
     }
     return out;
+  }
+
+  /**
+   * Draw a metric's extra curves (everything past the first) onto the soft
+   * polylines, sharing the primary's x positions.
+   *
+   * A curve with no data at a given instant breaks the line there instead of
+   * being interpolated across the gap: a load average the host never reported
+   * must not be drawn as though it had been measured.
+   */
+  function drawSecondarySeries(metric, reduced, toY, nodes) {
+    const extra = (metric.series || []).slice(1);
+    if (!extra.length) return;
+    const step = reduced.length > 1 ? 100 / (reduced.length - 1) : 0;
+
+    extra.forEach((def, i) => {
+      const node = nodes[i];
+      if (!node) return;
+      // Each segment between two present points is emitted separately, so a
+      // missing sample leaves a real gap in the path.
+      const segments = [];
+      let current = [];
+      reduced.forEach((p, idx) => {
+        const sample = p[2];
+        const v = sample ? def.value(sample) : null;
+        if (v == null || isNaN(v)) {
+          if (current.length) segments.push(current);
+          current = [];
+          return;
+        }
+        const x = (reduced.length > 1 ? idx * step : 100).toFixed(2);
+        current.push(x + "," + toY(v));
+      });
+      if (current.length) segments.push(current);
+      node.setAttribute("points", segments.map((s) => s.join(" ")).join(" "));
+    });
+  }
+
+  /**
+   * The legend for a multi-curve metric. Single-curve metrics get none: one
+   * swatch with nothing to compare it against is decoration, not a legend.
+   */
+  function renderHistoryLegend(metric) {
+    const host = el.histLegend;
+    if (!host) return;
+    const series = metric.series || [];
+    if (series.length < 2) {
+      host.hidden = true;
+      host.replaceChildren();
+      return;
+    }
+    host.hidden = false;
+    const frag = document.createDocumentFragment();
+    series.forEach((def, i) => {
+      const item = document.createElement("span");
+      item.className = "chart-legend-item" + (i === 0 ? " is-primary" : "");
+      const swatch = document.createElement("span");
+      swatch.className = "chart-legend-swatch";
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(def.label));
+      frag.appendChild(item);
+    });
+    host.replaceChildren(frag);
   }
 
   /** Draw grid, threshold, line and fill for the current history state. */
@@ -835,7 +1056,9 @@ import {
         if (v == null || isNaN(v)) continue;
         const ts = Date.parse(s.sampled_at) / 1000;
         if (!isFinite(ts)) continue;
-        points.push([ts, v]);
+        // The snapshot rides along so the extra curves of a multi-curve metric
+        // can be read off these same instants.
+        points.push([ts, v, s]);
       }
     }
     const reduced = downsample(points, HISTORY_MAX_POINTS);
@@ -866,6 +1089,15 @@ import {
       el.histThreshold.setAttribute("y1", toY(metric.warn));
       el.histThreshold.setAttribute("y2", toY(metric.warn));
     }
+
+    // The secondary curves are cleared on every render, not only when they are
+    // redrawn: switching from "Carga" to "Disco" leaves two lines behind
+    // otherwise, drawn on an axis that has nothing to do with them.
+    const secondary = [el.histLine2, el.histLine3];
+    for (const node of secondary) {
+      if (node) node.setAttribute("points", "");
+    }
+    renderHistoryLegend(metric);
 
     if (!reduced.length) {
       el.histLine.setAttribute("points", "");
@@ -908,6 +1140,13 @@ import {
         ["0,40"].concat(coords).concat([lastX + ",40"]).join(" ")
       );
     }
+
+    // Secondary curves share the primary's x positions exactly — they are the
+    // same samples of the same window — so each one is read off the same
+    // representative snapshot the bucket kept. Downsampling them apart would
+    // let the 5- and 15-minute curves drift out from under the 1-minute one
+    // they are meant to be read against.
+    drawSecondarySeries(metric, reduced, toY, secondary);
 
     const values = reduced.map((p) => p[1]);
     const last = values[values.length - 1];
@@ -1045,6 +1284,254 @@ import {
       historyState.metric = historyMetric(v).key;
       renderHistory();
     });
+    pick(el.availWindowGroup, "availWindow", (v) => {
+      hostHistoryState.windowSec = Number(v) || 86400;
+      fetchHostHistory(true);
+    });
+  }
+
+  /* ── Host history (service availability + tunnel incarnations) ── */
+
+  /**
+   * State for the two event-history views.
+   *
+   * `data` is the last response that actually parsed, kept on screen across a
+   * failed reload for the same reason the telemetry series is: a transient
+   * error should not wipe a strip the user is reading. `error` drives the
+   * status line and the retry cooldown, never the drawing.
+   */
+  const hostHistoryState = {
+    windowSec: 86400,
+    data: null,
+    inFlight: false,
+    lastAttempt: 0,
+    lastSuccess: 0,
+    error: null,
+  };
+
+  /**
+   * Load the host history for the selected window.
+   *
+   * Refreshed far less often than the live chart: nothing here changes fast
+   * enough to be worth a request every few seconds, and the daemon caps a
+   * single session's polling rate across both routes — spending that budget
+   * on a strip that is minutes old would starve the live chart.
+   */
+  async function fetchHostHistory(force) {
+    if (typeof canPollTelemetry === "function" && !canPollTelemetry()) return;
+    if (hostHistoryState.inFlight) return;
+    const now = Date.now();
+    if (!force) {
+      if (now - hostHistoryState.lastAttempt < HISTORY_RETRY_MS) return;
+      if (hostHistoryState.lastSuccess && now - hostHistoryState.lastSuccess < HOST_HISTORY_REFRESH_MS) return;
+    }
+    hostHistoryState.inFlight = true;
+    hostHistoryState.lastAttempt = now;
+    const to = Math.floor(now / 1000);
+    const from = to - hostHistoryState.windowSec;
+    try {
+      const path = HOST_HISTORY_PATH + "?from=" + from + "&to=" + to + "&points=" + AVAILABILITY_SLOTS;
+      const endpoint = typeof telemetryEndpoint === "function" ? telemetryEndpoint(path) : path;
+      const r = await telemetryGet(endpoint);
+      if (!r.ok) throw new Error(hostHistoryErrorLabel(r.status));
+      const data = await r.json();
+      // A daemon built before this route answers 404 or serves the SPA. Say so
+      // plainly: the strip cannot work against that binary no matter what the
+      // client does, and a blank panel would look like "no outages".
+      if (!data || typeof data !== "object" || Array.isArray(data) ||
+          typeof data.services !== "object" || !Array.isArray(data.tunnel)) {
+        throw new Error(hostHistoryStaleDaemonLabel());
+      }
+      hostHistoryState.data = data;
+      hostHistoryState.lastSuccess = Date.now();
+      hostHistoryState.error = null;
+    } catch (err) {
+      hostHistoryState.error = (err && err.message) || "falha desconhecida";
+    } finally {
+      hostHistoryState.inFlight = false;
+      renderAvailability();
+      renderTunnelTimeline();
+    }
+  }
+
+  /** A readable reason for a host-history response that was not usable. */
+  function hostHistoryErrorLabel(status) {
+    if (status === 400) return "pedido sem janela";
+    if (status === 401) return "sessão expirada";
+    if (status === 403) return "exige step-up";
+    if (status === 404) return "rota não encontrada";
+    if (status === 429) return "limite de requisições";
+    if (status === 501) return "histórico indisponível neste daemon";
+    return "HTTP " + status;
+  }
+
+  /** The daemon predates /api/host/history. */
+  function hostHistoryStaleDaemonLabel() {
+    return "daemon sem suporte a /api/host/history";
+  }
+
+  /**
+   * One availability row per service the daemon has ever recorded.
+   *
+   * Services are drawn from the recorded series rather than from the live
+   * service list: a service that was removed from the config still has a
+   * history, and hiding it would erase the very outage the reader came for.
+   */
+  function renderAvailability() {
+    const host = el.availList;
+    if (!host) return;
+    const data = hostHistoryState.data;
+    const services = data && data.services ? data.services : {};
+    const ids = Object.keys(services).sort();
+
+    if (!el.servicesAvailability) return;
+    if (!ids.length) {
+      // Nothing recorded yet is a legitimate state — a daemon that has been up
+      // for five minutes has no history — but it is not the same as a failed
+      // request, so the panel says which one it is.
+      el.servicesAvailability.classList.remove("hidden");
+      host.replaceChildren();
+      const empty = document.createElement("p");
+      empty.className = "status-sub";
+      empty.textContent = hostHistoryState.error
+        ? "Não foi possível ler o histórico: " + hostHistoryState.error + "."
+        : (hostHistoryState.lastSuccess
+            ? "Nenhuma sonda de serviço registrada nesta janela."
+            : "Carregando disponibilidade…");
+      host.appendChild(empty);
+      return;
+    }
+
+    el.servicesAvailability.classList.remove("hidden");
+    const from = Number(data.from) || 0;
+    const to = Number(data.to) || 0;
+    const frag = document.createDocumentFragment();
+
+    for (const id of ids) {
+      const strip = availabilityStrip(services[id] || [], from, to, AVAILABILITY_SLOTS);
+      const summary = availabilitySummary(strip);
+
+      const row = document.createElement("div");
+      row.className = "availability-row";
+
+      const name = document.createElement("span");
+      name.className = "availability-name";
+      name.textContent = serviceDisplayName(id);
+      name.title = id;
+
+      const cells = document.createElement("div");
+      cells.className = "availability-cells";
+      for (const state of strip) {
+        const cell = document.createElement("span");
+        cell.className = "availability-cell " + state;
+        cells.appendChild(cell);
+      }
+
+      const pct = document.createElement("span");
+      pct.className = "availability-pct num";
+      // No denominator means no percentage: reporting 100% for a service that
+      // was never probed would be a precise, confident, wrong number.
+      pct.textContent = summary.percent == null
+        ? "—"
+        : summary.percent.toFixed(summary.percent === 100 ? 0 : 1) + "%";
+
+      const label = summary.percent == null
+        ? name.textContent + ": sem dados nesta janela"
+        : name.textContent + ": " + summary.percent.toFixed(1) + "% no ar em " +
+          summary.known + " amostras conhecidas (" + summary.down + " fora do ar)";
+      row.setAttribute("title", label);
+      row.setAttribute("aria-label", label);
+
+      row.appendChild(name);
+      row.appendChild(cells);
+      row.appendChild(pct);
+      frag.appendChild(row);
+    }
+    host.replaceChildren(frag);
+  }
+
+  /** The readable name for a service ID, falling back to the ID itself. */
+  function serviceDisplayName(id) {
+    const services = state.services || [];
+    const hit = services.find((s) => s.id === id || s.name === id);
+    return hit && hit.name ? hit.name : id;
+  }
+
+  /**
+   * The tunnel's incarnation history as one bar per lifetime.
+   *
+   * A long uninterrupted bar is a tunnel that held; a row of thin ones is a
+   * tunnel that kept rotating, which is the thing the operator cannot see from
+   * the current URL alone — by definition, the URL they can see is the one
+   * that is working.
+   */
+  function renderTunnelTimeline() {
+    const host = el.tunnelTimeline;
+    if (!host) return;
+    const data = hostHistoryState.data;
+    const incarnations = data && Array.isArray(data.tunnel) ? data.tunnel : [];
+    if (!el.tunnelTimelineBlock) return;
+
+    if (!incarnations.length) {
+      el.tunnelTimelineBlock.classList.add("hidden");
+      host.replaceChildren();
+      return;
+    }
+    el.tunnelTimelineBlock.classList.remove("hidden");
+
+    const from = Number(data.from) || 0;
+    const to = Number(data.to) || 0;
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const frag = document.createDocumentFragment();
+
+    for (const inc of incarnations) {
+      const span = incarnationSpan(inc, from, to);
+      if (!span) continue;
+      const x = (span.start * 100).toFixed(2);
+      const w = Math.max(0.4, (span.end - span.start) * 100).toFixed(2);
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("class", "timeline-bar" + (span.current ? " is-current" : ""));
+      rect.setAttribute("x", x);
+      rect.setAttribute("y", "4");
+      rect.setAttribute("width", w);
+      rect.setAttribute("height", "18");
+      rect.setAttribute("rx", "1");
+      const secs = incarnationSeconds(inc, nowUnix);
+      rect.setAttribute("data-tip",
+        (span.current ? "Túnel atual" : "Túnel anterior") + ": " +
+        inc.url + " · " + formatDurationSeconds(secs));
+      frag.appendChild(rect);
+    }
+    host.replaceChildren(frag);
+
+    const rotations = incarnations.length;
+    if (el.tunnelTimelineCount) {
+      el.tunnelTimelineCount.textContent = rotations === 1
+        ? "1 URL nesta janela"
+        : rotations + " URLs nesta janela";
+    }
+    if (el.timelineFrom) el.timelineFrom.textContent = formatTimestamp(from);
+    if (el.timelineTo) el.timelineTo.textContent = formatTimestamp(to);
+  }
+
+  /** A compact age/duration for the timeline axis and tooltips. */
+  function formatDurationSeconds(secs) {
+    if (secs == null || !isFinite(secs) || secs <= 0) return "0s";
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    if (h >= 24) return Math.floor(h / 24) + "d " + (h % 24) + "h";
+    if (h > 0) return h + "h " + m + "m";
+    if (m > 0) return m + "m";
+    return Math.round(secs) + "s";
+  }
+
+  /** A short wall-clock label for the timeline axis. */
+  function formatTimestamp(unix) {
+    if (!unix) return "—";
+    const d = new Date(unix * 1000);
+    return d.toLocaleString(undefined, {
+      day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
   }
 
 
@@ -1137,6 +1624,10 @@ import {
       // series goes stale and backs off while the last attempt failed, so this
       // call costs one request every HISTORY_REFRESH_MS, not one per tick.
       fetchHistory();
+      // The event histories come from a sibling route that only exists once
+      // the session does, so they are kicked off from the same place. Each
+      // gates itself from here on.
+      fetchHostHistory();
     } catch (_) {
       if (telemetrySource !== "nostr") updateLiveBadge(false);
     } finally {
@@ -1233,7 +1724,7 @@ import {
     await loadConfig();
     state.auth = new NostrAuth();
     state.session = new SessionManager();
-    state.relayManager = new RelayManager();
+    state.relayManager = new RelayManager().withHistory(new RelayRttHistory());
     // Restore hostNpub from localStorage (set during first login or manual save)
     if (!state.config.hostNpub) {
       const savedHostNpub = localStorage.getItem("dl_conn_host_npub");
@@ -3323,6 +3814,8 @@ import {
       }
       row.appendChild(urlCell);
 
+      row.appendChild(buildRttSparkline(relay.url, result));
+
       row.appendChild(elem("span", { class: "relay-rtt " + badgeClass }, rttText));
       row.appendChild(elem("button", {
         class: "relay-toggle" + (relay.enabled ? " on" : ""),
@@ -3363,6 +3856,64 @@ import {
     if (result.rttMs < SLOW_RELAY_MS) return 'good';
     if (result.rttMs < 2000) return 'moderate';
     return 'slow';
+  }
+
+  /**
+   * The relay's recent RTT as a sparkline, or an empty box when there is
+   * nothing to draw yet.
+   *
+   * Every relay in the column is drawn against the *slowest measured relay*,
+   * not against its own peak. A per-relay scale would make a 2 s relay look
+   * as smooth as a 50 ms one; sharing the scale is what lets the shapes be
+   * compared with each other, which is the only reason to have a trend at
+   * all. The shared ceiling is the reason the vertical axis is not drawn per
+   * row — the badge next to it carries the current number.
+   */
+  function buildRttSparkline(url, result) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "relay-spark");
+    svg.setAttribute("viewBox", "0 0 100 40");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    line.setAttribute("class", "relay-spark-line " + getBadgeClass(result));
+
+    const history = state.relayManager.history;
+    const samples = history ? history.get(url) : [];
+    const ceiling = sharedSparkCeiling();
+
+    if (samples.length && ceiling) {
+      line.setAttribute("points", sparklinePoints(samples, ceiling));
+      svg.appendChild(line);
+      svg.setAttribute("data-samples", String(samples.length));
+    } else {
+      // Nothing measured yet. An empty element rather than a zero-valued
+      // line: a flat line at the bottom would read as "measured, and fast".
+      line.setAttribute("class", "relay-spark-line relay-spark-empty");
+      svg.appendChild(line);
+    }
+    return svg;
+  }
+
+  /**
+   * The vertical scale shared by every relay sparkline: the slowest value any
+   * relay has recently measured, so no relay's line is ever clipped away and
+   * the slowest relay's line reaches the top of its box.
+   *
+   * Returns 0 when nothing has been measured, which callers read as "nothing
+   * to draw" — better than a scale of 1, which would turn any measurement
+   * into a full-height spike.
+   */
+  function sharedSparkCeiling() {
+    const history = state.relayManager.history;
+    if (!history) return 0;
+    let worst = 0;
+    for (const relay of state.relayManager.getAll()) {
+      for (const v of history.measured(relay.url)) {
+        if (v > worst) worst = v;
+      }
+    }
+    return worst;
   }
 
   function onAddRelay() {

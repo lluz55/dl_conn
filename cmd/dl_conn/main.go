@@ -181,52 +181,51 @@ func run(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating nostr client: %w", err)
 	}
 
-	// SIGHUP hot-reloads the authorized npub list without restarting the
-	// daemon (tunnel URL, relays, and services remain intact).
-	hupCh := make(chan os.Signal, 1)
-	signal.Notify(hupCh, syscall.SIGHUP)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-hupCh:
-				log.Println("Received SIGHUP — reloading authorized npubs...")
-				newCfg, err := config.Load(configPath)
-				if err != nil {
-					log.Printf("SIGHUP reload failed: %v", err)
-					continue
-				}
-				if err := client.SetAuthorized(newCfg.Nostr.AuthorizedNpubs); err != nil {
-					log.Printf("SIGHUP SetAuthorized failed: %v", err)
-					continue
-				}
-				log.Printf("Allowlist reloaded: %d authorized npubs (including host)", client.AuthorizedCount())
-			}
-		}
-	}()
-
 	// Health monitor: services are advertised as "unknown" until a probe
 	// confirms the local target answers, so the dashboard never shows green
 	// for something that was merely configured.
 	monitor := health.New(visibleServices)
+
+	// SQLite store, opened once and shared by everything that remembers
+	// something: telemetry samples, service probe history and tunnel
+	// incarnations. It is opened unconditionally because the health monitor
+	// records into it even when telemetry itself is disabled — gating the
+	// store on cfg.Telemetry.Enabled would silently drop the availability
+	// history for anyone who turned the host charts off.
+	dbPath := filepath.Join(filepath.Dir(configPath), "telemetry.db")
+	histStore, err := store.New(dbPath)
+	if err != nil {
+		log.Printf("history store init failed (%v): service availability and tunnel history will be unavailable", err)
+		histStore = nil
+	} else {
+		defer func() { _ = histStore.Close() }()
+		// Registered *after* Close because defers run LIFO: a clean stop
+		// should end its own tunnel incarnation while the database is still
+		// open, rather than leaving the row open until the next start repairs
+		// it (which would report a tunnel as still alive for the whole gap
+		// between two daemon runs).
+		defer func() { _ = histStore.CloseOpenTunnelIncarnation(time.Now()) }()
+		monitor.WithRecorder(histStore)
+		tm.WithRecorder(histStore)
+	}
 	go monitor.Run(ctx)
 
 	// Host telemetry collector (opt-in via config, default enabled).
 	var telCollector *sensors.Collector
-	var telStore *store.Store
 	if cfg.Telemetry.Enabled {
 		interval := time.Duration(cfg.Telemetry.IntervalSeconds) * time.Second
 		telCollector = sensors.NewCollector(interval)
-		// Persist to SQLite (without SQLCipher).
-		dbPath := filepath.Join(filepath.Dir(configPath), "telemetry.db")
-		if s, err := store.New(dbPath); err == nil {
-			telStore = s
-			defer s.Close()
+		if histStore != nil {
 			telCollector.WithPersist(func(snap sensors.Snapshot) {
-				_ = s.Insert(snap)
+				_ = histStore.Insert(snap)
 			})
-			// Prune old samples hourly.
+		}
+		// Prune old samples hourly. One retention setting governs the whole
+		// database, so the event histories are pruned on the same tick as the
+		// samples — a row type that outlived its neighbours would grow without
+		// bound on a host that stays up.
+		if histStore != nil {
+			retention := time.Duration(cfg.Telemetry.RetentionDays) * 24 * time.Hour
 			go func() {
 				ticker := time.NewTicker(time.Hour)
 				defer ticker.Stop()
@@ -235,12 +234,10 @@ func run(cmd *cobra.Command, _ []string) error {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						_ = s.Prune(time.Duration(cfg.Telemetry.RetentionDays) * 24 * time.Hour)
+						_ = histStore.Prune(retention)
 					}
 				}
 			}()
-		} else {
-			log.Printf("telemetry store init failed: %v", err)
 		}
 		go telCollector.Run(ctx)
 	}
@@ -287,7 +284,6 @@ func run(cmd *cobra.Command, _ []string) error {
 			return ht
 		})
 	}
-	_ = telStore
 
 	// Loopback-only diagnostics (see startDiagnostics). Derived from the
 	// listen port so it needs no configuration of its own.
@@ -437,23 +433,41 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// Host telemetry (requires session, and a step-up proof when the
 	// operator put this route in auth.stepUpProtected)
-	if telCollector != nil {
+	//
+	// Both routes are served by one handler: /api/host/telemetry answers the
+	// point-in-time snapshot and its ?from=&to= sample range, /api/host/history
+	// answers the service-availability and tunnel-incarnation series. Sharing
+	// it means one credential check, one rate-limit budget and one set of CORS
+	// headers instead of two endpoints held identical by hand. The handler
+	// dispatches on the path suffix, so each route is only registered when the
+	// data it serves can actually exist.
+	if telCollector != nil || histStore != nil {
 		telHandler := telemetry.NewHandler(telCollector, sessionMgr).WithTokens(tokenMgr)
 		// Hand the store over so the route can also answer ?from=&to= with a
 		// real range from telemetry_samples. Without this the handler only
 		// serves the latest snapshot and answers 501 to a range request.
-		// Telemetry is opt-in, so the store may legitimately be nil.
-		if telStore != nil {
-			telHandler = telHandler.WithStore(telStore)
+		if histStore != nil {
+			telHandler = telHandler.WithStore(histStore)
 		}
-		if cfg.Auth.RequiresStepUp("/api/host/telemetry") {
+		if telCollector != nil {
+			if cfg.Auth.RequiresStepUp("/api/host/telemetry") {
+				telHandler = telHandler.WithStepUp(stepUp)
+				log.Println("Telemetry requires a step-up proof (auth.stepUpProtected)")
+			}
+			mux.Handle("/api/host/telemetry", telHandler)
+		}
+		// The history route is gated on its own step-up entry, so an operator
+		// can lock the service-availability and tunnel history down without
+		// also locking down the live chart. Default: follows the telemetry
+		// route's setting, which is the safer of the two defaults.
+		historyPath := "/api/host/history"
+		if cfg.Auth.RequiresStepUp(historyPath) || (telCollector != nil && cfg.Auth.RequiresStepUp("/api/host/telemetry")) {
 			telHandler = telHandler.WithStepUp(stepUp)
-			log.Println("Telemetry requires a step-up proof (auth.stepUpProtected)")
 		}
+		mux.Handle(historyPath, telHandler)
 		// Same caveat as authHandler.RunCleanup above — RunCleanup blocks until
 		// ctx is done and would freeze the rest of startup if called inline.
 		go telHandler.RunCleanup(ctx)
-		mux.Handle("/api/host/telemetry", telHandler)
 	}
 
 	// Health check

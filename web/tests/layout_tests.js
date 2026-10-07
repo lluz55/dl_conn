@@ -38,8 +38,8 @@ assert(
   "Relay add controls stack on compact screens",
 );
 assert(
-  /grid-template-columns:\s*10px\s+minmax\(0,\s*1fr\)\s+44px\s+44px/.test(css),
-  "Compact relay rows reserve space without overflowing",
+  /grid-template-columns:\s*10px\s+minmax\(0,\s*1fr\)\s+48px\s+40px\s+40px/.test(css),
+  "Compact relay rows reserve space without overflowing, and keep the sparkline when the number is hidden",
 );
 assert(
   /function serviceIcon\(icon, dotHtml\)/.test(app) && /\.service-icon \.svc-dot \{/.test(css),

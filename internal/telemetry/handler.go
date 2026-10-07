@@ -173,6 +173,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The host-history path is dispatched here, after auth and the rate
+	// limiter, so it shares this endpoint's credential, budget and CORS
+	// contract instead of standing up a second one to keep in sync.
+	if isHistoryPath(r.URL.Path) {
+		h.serveHistory(w, from, to, points, wantRange)
+		return
+	}
 	if wantRange {
 		h.serveRange(w, from, to, points)
 		return
@@ -193,7 +200,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // snapshot returns the encoded snapshot, reusing the previous encoding while it
 // is younger than CacheTTL. The second bool reports whether a snapshot exists
 // at all.
+//
+// A nil collector is a supported state, not a bug: the host-history route is
+// served by this same handler, and it answers from SQLite whether or not the
+// telemetry collector was ever started (the collector is opt-in). Asking for
+// the snapshot without one is "no telemetry", not a crash.
 func (h *Handler) snapshot() ([]byte, bool) {
+	if h.collector == nil {
+		return nil, false
+	}
 	now := time.Now()
 
 	h.mu.Lock()

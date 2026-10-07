@@ -126,13 +126,21 @@ const history = new Function(`
   const METER_WARN_PCT = ${extractConstValue(appJs, 'METER_WARN_PCT')};
   const METER_CRIT_PCT = ${extractConstValue(appJs, 'METER_CRIT_PCT')};
   const TEMP_WARN_C = ${extractConstValue(appJs, 'TEMP_WARN_C')};
+  const THROTTLE_FREQ_RATIO = ${extractConstValue(appJs, 'THROTTLE_FREQ_RATIO')};
+  const THROTTLE_TEMP_C = ${extractConstValue(appJs, 'THROTTLE_TEMP_C')};
   const HISTORY_METRICS = ${extractConstValue(appJs, 'HISTORY_METRICS')};
   ${extractDeclaration(appJs, 'cpuPercent')}
+  ${extractDeclaration(appJs, 'loadPerCore')}
+  ${extractDeclaration(appJs, 'referenceFreqMHz')}
   ${extractDeclaration(appJs, 'hostTempC')}
   ${extractDeclaration(appJs, 'tempSourceLabel')}
   ${extractDeclaration(appJs, 'historyMetric')}
   ${extractDeclaration(appJs, 'historyValue')}
-  return { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS };
+  return {
+    historyValue, historyMetric, hostTempC, tempSourceLabel,
+    HISTORY_METRICS, loadPerCore, referenceFreqMHz,
+    THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C,
+  };
 `)();
 
 console.log("\n=== Telemetry Polling Tests ===");
@@ -281,7 +289,8 @@ console.log("\n=== History series tests ===");
 
 // The history panel's real metric table and its helpers, evaluated together in
 // the `history` scope above — this file keeps no hand-written copy of the table.
-const { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS } = history;
+const { historyValue, historyMetric, hostTempC, tempSourceLabel, HISTORY_METRICS,
+  loadPerCore, referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C } = history;
 const downsample = new Function('points', 'maxPoints', downsampleBody);
 // Both free variables of the body (`lastSnapshot` and the key) are parameters
 // of the generated function, so one call returns the answer.
@@ -303,8 +312,8 @@ assert(historyValue({ disks: [{ used_pct: 40 }, { used_pct: 60 }] }, 'disk') ===
   "disco: o mountpoint mais cheio representa a série");
 
 console.log("\n=== History metric table (categoria de temperatura) ===");
-assert(HISTORY_METRICS.map((m) => m.key).join(",") === "cpu,ram,disk,gpu,temp",
-  "a tabela cobre CPU, memória, disco, GPU e temperatura: " + HISTORY_METRICS.map((m) => m.key).join(","));
+assert(HISTORY_METRICS.map((m) => m.key).join(",") === "cpu,load,ram,disk,gpu,temp",
+  "a tabela cobre CPU, carga, memória, disco, GPU e temperatura: " + HISTORY_METRICS.map((m) => m.key).join(","));
 const temp = historyMetric("temp");
 assert(temp.unit === "°C", "temperatura carrega a unidade °C, veio " + temp.unit);
 assert(typeof temp.warn === "number" && temp.warn > 0 && temp.warn <= 100,
@@ -477,6 +486,114 @@ const respondOk = () => Promise.resolve({ ok: true, status: 200, json: () => Pro
 
 assert(/fetchHistory\(true\)/.test(appJs),
   "trocar a janela força a recarga mesmo com série já carregada");
+
+console.log("\n=== Carga por núcleo (métrica multi-série) ===");
+const loadMetric = historyMetric('load');
+assert(!!loadMetric, "a métrica de carga existe");
+assert(loadMetric.unit === '%' && loadMetric.domain[0] === 0 && loadMetric.domain[1] === 100,
+  "carga é uma porcentagem com domínio 0..100");
+assert(Array.isArray(loadMetric.series) && loadMetric.series.length === 3,
+  "carga desenha três curvas (1, 5 e 15 min)");
+assert(loadMetric.series.map((s) => s.label).join(',') === '1 min,5 min,15 min',
+  "as curvas da carga são as médias suavizadas do kernel: " + loadMetric.series.map((s) => s.label).join(','));
+// value must stay the 1-minute curve so the stats row and the meter keep
+// reading one well-defined number.
+assert(loadMetric.value({ num_cpu: 4, cpu: { load1: 2, load5: 1, load15: 0.5 } }) === 50,
+  "value da carga é a curva de 1 min");
+
+const four = { num_cpu: 4, cpu: { load1: 2, load5: 1, load15: 0.5 } };
+assert(loadPerCore(four, 1) === 50, "load1 normalizado: 2/4 = 50%");
+assert(loadPerCore(four, 5) === 25, "load5 normalizado: 1/4 = 25%");
+assert(loadPerCore(four, 15) === 12.5, "load15 normalizado: 0.5/4 = 12,5%");
+assert(loadPerCore({ cpu: { load1: 2 } }, 1) === null,
+  "sem contagem de núcleos não há denominador: a carga não vira porcentagem");
+assert(loadPerCore({ num_cpu: 4, cpu: { load1: 2 } }, 15) === null,
+  "uma janela ausente é ausente, não zero");
+assert(loadPerCore({ num_cpu: 4, cpu_load1: 3 }, 1) === 75,
+  "o snapshot achatado (cpu_load1) também é lido");
+assert(loadPerCore(null, 1) === null, "snapshot ausente não quebra a extração");
+
+assert(/histLine2/.test(appJs) && /histLine3/.test(appJs) && /drawSecondarySeries/.test(appJs),
+  "as curvas secundárias têm polilinhas próprias e uma função que as desenha");
+assert(/class="series-line series-line--soft" id="hist-line-2"/.test(indexHtml) &&
+  /class="series-line series-line--soft" id="hist-line-3"/.test(indexHtml),
+  "as polilinhas secundárias são marcadas como soft no markup");
+assert(/\.series-line--soft\s*\{[^}]*stroke:\s*var\(--color-chart-\d\)/s.test(readFileSync(join(here, '..', 'style.css'), 'utf8')),
+  "a curva soft usa um token de cor, não uma cor fixa");
+// Switching metrics must clear them, or a disk chart would keep two load
+// curves drawn on an axis they have nothing to do with.
+assert(/for \(const node of secondary\)[\s\S]*?setAttribute\("points", ""\)/.test(appJs),
+  "as curvas secundárias são limpas a cada render, não só quando redesenhadas");
+assert(/function renderHistoryLegend\(metric\)/.test(appJs) &&
+  /series\.length < 2/.test(appJs),
+  "a legenda aparece só para métrica com mais de uma curva");
+assert(/id="hist-legend"/.test(indexHtml) && /id="hist-line-2"/.test(indexHtml),
+  "a legenda e as linhas extras existem no markup");
+assert((indexHtml.match(/class="seg[^"]*" data-metric="load"/g) || []).length === 1,
+  "a métrica de carga tem um botão no seletor");
+
+console.log("\n=== Detecção de throttling térmico ===");
+assert(/function referenceFreqMHz\(samples\)/.test(appJs),
+  "a referência de frequência vem do pico da janela carregada");
+assert(referenceFreqMHz([{ cpu: { freq_mhz: 2000 } }, { cpu: { freq_mhz: 3400 } }]) === 3400,
+  "a referência é a maior frequência da janela");
+assert(referenceFreqMHz([{ cpu_freq_mhz: 800 }]) === 800,
+  "o snapshot achatado (cpu_freq_mhz) também é lido");
+assert(referenceFreqMHz([]) === null && referenceFreqMHz(null) === null,
+  "sem amostras não há referência — e sem referência não há veredito");
+assert(THROTTLE_FREQ_RATIO > 0 && THROTTLE_FREQ_RATIO < 1,
+  "a folga de frequência é uma fração, não um número solto: " + THROTTLE_FREQ_RATIO);
+assert(THROTTLE_TEMP_C > 0 && THROTTLE_TEMP_C < 100,
+  "o gatilho de temperatura é uma temperatura: " + THROTTLE_TEMP_C);
+
+const throttleBody = extractFunction(appJs, 'renderThrottleNote');
+const throttle = new Function('cpu', 'el', 'historyState', 'referenceFreqMHz',
+  'THROTTLE_FREQ_RATIO', 'THROTTLE_TEMP_C', throttleBody);
+const mkNote = () => {
+  const node = { classList: { add: (c) => { node.className = c; }, remove: (c) => { node.className = ''; } }, textContent: '' };
+  return node;
+};
+const hotIdle = { className: '' };
+// A low clock with a cool package is an idle CPU, not throttling — the
+// failure mode that would make the warning worthless.
+{
+  const note = mkNote();
+  throttle({ freq_mhz: 800, temp_c: 35 }, { telThrottle: note }, { samples: [{ cpu: { freq_mhz: 3400 } }] },
+    referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C);
+  assert(note.className === 'hidden' && note.textContent === '',
+    'frequência baixa com CPU fria é ociosidade, não throttling');
+}
+{
+  const note = mkNote();
+  throttle({ freq_mhz: 3400, temp_c: 82 }, { telThrottle: note }, { samples: [{ cpu: { freq_mhz: 3400 } }] },
+    referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C);
+  assert(note.className === 'hidden',
+    'frequência no pico com CPU quente não é throttling');
+}
+{
+  const note = mkNote();
+  throttle({ freq_mhz: 2200, temp_c: 85 }, { telThrottle: note }, { samples: [{ cpu: { freq_mhz: 3400 } }] },
+    referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C);
+  assert(note.className !== 'hidden' && /throttling/.test(note.textContent),
+    'frequência bem abaixo do pico com CPU quente é reportada: ' + note.textContent);
+  assert(/possível/i.test(note.textContent),
+    'o texto hedge: o dado é heurístico e não identifica a causa');
+}
+{
+  const note = mkNote();
+  throttle({ freq_mhz: 2200, temp_c: 85 }, { telThrottle: note }, { samples: [] },
+    referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C);
+  assert(note.className === 'hidden',
+    'sem referência na janela não se afirma throttling');
+}
+{
+  const note = mkNote();
+  throttle({ freq_mhz: 2200 }, { telThrottle: note }, { samples: [{ cpu: { freq_mhz: 3400 } }] },
+    referenceFreqMHz, THROTTLE_FREQ_RATIO, THROTTLE_TEMP_C);
+  assert(note.className === 'hidden',
+    'sem sensor de temperatura não se afirma throttling');
+}
+void hotIdle;
 
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");
 if (failed > 0) process.exit(1);

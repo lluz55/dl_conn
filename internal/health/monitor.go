@@ -4,6 +4,7 @@ package health
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/url"
 	"sync"
@@ -27,6 +28,16 @@ const DefaultInterval = 30 * time.Second
 // DefaultTimeout bounds a single probe.
 const DefaultTimeout = 3 * time.Second
 
+// Recorder receives the outcome of every probe round as one atomic map —
+// every service at one instant — so the history it writes never contains half
+// a round, which would render as a service that briefly stopped existing.
+//
+// It is an interface rather than a *store.Store so this package stays free of
+// the persistence layer: the monitor probes, and something else remembers.
+type Recorder interface {
+	RecordServiceHealth(ts time.Time, statuses map[string]string) error
+}
+
 // Monitor keeps the last observed status of every configured service.
 type Monitor struct {
 	services []config.ServiceConfig
@@ -35,6 +46,9 @@ type Monitor struct {
 
 	mu     sync.RWMutex
 	status map[string]string
+
+	recorderMu sync.RWMutex
+	recorder   Recorder
 }
 
 // New creates a Monitor for the given services. Every service starts as
@@ -50,6 +64,22 @@ func New(services []config.ServiceConfig) *Monitor {
 		m.status[s.ID] = StatusUnknown
 	}
 	return m
+}
+
+// WithRecorder attaches a history recorder. It is opt-in: a monitor with no
+// recorder behaves exactly as before, so nothing that only probes has to grow a
+// database behind it.
+func (m *Monitor) WithRecorder(r Recorder) *Monitor {
+	m.recorderMu.Lock()
+	m.recorder = r
+	m.recorderMu.Unlock()
+	return m
+}
+
+func (m *Monitor) currentRecorder() Recorder {
+	m.recorderMu.RLock()
+	defer m.recorderMu.RUnlock()
+	return m.recorder
 }
 
 // Status returns the last observed status for a service ID. Unknown IDs read
@@ -79,13 +109,39 @@ func (m *Monitor) Run(ctx context.Context) {
 	}
 }
 
+// UpdateServices updates the list of monitored services. Newly added services
+// start with StatusUnknown, and removed services are cleared from status.
+func (m *Monitor) UpdateServices(services []config.ServiceConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	newServices := make([]config.ServiceConfig, len(services))
+	copy(newServices, services)
+	m.services = newServices
+
+	newStatus := make(map[string]string, len(services))
+	for _, s := range services {
+		if st, ok := m.status[s.ID]; ok {
+			newStatus[s.ID] = st
+		} else {
+			newStatus[s.ID] = StatusUnknown
+		}
+	}
+	m.status = newStatus
+}
+
 func (m *Monitor) ProbeAll(ctx context.Context) {
 	m.probeAll(ctx)
 }
 
 func (m *Monitor) probeAll(ctx context.Context) {
+	m.mu.RLock()
+	services := make([]config.ServiceConfig, len(m.services))
+	copy(services, m.services)
+	m.mu.RUnlock()
+
 	var wg sync.WaitGroup
-	for _, svc := range m.services {
+	for _, svc := range services {
 		wg.Add(1)
 		go func(svc config.ServiceConfig) {
 			defer wg.Done()
@@ -99,6 +155,31 @@ func (m *Monitor) probeAll(ctx context.Context) {
 		}(svc)
 	}
 	wg.Wait()
+	// Only once every probe has landed, so the recorded round is coherent: a
+	// snapshot taken mid-round would carry last cycle's status for whichever
+	// service happened to still be probing.
+	//
+	// A failed write is logged and swallowed: probing must keep running even
+	// when the history cannot be written (full disk, closed database), because
+	// a stopped monitor also stops the dashboard from reporting live health.
+	if rec := m.currentRecorder(); rec != nil {
+		if err := rec.RecordServiceHealth(time.Now(), m.snapshot()); err != nil {
+			log.Printf("health: recording probe round failed: %v", err)
+		}
+	}
+}
+
+// snapshot copies the status map under the lock. The copy is what makes the
+// recorder safe to call while probes continue: handing over the live map would
+// let a concurrent probeAll mutate a map the recorder is still iterating.
+func (m *Monitor) snapshot() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]string, len(m.status))
+	for id, st := range m.status {
+		out[id] = st
+	}
+	return out
 }
 
 // probe opens a TCP connection to the target's host:port. A dial is used

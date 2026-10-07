@@ -4,6 +4,94 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-07
+
+- **O histórico do host virou dado persistido, não observação do navegador.**
+  Disponibilidade por serviço (item 4) e trocas de URL do túnel (item 6) foram
+  escolhidas com backend, porque nenhum dos dois cumpre o papel quando a
+  janela relevante acontece com o navegador fechado — e a rotação da URL
+  efêmera é justamente isso: ela ocorre quando ninguém está olhando.
+
+  Duas tabelas novas no mesmo SQLite de `telemetry_samples`
+  (`internal/store/history.go`): `service_health_samples` e
+  `tunnel_incarnations`. Quatro decisões que mudaram o resultado:
+
+  1. **Um bucket é o pior status, nunca a média.** A consulta agrupa com
+     `MAX(CASE status WHEN 'down' THEN 2 ...)`. Uma faixa de disponibilidade
+     que dilui uma queda de 10 segundos com um bucket saudável mente sobre a
+     única coisa que a faixa existe para responder.
+  2. **A rota `/api/host/history` é o mesmo handler de `/api/host/telemetry`,
+     despachada por sufixo de path.** Uma credencial, um orçamento de
+     rate-limit, um conjunto de cabeçalhos CORS — em vez de dois endpoints
+     que precisariam ser mantidos idênticos à mão. A rota do histórico exige
+     janela (`?from=`): sem ela a resposta seria "tudo que já foi gravado",
+     que é um payload ilimitado para um pedido que não pediu um.
+  3. **O store é aberto incondicionalmente, não dentro de
+     `cfg.Telemetry.Enabled`.** O monitor de health grava nele mesmo com a
+     telemetria desligada; condicionar o store à telemetria apagaria a
+     disponibilidade em silêncio para quem desligou os gráficos do host.
+  4. **A encarnação aberta sobrevive ao prune.** `RecordTunnelIncarnation`
+     fecha a anterior antes de abrir a nova, então um daemon morto no meio de
+     uma encarnação deixa a linha aberta — e o próximo start a fecha, em vez
+     de um túnel parecer vivo durante todo o intervalo entre duas execuções.
+     O `defer` que fecha a encarnação no shutdown é registrado **depois** do
+     `defer Close()` porque defers correm em LIFO.
+
+- **Carga por núcleo virou métrica de três curvas.** `load1/5/15` normalizados
+  por `num_cpu`. O motivo de desenhar as três: `load1` sozinho sobe a cada
+  compilação e fica plano numa máquina saturada — as médias suavizadas do
+  kernel é que separam surto de saturação. As curvas secundárias são lidas
+  **do mesmo snapshot representativo** que o bucket guardou (por isso
+  `downsample` passou a devolver o sample de origem), senão elas derivariam
+  para fora de alinhamento com a curva principal. E as secundárias são
+  limpas a cada render: senão trocar "Carga" por "Disco" deixaria duas
+  linhas de carga desenhadas num eixo que não tem nada a ver com elas.
+
+- **O detector de throttling é uma heurística, e o texto diz isso.** Frequência
+  bem abaixo do pico *da janela* e acima de 75 °C. O pico da janela é a
+  referência porque não há frequência máxima no snapshot. Sem o teste de
+  temperatura, "frequência baixa" é indistinguível de "CPU ociosa" — e um
+  aviso que dispara em toda máquina parada treina o leitor a ignorá-lo. O
+  texto usa "possível" porque o dado não distingue throttling térmico de
+  limitação por energia.
+
+- **Falha de sonda vira lacuna, nunca zero.** No histórico de RTT e na faixa de
+  disponibilidade, uma medição ausente é `null`: uma lacuna que se lê como
+  "não conseguimos alcançar", não um 3500 ms fabricado que se lê como
+  "respondeu, devagar". O mesmo vale para a porcentagem de disponibilidade:
+  ela é sobre as células **conhecidas**, e uma janela sem leituras nenhuma
+  reporta `—` em vez de 100%.
+
+## 2026-10-06
+
+- **O card de relays passou a colapsar no lugar, e o estado ficou salvo.** O
+  botão de relays no header esconde o card inteiro (`#relay-panel`), o que leva
+  embora junto a `#relay-summary` — a única leitura rápida de "quantos relays
+  estão no ar". Colapsar é um gesto diferente: o **head continua visível** e
+  só o corpo (`#relay-panel-body`) some, então o resumo continua legível com a
+  lista fechada. Os dois controles coexistem e não confundem: o do header tira
+  o card da tela, o do card fecha a lista.
+
+  Três decisões que mudaram o resultado:
+
+  1. **O estado é uma preferência, não estado de sessão.** Fica em
+     `localStorage` sob `dl_conn_relay_collapsed`, junto do tema, da paleta e
+     da densidade — a lista de relays é um controle de setup, não algo que
+     valha rolar de novo a cada carga depois que o túnel está no ar. A leitura
+     e a escrita são try/catch: em modo privado o colapso continua funcionando
+     na página, só não sobrevive ao reload.
+  2. **Um símbolo só, girado por CSS.** `#i-chevron` aponta para baixo aberto e
+     gira `-90deg` fechado (`.btn-collapse[aria-expanded="false"]`). Escopo
+     `.btn-collapse` de propósito: outros toggles também carregam
+     `aria-expanded` (o do header, o do painel de debug) mas o ícone deles não
+     pode girar.
+  3. **O tooltip se move junto.** O `::after` dos tooltips é desenhado a
+     partir de `attr(data-tip)`, então `applyRelayCollapse()` atualiza o
+     atributo além do `aria-label` — senão o rótulo ficaria "Recolher relays"
+     num botão que só expande.
+
+  Coberto por 10 asserções novas em `web/tests/layout_tests.js`.
+
 ## 2026-10-05
 
 - **O tempo de ligado do host só aparecia em horas.** `formatUptime()` somava

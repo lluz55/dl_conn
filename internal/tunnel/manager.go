@@ -162,6 +162,7 @@ type Manager struct {
 	starts      int
 	startedAt   time.Time
 	lastExitErr string
+	recorder    Recorder
 }
 
 // NewManager creates a tunnel manager that runs cloudflared to proxy
@@ -247,7 +248,43 @@ func (m *Manager) scanOutput(ctx context.Context, r io.Reader) {
 		if previous != "" {
 			log.Printf("tunnel: cloudflared now serving %s (was %s)", match, previous)
 		}
+		// Recorded before the URL is published, and only for a genuinely new
+		// hostname (the `match == previous` case already returned above): a
+		// repeated line on the same URL is not a rotation, and writing a row
+		// for it would make a tunnel that never moved look like it restarted
+		// as often as cloudflared reprinted its banner.
+		m.recordIncarnation(match)
 		m.publishURL(match)
+	}
+}
+
+// Recorder persists one tunnel lifetime, opened at the moment a new hostname
+// appears. It is an interface rather than a *store.Store so this package stays
+// free of the persistence layer.
+type Recorder interface {
+	RecordTunnelIncarnation(startedAt time.Time, url string) error
+}
+
+// WithRecorder attaches an incarnation recorder. Opt-in: with no recorder the
+// manager behaves exactly as before.
+func (m *Manager) WithRecorder(r Recorder) *Manager {
+	m.mu.Lock()
+	m.recorder = r
+	m.mu.Unlock()
+	return m
+}
+
+// recordIncarnation hands the current URL to the recorder, if one is attached.
+// A failed history write is logged and otherwise ignored: it must never be
+// able to stop the tunnel from being published.
+func (m *Manager) recordIncarnation(url string) {
+	m.mu.Lock()
+	rec := m.recorder
+	m.mu.Unlock()
+	if rec != nil {
+		if err := rec.RecordTunnelIncarnation(time.Now(), url); err != nil {
+			log.Printf("tunnel: recording incarnation failed: %v", err)
+		}
 	}
 }
 

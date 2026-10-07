@@ -2,6 +2,7 @@
 
 import { RelayTester } from '../js/relay_tester.js';
 import { RelayManager, DEFAULT_RELAYS } from '../js/relay_manager.js';
+import { RelayRttHistory, sparklinePoints } from '../js/relay_rtt_history.js';
 
 /* ── Test helpers ──────────────────────────────────────────── */
 
@@ -164,6 +165,138 @@ mgr.add("wss://event-test.example.com");
 assert(eventFired, "Event fired on add");
 mgr.remove("wss://event-test.example.com");
 unsub();
+
+/* ── RTT history ─────────────────────────────────────────────── */
+
+console.log("\n  [RTT History]");
+// A fake localStorage so the tests never touch the real one.
+function fakeStorage(initial) {
+  const map = new Map(Object.entries(initial || {}));
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k),
+    _map: map,
+  };
+}
+
+{
+  const storage = fakeStorage();
+  globalThis.localStorage = storage;
+  const h = new RelayRttHistory({ storageKey: "t1" });
+  h.record("wss://a.example.com", 120);
+  h.record("wss://a.example.com", 480);
+  h.record("wss://a.example.com", 90);
+  assert(h.get("wss://a.example.com").join(",") === "120,480,90",
+    "samples are kept oldest first: " + h.get("wss://a.example.com").join(","));
+  assert(h.measured("wss://a.example.com").join(",") === "120,480,90",
+    "measured() returns only the samples that carry a number");
+
+  // A fresh instance must recover the series from storage.
+  const reloaded = new RelayRttHistory({ storageKey: "t1" });
+  assert(reloaded.get("wss://a.example.com").join(",") === "120,480,90",
+    "the window survives a reload");
+}
+
+// A failure is recorded as a gap, never as a number: a fabricated latency
+// would read as "it answered, slowly".
+{
+  globalThis.localStorage = fakeStorage();
+  const h = new RelayRttHistory({ storageKey: "t2" });
+  h.record("wss://a.example.com", 120);
+  h.record("wss://a.example.com", null);
+  assert(h.get("wss://a.example.com").join(",") === "120,",
+    "a failed probe becomes a gap: " + JSON.stringify(h.get("wss://a.example.com")));
+  assert(h.measured("wss://a.example.com").join(",") === "120",
+    "a gap is not averaged in as a zero");
+}
+
+// The window is bounded: this is written on every probe of every relay.
+{
+  globalThis.localStorage = fakeStorage();
+  const h = new RelayRttHistory({ storageKey: "t3", points: 5 });
+  for (let i = 0; i < 12; i++) h.record("wss://a.example.com", i);
+  const got = h.get("wss://a.example.com");
+  assert(got.length === 5, "the window is capped at points, got " + got.length);
+  assert(got.join(",") === "7,8,9,10,11",
+    "trimming keeps the newest samples: " + got.join(","));
+}
+
+{
+  globalThis.localStorage = fakeStorage();
+  const h = new RelayRttHistory({ storageKey: "t4" });
+  h.record("wss://a.example.com", 100);
+  h.forget("wss://a.example.com");
+  assert(h.get("wss://a.example.com").length === 0,
+    "forget() drops the series of a removed relay");
+}
+
+// Corrupt or hostile storage must not break the page.
+{
+  globalThis.localStorage = fakeStorage({ t5: "{not json" });
+  const h = new RelayRttHistory({ storageKey: "t5" });
+  assert(h.get("wss://a.example.com").length === 0, "corrupt storage starts empty");
+  h.record("wss://a.example.com", 50);
+  assert(h.get("wss://a.example.com").length === 1, "and still records afterwards");
+}
+{
+  globalThis.localStorage = fakeStorage({ t6: JSON.stringify(["not", "an", "object"]) });
+  const h = new RelayRttHistory({ storageKey: "t6" });
+  assert(h.get("wss://a.example.com").length === 0, "an array payload is ignored");
+}
+// Storage that throws (private mode / quota) must not break a background probe.
+{
+  globalThis.localStorage = {
+    getItem: () => { throw new Error("denied"); },
+    setItem: () => { throw new Error("quota"); },
+  };
+  const h = new RelayRttHistory({ storageKey: "t7" });
+  h.record("wss://a.example.com", 70);
+  assert(h.get("wss://a.example.com").join(",") === "70",
+    "with storage denied the series still works for this page view");
+}
+
+console.log("\n  [Sparkline]");
+assert(sparklinePoints([], 100) === "", "no samples draw nothing");
+assert(sparklinePoints([null, null], 100) === "", "all gaps draw nothing");
+// A gap must break the path, not be interpolated across.
+assert(sparklinePoints([100, null, 100], 200) === "0.00,20.00 100.00,20.00",
+  "a missing sample breaks the line: " + sparklinePoints([100, null, 100], 200));
+assert(sparklinePoints([100, 200], 200) === "0.00,20.00 100.00,2.00",
+  "two samples span the full width");
+// Vertical: the ceiling maps to the top of the box, so a value above it is
+// clamped to the top edge instead of drawing outside the viewBox.
+assert(sparklinePoints([1000], 1000) === "100.00,2.00", "the ceiling sits at the top: " + sparklinePoints([1000], 1000));
+assert(sparklinePoints([5000], 1000) === "100.00,2.00",
+  "a value above the ceiling is clamped to the top edge: " + sparklinePoints([5000], 1000));
+assert(sparklinePoints([0], 1000) === "100.00,38.00", "zero sits at the bottom");
+assert(sparklinePoints([-5], 1000) === "100.00,38.00", "a negative value is clamped to the bottom");
+
+// The manager records a probe result into the history.
+{
+  globalThis.localStorage = fakeStorage();
+  const history = new RelayRttHistory({ storageKey: "t8" });
+  const m2 = new RelayManager().withHistory(history);
+  const url = m2.getAll()[0].url;
+  m2._results.set(url, { url, ok: true, rttMs: 250 });
+  m2._recordRtt(url, m2._results.get(url));
+  assert(history.get(url).join(",") === "250", "a successful probe is recorded");
+  m2._results.set(url, { url, ok: false, rttMs: 0, error: "timeout" });
+  m2._recordRtt(url, m2._results.get(url));
+  assert(history.get(url).join(",") === "250,",
+    "a failed probe is recorded as a gap, not skipped");
+  m2.remove(url);
+  assert(history.get(url).length === 0,
+    "removing a relay forgets its series instead of leaving it in storage");
+}
+
+// A manager with no history attached keeps its old behaviour.
+{
+  globalThis.localStorage = fakeStorage();
+  const m3 = new RelayManager();
+  assert(m3.history === null, "history is opt-in");
+  m3._recordRtt("wss://x.example.com", { ok: true, rttMs: 10 });
+}
 
 // Summary
 console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===");

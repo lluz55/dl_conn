@@ -1,6 +1,7 @@
 /* relay_manager.js — CRUD, persistence, smart relay selection */
 
 import { RelayTester } from './relay_tester.js';
+import { RelayRttHistory } from './relay_rtt_history.js';
 
 const STORAGE_KEY = "dl_conn_relays";
 
@@ -26,8 +27,20 @@ export class RelayManager {
     /** @type {Map<string,{ok:boolean,rttMs:number,nip11:object|null,subscriptionOk:boolean,lastChecked:string,error?:string}>} */
     this._results = new Map();
     this.tester = new RelayTester();
+    /**
+     * Rolling RTT window per relay, so a drifting relay can be told apart
+     * from a steady one. Opt-in by injection: tests that construct a manager
+     * without one keep exactly the behaviour they had.
+     */
+    this.history = null;
     this._listeners = [];
     this._load();
+  }
+
+  /** Attach an RTT history. Called by the app; absent in bare unit tests. */
+  withHistory(history) {
+    this.history = history;
+    return this;
   }
 
   /* ── Persistence ─────────────────────────────────────────────── */
@@ -84,6 +97,10 @@ export class RelayManager {
     if (idx === -1) throw new Error("Relay not found");
     this._relays.splice(idx, 1);
     this._results.delete(url);
+    // Drop the RTT series too, or a removed relay's history lingers in
+    // storage for a relay the user no longer has — and would come back if the
+    // same URL were ever added again, showing a trend that never happened.
+    if (this.history) this.history.forget(url);
     this._save();
   }
 
@@ -111,6 +128,7 @@ export class RelayManager {
   async testRelay(url) {
     const result = await this.tester.testRelay(url);
     this._results.set(url, result);
+    this._recordRtt(url, result);
     this._emit("test", result);
     return result;
   }
@@ -119,9 +137,22 @@ export class RelayManager {
   async testAll() {
     const urls = this.getActiveUrls();
     const results = await this.tester.testAll(urls);
-    results.forEach((r) => this._results.set(r.url, r));
+    results.forEach((r) => {
+      this._results.set(r.url, r);
+      this._recordRtt(r.url, r);
+    });
     this._emit("test-all", results);
     return results;
+  }
+
+  /**
+   * Feed one result into the RTT history. A failed probe is recorded as a gap
+   * (null) rather than skipped, so a relay that keeps failing leaves a visible
+   * trail rather than freezing its last good reading on screen.
+   */
+  _recordRtt(url, result) {
+    if (!this.history || !result) return;
+    this.history.record(url, result.ok ? result.rttMs : null);
   }
 
   /** @returns {string[]} sorted by best RTT + success rate */
