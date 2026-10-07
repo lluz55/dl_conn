@@ -28,13 +28,22 @@ Tabela de amostras (`internal/store/telemetry.go`), uma linha por coleta:
 | `cpu_temp_c` / `cpu_load1/5/15` / `cpu_freq_mhz` | REAL | `/sys`/`/proc` |
 | `ram_used_pct` / `ram_used_mb` / `ram_total_mb` | REAL/INT | `/proc/meminfo` |
 | `disk_*` | REAL/INT | `/proc/mounts` + statfs |
-| `gpu_temp_c` / `gpu_util_pct` | REAL | `nvidia-smi` (fail-soft) |
+| `gpu_*` | REAL | `/sys/class/drm/card*` + fdinfo do DRM (qualquer driver); `nvidia-smi` só em placas NVIDIA |
 | `batt_capacity_pct` / `batt_status` | INT/TEXT | `/sys/class/power_supply` |
 | `uptime_s` | INT | `/proc/uptime` |
 
 As unidades são estáveis (MiB, °C, %) para facilitar teste e para o SPA
 converter para a unidade legível no cliente (ver
 [host-telemetry.md](host-telemetry.md)).
+
+O snapshot é guardado como **JSON** na coluna `data`, não colunar: o schema da
+tabela é uma linha `ts` + uma coluna de texto, e acrescentar um campo ao
+snapshot não migra nada. Por isso `gpu.vendor` / `gpu.driver` chegaram depois
+sem migration — linhas antigas simplesmente não trazem o campo, e o front trata
+ausência como "daemon anterior" em vez de inventar um vendor (ver
+`gpuVendorName()`). O payload Nostr (`internal/nostr.HostTelemetry`) é um
+struct compacto **separado** e não ganhou os campos novos: mudá-lo é mudança de
+protocolo, não de coleta.
 
 ## Quando trocar de estratégia
 

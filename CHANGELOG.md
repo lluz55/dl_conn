@@ -9,7 +9,35 @@ arquivo não é lido por nenhum código.
 
 ## [Não publicado]
 
+### Corrigido
+
+- O painel de saúde do host afirmava **"Este host não reporta GPU — a coleta usa
+  nvidia-smi"** em máquinas que têm uma GPU e não é NVIDIA. `ReadGPU()` rodava
+  `nvidia-smi` e devolvia snapshot vazio onde o binário não existe — no host de
+  desenvolvimento, que tem uma Intel (`0x8086`, driver `i915`) e nenhum
+  `nvidia-smi`. A coleta agora pergunta ao kernel qual é a placa do host, por
+  `/sys/class/drm/card*`, e lê o que cada driver publica: hwmon da placa
+  (temperatura, em amdgpu/nouveau/NVIDIA open), `gpu_busy_percent` (a carga que a
+  SMU calcula, no amdgpu) e os **DRM client usage stats** — `drm-engine-*: <ns>`
+  em `/proc/<pid>/fdinfo`, a única fonte de utilização que não depende de
+  vendor e portanto a única que funciona num Intel. O `nvidia-smi` continua no
+  fim da fila, para o driver proprietário, e só é chamado quando existe uma
+  placa NVIDIA. O contador cumulativo vira percentual por delta, então a
+  primeira amostra depois de um restart reporta a utilização como desconhecida
+  em vez de zero. Os filtros de janela (`1h` / `24h` / `7d`) do gráfico não
+  foram alterados.
+
 ### Adicionado
+
+- `gpu.vendor` e `gpu.driver` no snapshot: códigos estáveis (`amd`, `intel`,
+  `nvidia`, `other`) que permitem ao painel nomear a placa real — o medidor
+  passa a ler "GPU · Intel" e a unidade da série "utilização da NVIDIA".
+  Códigos, não nomes traduzidos: quem escreve as palavras em pt-BR é o front,
+  em um lugar só. `missingMetricReason()` passou a separar as três ausências
+  distintas (sem placa nenhuma, com placa que não reporta nada, com placa sem
+  utilização) em vez de repetir a desculpa do `nvidia-smi`. O snapshot é
+  persistido como JSON, então o campo novo não exige migração; linhas antigas
+  simplesmente não o trazem e o front trata a ausência como "daemon anterior".
 
 - Categoria de **temperatura** no gráfico de histórico do painel de saúde do
   host, com a unidade `°C`, o eixo em 0..100 °C e a linha de alerta em 80 °C.

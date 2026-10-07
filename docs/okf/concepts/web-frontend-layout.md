@@ -159,9 +159,11 @@ O card Saúde do host tem três blocos, nesta ordem:
      do cliente é só rede de segurança.
    - Sem dado o painel distingue **quatro** estados — carregando, erro do
      daemon, host sem a métrica e janela sem amostras. A métrica ausente é o
-     caso da GPU: `missingMetricReason()` diz que a coleta usa `nvidia-smi` em
-     vez de repetir "sem amostras", que é indistinguível de um gráfico
-     quebrado.
+     caso da GPU: `missingMetricReason()` diz que `/sys/class/drm` não lista
+     nenhuma placa em vez de repetir "sem amostras", que é indistinguível de um
+     gráfico quebrado. A GPU tem **três** ausências distintas — sem placa, com
+     placa que não reporta nada, com placa sem utilização — porque o daemon
+     agora pergunta ao host qual é a placa dele, e não mais só à NVIDIA.
    - A carga é autolimitada (cooldown de 30 s por tentativa, cadência de 5 min
      por sucesso) e falha **não** apaga a série já desenhada. O botão de janela
      passa `force`, porque um intervalo novo invalida a resposta anterior.

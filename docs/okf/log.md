@@ -6,6 +6,77 @@ type: log
 
 ## 2026-10-07
 
+- **A coleta de GPU perguntava à NVIDIA num host que tinha uma Intel.** O
+  sintoma não era um painel vazio: era o painel affirmando, com todas as
+  letras, "Este host não reporta GPU — a coleta usa nvidia-smi" **no host de
+  desenvolvimento**, que tem `/sys/class/drm/card1` com vendor `0x8086` e
+  driver `i915`. A leitura vinha de `ReadGPU()`, que executava `nvidia-smi` e
+  devolvia snapshot vazio quando o binário não existia — e `nvidia-smi` não
+  existe ali. A frase era verdadeira como descrição do *código* e falsa como
+  descrição do *host*, e é esse o tipo de texto que o painel não deveria
+  repetir.
+  - **A pergunta certa não é "esta máquina tem NVIDIA", é "qual placa o
+    kernel enumerou".** `/sys/class/drm/card*` é a lista do próprio kernel e
+    vale para qualquer driver; cada `cardN` traz `vendor`, `uevent`
+    (`DRIVER=`, `PCI_SLOT_NAME=`) e os sensores do seu driver. Só `cardN`
+    conta — `card0-DP-1` é conector, `renderD128` é nó de render, e os três
+    dividiriam a mesma leitura por três.
+  - **O que desbloqueia o Intel é uma fonte que não tem vendor nenhum.** Os
+    *DRM client usage stats* (`drm-engine-<nome>: <ns>` em
+    `/proc/<pid>/fdinfo/<fd>`) são documentados pelo kernel como nanoseconds
+    acumulados de tempo ocupado, iguais em i915, xe, amdgpu, nouveau e
+    Panfrost. Um iGPU Intel não publica nada em sysfs — nem temperatura, nem
+    carga — então essa é a única leitura de utilização possível nele. Virou
+    percentual por delta, então precisa da leitura anterior (`GPUUsage`) e a
+    primeira amostra depois de um restart não reporta nada: desconhecido não é
+    zero.
+  - **O `nvidia-smi` continua no fim da fila, por um motivo bom.** Ele agrega
+    os engines sozinho, o driver proprietário não publica hwmon na maioria dos
+    kernels, e um percentual que ele calcula bate um delta de nanos crus. Ele
+    só é chamado quando existe uma placa NVIDIA — forkar um processo para
+    perguntar sobre um cartão que não existe era parte do custo anterior.
+  - **Em duas placas, o medidor segue a mais carregada.** O host híbrido (iGPU
+    Intel + dGPU NVIDIA) não tem uma GPU só, e a interessante é a que trabalha:
+    fixar o medidor numa placa fixa lê 0% para sempre na que o usuário espera.
+    Desempate por temperatura e depois por slot PCI, para duas amostras de um
+    host parado não piscarem entre placas. Temp e utilização saem sempre da
+    **mesma** placa — misturar as duas seria um número sobre hardware nenhum.
+  - **Ausência de leitura é ausência, não zero.** Um mapa de fdinfo vazio
+    significa "nenhum cliente com descriptor aberto" **ou** "este driver não
+    publica contadores", e as duas coisas são o mesmo mapa vazio. Quando não dá
+    para distinguir, a leitura falta em vez de mentir com uma linha de zeros —
+    a mesma regra do `meterState()`: valor desconhecido nunca vira valor
+    saudável. Já a GPU que *estava* com clientes e ficou sem nenhum é 0%, porque
+    sem descriptor não há trabalho em curso.
+  - **O custo foi medido antes de otimizar.** O `/proc` inteiro a cada amostra,
+    um `readlink` por descriptor: **10 ms** em 398 processos, dos quais ~2,6 mil
+    são do próprio usuário. A ideia de pular os processos de outros usuários por
+    `stat` foi implementada e medida: 11,3 ms contra 10,1 ms — ruído, porque o
+    `ReadDir` de um `/proc/<pid>/fd` alheio já falha com `EACCES` no `open()`.
+    A otimização foi descartada e o código ficou mais simples. Com cadência de
+    10 s são 0,1% de um núcleo, na goroutine do coletor e fora do caminho de
+    requisição.
+  - **Os filtros de janela não foram tocados.** `1h` / `24h` / `7d` continuam
+    sendo a mesma `historyState.windowSec` com o mesmo `?from=`/`?to=`; o que
+    mudou é o conteúdo que a série da GPU traz. Uma GPU AMD/Intel só tem pontos
+    a partir deste deploy — antes disso as linhas antigas são `gpu: null` e a
+    série começa onde a coleta começa, que é o comportamento já existente de
+    janela parcial (a linha de status diz "· últimos 47 h").
+  - **O painel passou a nomear a placa.** `gpu.vendor` / `gpu.driver` são
+    *códigos* estáveis, nunca nome traduzido: quem põe as palavras em pt-BR é o
+    front, em um lugar só (`GPU_VENDOR_LABELS`). O medidor vira "GPU · Intel" e
+    a unidade da série "utilização da NVIDIA", pelo mesmo motivo de
+    `tempSourceLabel()` nomear o sensor de origem — num host com duas placas, uma
+    série sem nome é ambígua. `missingMetricReason()` passou a separar as três
+    ausências em vez de repetir a excuse do `nvidia-smi`.
+  - **O payload Nostr não mudou.** `internal/nostr.HostTelemetry` é um struct
+    compacto separado; acrescentar `gpu_vendor` nele é mudança de protocolo, não
+    de coleta, e fica para um pedido explícito.
+
+  Registrado em
+  [concepts/host-telemetry.md](concepts/host-telemetry.md) e
+  [concepts/data-model.md](concepts/data-model.md).
+
 - **A métrica "Carga" saiu do seletor: ela desenhava a mesma linha de "CPU".**
   A aba "Carga" e a aba "CPU" não eram duas grandezas parecidas — eram a mesma
   série. `cpuPercent()` faz `(load1 / num_cpu) × 100` e a curva de 1 min da

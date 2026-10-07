@@ -5,7 +5,7 @@ title: Host Telemetry
 
 # Host Telemetry
 
-Collect host health (CPU temp/load/freq, RAM, disk, uptime, GPU, battery) on the Linux daemon via `/sys` and `/proc` (and `nvidia-smi` optionally). Persist locally in SQLite (without SQLCipher) with retention; expose to the SPA via authenticated `GET /api/host/telemetry` (same-origin, session cookie) and optionally via the Nostr discovery response (`host_telemetry` field, opt-in).
+Collect host health (CPU temp/load/freq, RAM, disk, uptime, GPU, battery) on the Linux daemon via `/sys` and `/proc` (and `nvidia-smi` optionally, for NVIDIA cards). Persist locally in SQLite (without SQLCipher) with retention; expose to the SPA via authenticated `GET /api/host/telemetry` (same-origin, session cookie) and optionally via the Nostr discovery response (`host_telemetry` field, opt-in).
 
 ## Why
 Users running dl_conn locally want to diagnose "why is my service slow" without SSH. Local-only by default; Nostr exposure is opt-in (`telemetry.exposeViaNostr=false` by default) because relays see kind/created_at/size.
@@ -15,7 +15,7 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
 - RAM: `/proc/meminfo`.
 - Disk: `/proc/mounts` + statfs for ext4/btrfs/xfs.
 - Uptime: `/proc/uptime`.
-- GPU: `nvidia-smi` (2s timeout, fail-soft).
+- GPU: **whatever card the kernel enumerated** — `/sys/class/drm/card*` plus per-driver counters (see "Qual GPU o host tem" below).
 - Battery: `/sys/class/power_supply/BAT*/capacity`.
 
 ## How
@@ -23,6 +23,90 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
 - `internal/store` SQLite via `modernc.org/sqlite`, single writer, `Prune` hourly.
 - `internal/telemetry.Handler` at `GET /api/host/telemetry` (requires ValidSession).
 - `internal/nostr.HostTelemetry` optional field in `ResponsePayload` when `telemetry.exposeViaNostr=true`.
+
+## Qual GPU o host tem
+
+A coleta de GPU foi, por anos, uma chamada a `nvidia-smi`. O sintoma disso não
+era um host sem GPU: era o painel dizendo, com todas as letras, "Este host não
+reporta GPU — a coleta usa nvidia-smi" **num host com uma AMD ou uma Intel
+funcionando**. A pergunta certa não é "esta máquina tem NVIDIA", e sim "qual
+placa o kernel enumerou".
+
+`/sys/class/drm/card*` é a lista do próprio kernel, e vale para qualquer driver.
+Cada `cardN` ganha um `device/` com `vendor` (PCI vendor id), `uevent`
+(`DRIVER=`, `PCI_SLOT_NAME=`) e os sensores daquele driver. Só `cardN` conta:
+`card0-DP-1` é um conector e `renderD128` é um nó de render, e os três dividiriam
+a mesma leitura por três.
+
+**O slot PCI é a identidade que costura as três fontes.** sysfs nomeia a placa
+por diretório, o fdinfo do DRM por `drm-pdev` e o `nvidia-smi` por
+`pci.bus_id` — e os três discordam na largura do domínio (`0000:03:00.0` contra
+`00000000:03:00.0`). `normalizeSlot()` corta o domínio para `bus:dev.func`, que
+é o único pedaço em comum; sem isso a Junção do Intel nunca casa.
+
+Três fontes, da mais específica para a mais geral:
+
+| Fonte | Traz | Onde |
+|---|---|---|
+| hwmon da placa | `temp1_input` (milidegundos), canais 1–3 | `device/hwmon/hwmon*/` — amdgpu, nouveau, NVIDIA open |
+| `gpu_busy_percent` | % de carga direto do SMU | `device/` — só amdgpu |
+| DRM usage stats | `drm-engine-<nome>: <ns>` cumulativo | `/proc/<pid>/fdinfo/<fd>` — **qualquer driver** |
+| `nvidia-smi` | temp + % agregados | driver proprietário NVIDIA |
+
+O **DRM usage stats** é o que resolve o Intel: é a única fonte de utilização em
+que não há vendor nenhum — o kernel documenta `drm-engine-<name>` como
+nanoseconds acumulados de tempo ocupado, igual em i915, xe, amdgpu, nouveau e
+Panfrost. O `nvidia-smi` continua no fim da fila por uma razão boa: ele agrega
+os engines sozinho, o driver proprietário não publica hwmon na maioria dos
+kernels, e um percentual que ele calcula bate um delta de nanos crus. Ele só é
+chamado quando existe uma placa NVIDIA na máquina — não faz sentido forkar um
+processo para perguntar sobre um cartão que não existe.
+
+Três decisões que o código toma e que valem mais que o código:
+
+- **Contadores cumulativos viram percentual por delta.** Um contador sem
+  leitura anterior não tem intervalo atrás dele, então a primeira amostra depois
+  de um restart **não reporta utilização** — desconhecido, não zero. `GPUUsage`
+  guarda a leitura anterior e a parede entre as duas.
+- **O percentual é o motor mais ocupado, não a soma.** Render, copy e vídeo
+  rodam em paralelo; somar passa de 100% e teria de ser limitado de qualquer
+  jeito, enquanto o mais ocupado é o que "a GPU está ocupada" quer dizer e o
+  que cabe no eixo 0..100 do painel.
+- **Uma GPU sem cliente DRM é 0%, não ausente.** Sem descriptor aberto não há
+  trabalho em curso; some-la do mapa apagaria a placa do gráfico exatamente
+  quando ela ficou ociosa. A distinção que *não* dá para fazer é "nenhum cliente
+  aqui" de "este driver não publica contadores" — os dois são um mapa vazio. No
+  caso ambíguo a leitura **falta** em vez de mentir com zeros, que é a mesma
+  regra do `meterState()` no front: valor desconhecido nunca vira valor saudável.
+
+**Qual placa responde pelo painel.** O host híbrido — iGPU Intel junto de dGPU
+NVIDIA — não tem uma GPU só, e a interessante é a que está trabalhando: fixar
+o medidor numa placa fixa lê 0% para sempre justamente na que o usuário está
+esperando. Então a escolha é **a mais carregada**, com desempate por temperatura
+e depois por slot PCI — os desempates existem para que duas amostras seguidas de
+um host parado venham da mesma placa em vez de piscar entre duas. As duas
+leituras (temp e utilização) saem sempre **da mesma placa**: uma temperatura
+emprestada da iGPU ao lado de uma utilização da dGPU seria um número sobre
+hardware nenhum da máquina. E o que a coleta responde é a placa com leituras, ou
+a primeira quando nenhuma tem — "esta máquina tem uma Intel que não reporta
+nada" e "esta máquina não tem GPU" são fatos diferentes, e o painel precisa
+distingui-los.
+
+**O custo da varredura é medido.** O `/proc` é percorrido inteiro a cada
+amostra, com um `readlink` por descriptor e a leitura do `fdinfo` só dos que
+apontam para `/dev/dri`. No host de desenvolvimento, 398 processos: **10 ms** por
+amostra, dos quais ~2,6 mil são `readlink` do próprio usuário. Descartar os
+processos de outros usuários por `stat` foi medido e **descartado**: o
+`ReadDir` de um `/proc/<pid>/fd` alheio já falha com `EACCES` no `open()`
+(11,3 ms contra 10,1 ms — ruído), então o filtro só somaria uma chamada de
+sistema por processo. Com a cadência padrão de 10 s são 0,1% de um núcleo, na
+goroutine do coletor e fora do caminho de requisição.
+
+**O que continua igual:** `nvidia-smi` com timeout de 2 s e falha suave, e a
+série de histórico. Uma GPU AMD/Intel só tem pontos na série a partir do deploy
+desta mudança — antes disso as linhas antigas são `gpu: null`, e a série
+começa onde a coleta começa, que é o comportamento honesto de uma janela
+parcial (a linha de status já diz "· últimos 47 h").
 
 ## Frontend rendering (web/app.js)
 
@@ -85,8 +169,12 @@ gráfico de série (`#hist-*`). Três decisões o mantêm utilizável:
    sem a métrica, janela sem amostras — porque "sem amostras" para uma GPU que
    o host nunca reportou lia como gráfico quebrado. `missingMetricReason()`
    consulta o último snapshot ao vivo para essa distinção; no caso da GPU ele
-   diz que a coleta usa `nvidia-smi`, que é a razão real em qualquer host sem
-   NVIDIA.
+   separa **três** fatos que antes colapsavam numa frase errada: não há placa
+   nenhuma em `/sys/class/drm`, há uma placa que não reporta nada, e há uma
+   placa que reporta temperatura mas não utilização. A mensagem antiga ("a
+   coleta usa nvidia-smi") era verdadeira enquanto fosse a história inteira, e
+   continuava na tela num host com uma AMD perfeitamente sadia — que é
+   exatamente o relato que motivou a coleta vendor-agnostic.
 4. **Uma resposta que não é um array é um daemon antigo, e se diz isso.**
    Um build anterior à consulta de intervalo ignora `?from=` e responde com o
    objeto do snapshot. Nenhuma versão do front conserta isso, então a mensagem
@@ -157,7 +245,10 @@ produção (extraída do fonte) em vez de manter uma cópia que derivaria dela.
   são misturadas numa série só: uma linha que trocasse de fonte no meio
   seria uma mentira sobre o host.
 - `gpu` continua sendo **utilização**, que é a grandeza da barra do medidor.
-  A temperatura tem sua própria métrica em vez de dividirem um eixo.
+  A temperatura tem sua própria métrica em vez de dividirem um eixo. A unidade
+  da série nomeia a placa (`gpuSourceLabel()`, "utilização da NVIDIA"), pelo
+  mesmo motivo de `tempSourceLabel()` nomear o sensor de origem: num host com
+  duas placas, uma série sem nome é ambígua.
 - **"Carga" saiu do seletor porque duplicava "CPU".** As duas leriam
   `(load1 / num_cpu) × 100` do mesmo campo do mesmo snapshot — não duas
   grandezas parecidas, a mesma série ponto a ponto. O que só a duplicata
