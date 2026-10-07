@@ -146,6 +146,9 @@ import {
     histWindowGroup: $("hist-window-group"),
     servicesAvailability: $("services-availability"),
     availList: $("avail-list"),
+    availAxisStart: $("avail-axis-start"),
+    availAxisMid: $("avail-axis-mid"),
+    availAxisEnd: $("avail-axis-end"),
     availWindowGroup: $("avail-window-group"),
     tunnelTimeline: $("tunnel-timeline"),
     tunnelTimelineBlock: $("tunnel-timeline-block"),
@@ -166,6 +169,9 @@ import {
     histFill: $("hist-fill"),
     histLine: $("hist-line"),
     histStatus: $("hist-status"),
+    histAxisStart: $("hist-axis-start"),
+    histAxisMid: $("hist-axis-mid"),
+    histAxisEnd: $("hist-axis-end"),
     histChartFrame: document.querySelector("#host-telemetry-section .chart-frame"),
     btnToggleDebug: $("btn-toggle-debug"),
     debugSection: $("debug-section"),
@@ -429,6 +435,49 @@ import {
   }
 
   /**
+   * Host uptime as the two largest units that carry the magnitude.
+   *
+   * Hours stop being readable early: a box up 45 days read as "1080h", which
+   * is not obviously "since last month" and cannot be placed on a calendar
+   * at all, so the duration is decomposed instead. The month is the usual
+   * 30-day convention — an uptime is a duration, not a date, and there is no
+   * calendar to divide by.
+   *
+   * Minutes are the floor: below an hour they are the only unit that applies
+   * ("42 min"); from one hour up the value shows the largest unit and the one
+   * below it ("1 h 0 min", "3 d 17 h", "2 sem 3 d", "1 mês 1 sem"). Two units
+   * is what fits the badge, and the pair is enough to read the value as a date.
+   * "min" stays spelled out: a bare "m" would be ambiguous between minute and
+   * month, and "sem" is the abbreviation a pt-BR dashboard uses for week.
+   *
+   * The value is in seconds, matching `uptime_s` from /proc/uptime.
+   */
+  function formatUptime(total) {
+    if (total == null || isNaN(total) || total < 0) return "—";
+    // [singular, plural, seconds]: the month is the only unit that inflects,
+    // since it is the only one spelled out and long enough to read as a word.
+    const units = [
+      ["mês", "meses", 30 * 24 * 3600],
+      ["sem", "sem", 7 * 24 * 3600],
+      ["d", "d", 24 * 3600],
+      ["h", "h", 3600],
+      ["min", "min", 60],
+    ];
+    let rest = Math.floor(total);
+    // A leading zero is not a unit of the value: under an hour nothing above
+    // "min" applies, so the first shown unit becomes the last real one.
+    let i = 0;
+    while (i < units.length - 1 && rest < units[i][2]) i++;
+    const parts = [];
+    for (; i < units.length && parts.length < 2; i++) {
+      const n = Math.floor(rest / units[i][2]);
+      rest -= n * units[i][2];
+      parts.push(n + " " + units[i][n === 1 ? 0 : 1]);
+    }
+    return parts.join(" ");
+  }
+
+  /**
    * Render a capacity given in mebibytes (the unit the Go daemon emits) using
    * the most readable binary unit (base 1024): MB -> GB -> TB -> PB.
    * Input is always an integer count of 1 MiB blocks, so 1024 MiB = 1 GiB and
@@ -510,6 +559,8 @@ import {
       else if (snap.batt_capacity_pct != null) el.telBatt.textContent = snap.batt_capacity_pct + "% " + (snap.batt_status || "");
       else el.telBatt.textContent = "—";
     }
+    if (el.telUpdated) el.telUpdated.textContent = formatUptime(snap.uptime_s);
+    updateLiveBadgeTip();
     if (typeof renderMeters === "function") renderMeters(snap);
     if (typeof renderStorage === "function") renderStorage(snap);
   }
@@ -961,9 +1012,18 @@ import {
    * and the in-flight one issues it on the way out — otherwise the button
    * repainted as selected while nothing was ever asked for, and the old window
    * stayed on screen until HISTORY_REFRESH_MS let the poll through.
+   *
+   * `fromUnix` / `toUnix` are the window the daemon actually served, kept with
+   * the series so the drawing can be placed against real time instead of array
+   * position. They are part of the series' identity for the same reason
+   * `windowSec` is: a series without the window it came from cannot be drawn
+   * honestly, because a 24h and a 7d answer are both 240 points and index-based
+   * x renders the two windows identically.
    */
   const historyState = {
     windowSec: 604800,
+    fromUnix: 0,
+    toUnix: 0,
     metric: "cpu",
     samples: null,
     inFlight: false,
@@ -1006,6 +1066,81 @@ import {
   }
 
   /**
+   * Map a sample instant onto the chart's 0..100 x range, against the window
+   * the daemon actually served rather than the sample's position in the array.
+   *
+   * Position is what made the window buttons look dead. A 24h and a 7d answer
+   * are both 240 points, so index-based x drew the two windows pixel for pixel
+   * identically — clicking the button changed the data underneath and nothing
+   * on screen. The same choice stretched two days of a young host across a
+   * chart labelled "7d", and squeezed a 90-minute outage in a 24h window (6.5%
+   * of the window) into one slot (0.44% of the width).
+   *
+   * Returns `(ts, index) => x`. The index is only used by the positional
+   * fallback, which applies before any answer has landed — a window of zero
+   * span would otherwise collapse every sample onto one x.
+   */
+  function historyX(fromUnix, toUnix, count) {
+    const span = toUnix - fromUnix;
+    if (span > 0) {
+      return (ts) => Math.max(0, Math.min(100, ((ts - fromUnix) / span) * 100));
+    }
+    return (_ts, i) => (count > 1 ? (i / (count - 1)) * 100 : 100);
+  }
+
+  /**
+   * One timestamp as a chart-axis label, at a precision the window can carry.
+   *
+   * Minutes are enough for a one-hour window and useless across a week, where
+   * the same label would read as the same instant seven times over; days alone
+   * lose the hour on a window short enough for the hour to be the interesting
+   * part. So the format follows the span rather than being fixed.
+   */
+  function historyAxisLabel(unixSec, spanSec) {
+    const d = new Date(unixSec * 1000);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    if (spanSec <= 6 * 3600) return hh + ":" + mm;
+    if (spanSec <= 48 * 3600) return dd + "/" + mo + " " + hh + ":" + mm;
+    return dd + "/" + mo;
+  }
+
+  /** Human duration for the status line: "45 min", "3 h", "2 d". */
+  function historySpanLabel(sec) {
+    if (sec < 3600) return Math.round(sec / 60) + " min";
+    if (sec < 48 * 3600) return Math.round(sec / 3600) + " h";
+    return Math.round(sec / 86400) + " d";
+  }
+
+  /**
+   * Paint the window's ends under the chart.
+   *
+   * The axis is the reason a window change is legible at all: without it the
+   * two charts are geometry-only, and "1h" versus "7d" of a steady host is two
+   * identical flat lines. It marks the window the daemon served — a series
+   * that does not reach the left edge is saying the host was not up for the
+   * whole window, which is true and worth seeing rather than stretching away.
+   */
+  function renderHistoryAxis() {
+    if (!el.histAxisStart || !el.histAxisEnd) return;
+    const span = historyState.toUnix - historyState.fromUnix;
+    if (span <= 0) {
+      el.histAxisStart.textContent = "";
+      if (el.histAxisMid) el.histAxisMid.textContent = "";
+      el.histAxisEnd.textContent = "";
+      return;
+    }
+    el.histAxisStart.textContent = historyAxisLabel(historyState.fromUnix, span);
+    if (el.histAxisMid) {
+      el.histAxisMid.textContent = historyAxisLabel(
+        historyState.fromUnix + Math.round(span / 2), span);
+    }
+    el.histAxisEnd.textContent = historyAxisLabel(historyState.toUnix, span);
+  }
+
+  /**
    * Draw a metric's extra curves (everything past the first) onto the soft
    * polylines, sharing the primary's x positions.
    *
@@ -1018,10 +1153,9 @@ import {
    * on `metric.series`, not on that metric: the next multi-curve metric needs
    * no new code, and the polylines it would draw are already in the markup.
    */
-  function drawSecondarySeries(metric, reduced, toY, nodes) {
+  function drawSecondarySeries(metric, reduced, toY, toX, nodes) {
     const extra = (metric.series || []).slice(1);
     if (!extra.length) return;
-    const step = reduced.length > 1 ? 100 / (reduced.length - 1) : 0;
 
     extra.forEach((def, i) => {
       const node = nodes[i];
@@ -1038,7 +1172,7 @@ import {
           current = [];
           return;
         }
-        const x = (reduced.length > 1 ? idx * step : 100).toFixed(2);
+        const x = toX(p[0], idx).toFixed(2);
         current.push(x + "," + toY(v));
       });
       if (current.length) segments.push(current);
@@ -1094,6 +1228,10 @@ import {
     const reduced = downsample(points, HISTORY_MAX_POINTS);
 
     if (el.histChartFrame) el.histChartFrame.classList.toggle("is-empty", !reduced.length);
+
+    // The window's ends, painted whatever the series contains: an axis that
+    // disappears with the data cannot say how far back "7d" really reaches.
+    renderHistoryAxis();
 
     // Gridlines: four horizontal rules plus the warn threshold marker.
     if (el.histGrid) {
@@ -1155,19 +1293,19 @@ import {
       return;
     }
 
-    // x is positional, not time-linear: a gap in sampling should read as
-    // a gap, and an even spread keeps the line continuous.
-    const step = reduced.length > 1 ? 100 / (reduced.length - 1) : 0;
-    const coords = reduced.map((p, i) => {
-      const x = reduced.length > 1 ? i * step : 100;
-      return x.toFixed(2) + "," + toY(p[1]);
-    });
+    // x is placed against real time, not array position — see historyX(). The
+    // fill is anchored to the first and last drawn x rather than to 0 and 100,
+    // so a series that starts late does not paint empty canvas as if it were
+    // part of the window.
+    const toX = historyX(historyState.fromUnix, historyState.toUnix, reduced.length);
+    const coords = reduced.map((p, i) => toX(p[0], i).toFixed(2) + "," + toY(p[1]));
     el.histLine.setAttribute("points", coords.join(" "));
     if (el.histFill) {
-      const lastX = ((reduced.length - 1) * step).toFixed(2);
+      const firstX = toX(reduced[0][0], 0).toFixed(2);
+      const lastX = toX(reduced[reduced.length - 1][0], reduced.length - 1).toFixed(2);
       el.histFill.setAttribute(
         "points",
-        ["0,40"].concat(coords).concat([lastX + ",40"]).join(" ")
+        [firstX + ",40"].concat(coords).concat([lastX + ",40"]).join(" ")
       );
     }
 
@@ -1176,7 +1314,7 @@ import {
     // representative snapshot the bucket kept. Downsampling them apart would
     // let the 5- and 15-minute curves drift out from under the 1-minute one
     // they are meant to be read against.
-    drawSecondarySeries(metric, reduced, toY, secondary);
+    drawSecondarySeries(metric, reduced, toY, toX, secondary);
 
     const values = reduced.map((p) => p[1]);
     const last = values[values.length - 1];
@@ -1195,8 +1333,21 @@ import {
     if (el.histMax) el.histMax.textContent = max.toFixed(0) + unit;
     if (el.histStatus) {
       const hours = Math.round(historyState.windowSec / 3600);
-      const window = hours >= 24 ? Math.round(hours / 24) + "d" : hours + "h";
-      el.histStatus.textContent = reduced.length + " amostras · janela de " + window;
+      // Spelled the way the button spells it. "24h" was being announced as
+      // "1d", so the control and the line under it disagreed about which
+      // window was on screen.
+      const label = hours % 24 === 0 ? hours / 24 + "d" : hours + "h";
+      let text = reduced.length + " amostras · janela de " + label;
+      // When the host has not been recording for the whole window, say so:
+      // the line is drawn at its real position now, and its left edge sitting
+      // short of the axis is only honest if the status line agrees.
+      const first = reduced[0][0];
+      const lastPt = reduced[reduced.length - 1][0];
+      const covered = lastPt - first;
+      if (covered > 0 && covered < historyState.windowSec * 0.9) {
+        text += " · últimos " + historySpanLabel(covered);
+      }
+      el.histStatus.textContent = text;
     }
   }
 
@@ -1254,6 +1405,8 @@ import {
       // freshness moves, so the poll stays free to answer the selected window.
       if (windowSec !== historyState.windowSec) return;
       historyState.samples = data;
+      historyState.fromUnix = from;
+      historyState.toUnix = to;
       historyState.lastSuccess = Date.now();
       historyState.error = null;
     } catch (err) {
@@ -1459,6 +1612,10 @@ import {
       // request, so the panel says which one it is.
       el.servicesAvailability.classList.remove("hidden");
       host.replaceChildren();
+      // An axis with no strips under it would label nothing.
+      for (const node of [el.availAxisStart, el.availAxisMid, el.availAxisEnd]) {
+        if (node) node.textContent = "";
+      }
       const empty = document.createElement("p");
       empty.className = "status-sub";
       empty.textContent = hostHistoryState.error
@@ -1473,6 +1630,18 @@ import {
     el.servicesAvailability.classList.remove("hidden");
     const from = Number(data.from) || 0;
     const to = Number(data.to) || 0;
+    // One axis above every strip, because they all share the window. It is also
+    // the only thing that makes the window buttons legible here: a strip is
+    // AVAILABILITY_SLOTS cells wide whatever the window, so on a host that was
+    // simply up the whole time "1h" and "7d" are the same row of green.
+    const span = to - from;
+    if (span > 0 && el.availAxisStart) {
+      el.availAxisStart.textContent = historyAxisLabel(from, span);
+      if (el.availAxisMid) {
+        el.availAxisMid.textContent = historyAxisLabel(from + Math.round(span / 2), span);
+      }
+      if (el.availAxisEnd) el.availAxisEnd.textContent = historyAxisLabel(to, span);
+    }
     const frag = document.createDocumentFragment();
 
     for (const id of ids) {
@@ -1604,30 +1773,43 @@ import {
 
 
   /**
-   * Update the "ao vivo / ha Xs" badge. 'ok' reflects whether the last fetch
-   * succeeded; on failure we keep the last good snapshot on screen but flag
-   * the badge as stale so the user sees telemetry is no longer refreshing
-   * instead of a frozen value that looks live.
+   * Liveness of the live badge. The visible text is the host's uptime and
+   * belongs to renderTelemetry(); this owns only the stale flag, so a failed
+   * poll cannot leave the badge still reading as live.
+   *
+   * It used to also swap the text to "indisponivel" and back. The 1s ticker
+   * called updateLiveBadge(true) every second — it tested lastTelemetryAt,
+   * which stays set from the last *good* poll — so one failed poll flipped the
+   * badge to "indisponivel" and was overwritten a second later, over and over.
+   * Staleness is now a state of the dot, not a word that competes with uptime
+   * for the same slot and flickers between the two.
    */
   function updateLiveBadge(ok) {
-    if (!el.telUpdated) return;
-    if (!ok) {
-      el.telUpdated.textContent = "indisponivel";
-      if (el.telLive) el.telLive.classList.add("is-stale");
-      return;
-    }
-    if (el.telLive) el.telLive.classList.remove("is-stale");
-    const secs = lastTelemetryAt ? Math.floor((Date.now() - lastTelemetryAt) / 1000) : 0;
-    const prefix = telemetrySource === "nostr" ? "Nostr · " : "";
-    el.telUpdated.textContent = secs < 5 ? prefix + "ao vivo" : prefix + "ha " + secs + "s";
+    if (el.telLive) el.telLive.classList.toggle("is-stale", !ok);
+    updateLiveBadgeTip();
   }
 
-  /** 1s ticker so the "ha Xs" label counts up between telemetry fetches. */
+  /**
+   * The badge's tooltip: how long the host has been up, plus how old the
+   * reading behind it is. Tooltip only — a per-second counter belongs here
+   * because here it cannot be mistaken for the value on screen.
+   */
+  function updateLiveBadgeTip() {
+    if (!el.telLive) return;
+    const snap = lastSnapshot;
+    const parts = [];
+    if (snap && snap.uptime_s != null) parts.push("ligado há " + formatUptime(snap.uptime_s));
+    if (lastTelemetryAt) {
+      const secs = Math.floor((Date.now() - lastTelemetryAt) / 1000);
+      parts.push(secs < 5 ? "leitura ao vivo" : "leitura há " + secs + "s");
+    }
+    el.telLive.title = parts.join(" · ") || "Telemetria do host em tempo real";
+  }
+
+  /** 1s ticker for the badge tooltip; it never rewrites the visible uptime. */
   function startLiveTicker() {
     if (liveTicker) clearInterval(liveTicker);
-    liveTicker = setInterval(function () {
-      if (lastTelemetryAt) updateLiveBadge(true);
-    }, 1000);
+    liveTicker = setInterval(updateLiveBadgeTip, 1000);
   }
 
   /**

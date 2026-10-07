@@ -2263,6 +2263,26 @@ body {
 
 .chart-frame { display: flex; flex-direction: column; gap: var(--gap-xs); }
 
+/* The window's time axis. Sits directly under the plot and spans exactly its
+   width, so a label is only ever read against the slice of window above it.
+   Three labels rather than one per tick: an axis dense enough to carry a tick
+   per point costs more horizontal room than the plot has on a phone. */
+.chart-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--gap-2xs);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-3);
+}
+
+.chart-axis-label { white-space: nowrap; }
+.chart-axis-label--mid { opacity: 0.7; }
+/* Without a mid label the two ends stay centred as a pair instead of being
+   pushed apart by an empty middle. */
+.chart-axis-label:empty { display: none; }
+
 .series-chart {
   display: block;
   width: 100%;
@@ -2364,6 +2384,15 @@ body {
   grid-template-columns: minmax(0, 120px) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--gap-sm);
+}
+
+/* The window axis, laid out on the same grid as a row so its labels sit over
+   the cells column rather than over the service name. */
+.availability-axis {
+  display: grid;
+  grid-template-columns: minmax(0, 120px) minmax(0, 1fr) auto;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-2xs);
 }
 
 .availability-name {

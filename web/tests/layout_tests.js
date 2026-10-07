@@ -259,8 +259,32 @@ assert(
   "The live badge stays in the host head, so 'is it reporting?' survives the collapse",
 );
 assert(
-  !/tel-uptime|formatUptime/.test(html) && !/telUptime|formatUptime/.test(app),
-  "The host uptime indicator is gone from the markup and the app — the live badge answers liveness",
+  /id="tel-live"[\s\S]*?id="tel-updated"/.test(html) && !/id="tel-uptime"/.test(html),
+  "Uptime lives inside the live badge (#tel-updated), not in a second pill beside it",
+);
+assert(
+  /function formatUptime\(/.test(app) && /el\.telUpdated\.textContent = formatUptime\(snap\.uptime_s\)/.test(app),
+  "The badge's text is the host uptime, formatted as its two largest units",
+);
+// The flicker: the badge must not swap its text between the uptime and a status
+// word. Staleness belongs to the dot's class, which only a poll result changes.
+assert(
+  !/textContent = "indisponivel"/.test(app) && !/textContent = "indisponível"/.test(app),
+  "The badge never rewrites its text to a failure word — that is what made it alternate",
+);
+assert(
+  /classList\.toggle\("is-stale", !ok\)/.test(app) &&
+    !/setInterval\(function \(\) \{\s*if \(lastTelemetryAt\) updateLiveBadge\(true\)/.test(app),
+  "Only a poll result sets is-stale; the 1s ticker no longer resurrects a failed badge",
+);
+// The window buttons are only legible if the chart says which window it drew.
+assert(
+  /id="hist-axis"/.test(html) && /id="avail-axis"/.test(html) && /renderHistoryAxis/.test(app),
+  "Both charts carry a time axis, so 1h/24h/7d is visible and not just a different set of numbers",
+);
+assert(
+  /function historyX\(/.test(app) && /const toX = historyX\(historyState\.fromUnix, historyState\.toUnix/.test(app),
+  "The series is placed against the served window, not against its position in the array",
 );
 assert(
   /id="session-setup-body"[\s\S]*?id="unlock-ui"[\s\S]*?id="login-ui"[\s\S]*?id="btn-clear-all"/.test(html) &&

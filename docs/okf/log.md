@@ -1504,3 +1504,48 @@ Principais decisões:
    `nostr.Handler` agora implementam `UpdateServices` sob `sync.RWMutex`. O roteador
    atualiza as instâncias de `httputil.ReverseProxy` em memória sem interromper
    requisições ativas.
+
+## Fase 18 — Os botões de janela mostravam a janela errada (e o badge piscava)
+
+Duas correções no painel de saúde do host, ambas sobre "o que a tela afirma" em
+vez de "o que o daemon devolve".
+
+**O filtro 1h/24h/7d carregava a janela certa desde `d90f5b1` e mesmo assim não
+mudava nada na tela.** O botão não era o defeito: o desenho é que não carregava
+tempo. `renderHistory` lia o timestamp de cada amostra e o descartava — o x era
+`i * step`, o índice do array escalado de 0 a 100. Como 24h e 7d devolvem 240
+pontos cada, as duas janelas eram desenhadas pixel a pixel idênticas, e num host
+tranquilo a linha não mudava de forma: o botão marcava como selecionado e a
+tela ficava igual. A mesma escolha media outras duas mentiras, ambas medidas
+contra um store real: uma janela parcial era esticada pela largura toda (daemon
+no ar há 2 dias → janela de 7d devolvia 69 pontos cobrindo 28,3% do intervalo,
+rotulados "7d"), e um buraco de 90 min numa janela de 24h — 6,25% do tempo —
+era desenhado com um slot (0,42% da largura), escondendo a falha.
+
+Agora `historyX(fromUnix, toUnix, count)` posiciona pelo timestamp contra a
+janela servida, e essa janela entrou na identidade da série
+(`historyState.fromUnix`/`toUnix`), gravada junto com `samples` e descartada
+junto com a resposta de outra janela. O eixo do tempo (`#hist-axis`, e
+`#avail-axis` sobre as faixas de disponibilidade) é o que torna a janela
+legível — sem ele, `1h` e `7d` de um host estável são a mesma linha reta. A
+faixa de disponibilidade já era time-linear e não tinha o bug do gráfico, mas
+tinha o mesmo problema de leitura: 60 células em qualquer janela significavam
+`1h` e `7d` como a mesma fileira de verde. Quando a série cobre bem menos que a
+janela pedida, a linha de status passa a dizer "· últimos 47 h" — a borda da
+linha parando antes do eixo só é honesta se o texto concordar com ela.
+
+O status passou a repetir o rótulo do botão: `24h` era anunciado como
+`janela de 1d`.
+
+**O badge de uptime alternava entre o uptime e "indisponível" sem parar.** Duas
+causas, uma arrumada junto com a outra: o texto do badge era a idade da última
+leitura em segundos ("ha 12s"), e `startLiveTicker` chamava
+`updateLiveBadge(true)` a cada segundo testando `lastTelemetryAt` — que continua
+setado pelo último poll *bom*. Então uma única falha virava "indisponível" e era
+sobrescrita um segundo depois, para sempre. O uptime voltou para o badge
+(`#tel-updated`, as duas maiores unidades via `formatUptime()`, restaurada de
+`cf39828`) e a vivacidade passou a ser a classe `is-stale` no ponto — um estado,
+não uma palavra. O ticker de 1 s agora só atualiza o tooltip ("ligado há
+3 d 17 h · leitura há 4s"): dois significados disputando o mesmo slot piscam.
+
+Registrado em [concepts/host-telemetry.md](concepts/host-telemetry.md).

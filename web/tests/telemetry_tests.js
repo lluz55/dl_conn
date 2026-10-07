@@ -108,6 +108,9 @@ function extractConstValue(src, name) {
 }
 
 const formatCapacityBody = extractFunction(appJs, 'formatCapacity');
+const formatUptimeBody = extractFunction(appJs, 'formatUptime');
+const historyAxisLabelBody = extractFunction(appJs, 'historyAxisLabel');
+const historySpanLabelBody = extractFunction(appJs, 'historySpanLabel');
 const renderTelemetryBody = extractFunction(appJs, 'renderTelemetry');
 const downsampleBody = extractFunction(appJs, 'downsample');
 const historyErrorLabelBody = extractFunction(appJs, 'historyErrorLabel');
@@ -147,12 +150,15 @@ assert((appJs.match(/setInterval\(fetchTelemetry, TELEMETRY_POLL_MS\)/g) || []).
   "initial and visibility-resume polling use the shared interval");
 assert(/if \(telemetryFetchInFlight\) return;/.test(appJs), "slow telemetry requests do not overlap");
 
-// renderTelemetry calls formatCapacity internally. Since function declarations
-// inside a new Function body don't get hoisted to the wrapped scope, we
-// inline the formatCapacity body as a const at the top.
+// renderTelemetry calls formatCapacity, formatUptime and updateLiveBadgeTip
+// internally. Since function declarations inside a new Function body don't get
+// hoisted to the wrapped scope, the two formatters are passed in as parameters
+// and the tooltip updater is stubbed — it reads closure state (lastSnapshot,
+// lastTelemetryAt) that this isolated scope does not have.
 const formatCapacity = new Function('mb', formatCapacityBody);
+const formatUptime = new Function('total', formatUptimeBody);
 const renderTelemetry = new Function(
-  'snap', 'el',
+  'snap', 'el', 'formatUptime', 'updateLiveBadgeTip',
   'const formatCapacity = ' + formatCapacity + ';\n' +
   renderTelemetryBody
 );
@@ -182,6 +188,7 @@ const el = {
   telDisk: makeEl(),
   telGpu: makeEl(),
   telBatt: makeEl(),
+  telUpdated: makeEl(),
 };
 
 renderTelemetry({
@@ -191,7 +198,7 @@ renderTelemetry({
   gpu: { temp_c: 70.0, util_pct: 25.0 },
   battery: { available: true, capacity_pct: 80, status: "Discharging" },
   uptime_s: 7320,
-}, el);
+}, el, formatUptime, function () {});
 
 assert(el.telCpu.textContent.includes("65.5°C"), "CPU shows temp: " + el.telCpu.textContent);
 assert(el.telCpu.textContent.includes("load"), "CPU shows load: " + el.telCpu.textContent);
@@ -206,6 +213,8 @@ assert(el.telGpu.textContent.includes("70.0°C"), "GPU shows temp: " + el.telGpu
 assert(el.telGpu.textContent.includes("25%"), "GPU shows util: " + el.telGpu.textContent);
 assert(el.telBatt.textContent.includes("80%"), "Battery shows pct: " + el.telBatt.textContent);
 assert(el.telBatt.textContent.includes("Discharging"), "Battery shows status: " + el.telBatt.textContent);
+assert(el.telUpdated.textContent === "2 h 2 min",
+  "the badge shows the uptime as its two largest units: " + el.telUpdated.textContent);
 
 renderTelemetry({
   cpu: { load1: 1.0 },
@@ -214,7 +223,7 @@ renderTelemetry({
   gpu: null,
   battery: { available: false },
   uptime_s: 0,
-}, el);
+}, el, formatUptime, function () {});
 assert(el.telCpu.textContent.includes("load"), "CPU without temp still shows load");
 assert(el.telRam.textContent === "—", "RAM missing → em dash");
 assert(el.telDisk.textContent === "—", "Disks empty → em dash");
@@ -231,7 +240,7 @@ renderTelemetry({
   gpu_temp_c: 60.0, gpu_util_pct: 10.0,
   batt_capacity_pct: 75, batt_status: "Charging",
   uptime_s: 1234,
-}, el);
+}, el, formatUptime, function () {});
 assert(el.telCpu.textContent.includes("50.0°C"), "compact CPU temp: " + el.telCpu.textContent);
 assert(el.telRam.textContent.includes("40.0%"), "compact RAM pct");
 assert(el.telDisk.textContent.includes("/"), "compact mountpoint");
@@ -248,11 +257,94 @@ renderTelemetry({
     { mountpoint: "/data", used_pct: 12.0, used_mb: 120000, total_mb: 1000000 },
   ],
   cpu: null, gpu: null, battery: { available: false }, uptime_s: 0,
-}, el);
+}, el, formatUptime, function () {});
 assert(el.telDisk.textContent.includes("/"), "multi-disk: root shown");
 assert(el.telDisk.textContent.includes("/data"), "multi-disk: data mount shown");
 assert(el.telDisk.textContent.includes("195.3 GB"), "multi-disk: / used 200000 MB → 195.3 GB");
 assert(el.telDisk.textContent.includes("976.6 GB"), "multi-disk: /data total 1000000 MB → 976.6 GB");
+
+console.log("\n=== formatUptime Tests (two largest units) ===");
+assert(formatUptime(null) === "—", "null → em dash");
+assert(formatUptime(NaN) === "—", "NaN → em dash");
+assert(formatUptime(-1) === "—", "negative → em dash");
+assert(formatUptime(0) === "0 min", "zero → 0 min");
+assert(formatUptime(45 * 60) === "45 min", "under an hour → minutes alone");
+assert(formatUptime(7320) === "2 h 2 min", "two hours → " + formatUptime(7320));
+assert(formatUptime(3600) === "1 h 0 min", "exactly one hour is not a bare 1h");
+assert(formatUptime(86400 * 3 + 3600 * 17) === "3 d 17 h", "three days → " + formatUptime(86400 * 3 + 3600 * 17));
+assert(formatUptime(86400 * 45) === "1 mês 2 sem", "45 days decomposes instead of reading 1080h: " + formatUptime(86400 * 45));
+assert(formatUptime(86400 * 30) === "1 mês 0 sem", "exactly a month → " + formatUptime(86400 * 30));
+// The whole point of the format: at most two units, and "mês" is the only one
+// that inflects to two words, so the count is over unit tokens and not spaces.
+assert(/^(?:\d+ (?:mês|meses|sem|d|h|min) )?\d+ (?:mês|meses|sem|d|h|min)$/.test(formatUptime(86400 * 400)),
+  "never more than two units: " + formatUptime(86400 * 400));
+
+console.log("\n=== historyX Tests (placement against the served window) ===");
+// historyX closes over nothing, so the whole declaration can be rebuilt here.
+const historyX = new Function('fromUnix', 'toUnix', 'count',
+  extractDeclaration(appJs, 'historyX') + '\nreturn historyX(fromUnix, toUnix, count);');
+const HOUR = 3600, DAY = 86400;
+// A window's ends must land on its edges, or the axis lies about coverage.
+{
+  const toX = historyX(1000, 1000 + 7 * DAY, 240);
+  assert(toX(1000) === 0, "window start sits at the left edge");
+  assert(toX(1000 + 7 * DAY) === 100, "window end sits at the right edge");
+  assert(Math.abs(toX(1000 + DAY) - 100 / 7) < 1e-9, "one day into 7d is one seventh across");
+}
+// The regression this exists for: 24h and 7d are both 240 points, so placing by
+// array index drew them identically and the window button looked dead. The same
+// instant now sits where the window says it should, not where its slot is.
+{
+  const start = 1000;
+  const x24 = historyX(start, start + DAY, 240);
+  const x7d = historyX(start, start + 7 * DAY, 240);
+  const twelveHoursBeforeTheEnd = start + 12 * HOUR;
+  assert(Math.abs(x24(twelveHoursBeforeTheEnd) - 50) < 1e-6,
+    "12h before the end is halfway across a 24h window");
+  assert(Math.abs(x7d(twelveHoursBeforeTheEnd) - ((12 * HOUR / (7 * DAY)) * 100)) < 1e-6,
+    "the same instant is near the right edge of a 7d window");
+  // A series evenly spread over its own window lands on the same points either
+  // way — which is exactly why index-based x hid the change between them.
+  const even = Array.from({ length: 240 }, (_, i) => start + (i / 239) * DAY);
+  assert(new Set(even.map((ts, i) => x24(ts, i).toFixed(4))).size === 240,
+    "an evenly-spread 24h series covers the width, so only the window tells them apart");
+  // A gap keeps its real width: a 90-minute hole is 6.25% of a 24h window, which
+  // index-based x drew as one slot (0.42%) and so rendered as an invisible notch.
+  const gapStart = start + 12 * HOUR, gapEnd = gapStart + 90 * 60;
+  const holeWidth = x24(gapEnd) - x24(gapStart);
+  assert(Math.abs(holeWidth - 6.25) < 1e-6,
+    "a 90-minute gap occupies its real share of the window: " + holeWidth.toFixed(2) + "%");
+  assert(holeWidth > (100 / 239) * 4,
+    "the outage is several times wider than the single slot index-based x gave it");
+}
+// A host that has not been up for the whole window occupies only its own share.
+{
+  const toX = historyX(1000, 1000 + 7 * DAY, 100);
+  const upTwoDaysAgo = 1000 + 5 * DAY;
+  assert(Math.abs(toX(upTwoDaysAgo) - (5 / 7) * 100) < 1e-9,
+    "two days of a seven-day window start five sevenths across, not at the left edge");
+}
+// Before any answer has landed there is no window; fall back to placement by
+// index rather than collapsing every sample onto one x.
+{
+  const toX = historyX(0, 0, 5);
+  assert(toX(0, 0) === 0 && toX(0, 4) === 100, "zero span falls back to the full width");
+}
+
+console.log("\n=== historyAxisLabel / historySpanLabel Tests ===");
+const historyAxisLabel = new Function('unixSec', 'spanSec', historyAxisLabelBody);
+const historySpanLabel = new Function('sec', historySpanLabelBody);
+{
+  const noon = new Date(2026, 0, 15, 14, 30).getTime() / 1000;
+  assert(/^\d{2}:\d{2}$/.test(historyAxisLabel(noon, HOUR)), "a 1h window labels by clock time");
+  assert(/^\d{2}\/\d{2} \d{2}:\d{2}$/.test(historyAxisLabel(noon, DAY)),
+    "a 24h window needs the day as well as the hour");
+  assert(/^\d{2}\/\d{2}$/.test(historyAxisLabel(noon, 7 * DAY)),
+    "a 7d window drops the hour, which repeats seven times over");
+}
+assert(historySpanLabel(45 * 60) === "45 min", "sub-hour span → minutes");
+assert(historySpanLabel(3 * HOUR) === "3 h", "hour span → hours");
+assert(historySpanLabel(2 * DAY) === "2 d", "multi-day span → days");
 
 console.log("\n=== History series tests ===");
 

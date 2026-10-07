@@ -31,17 +31,21 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
   readable binary unit - MB, GB, TB, PB, base 1024 - so the protocol stays
   byte-stable and easy to test. Do not move unit conversion into the Go API
   or the Nostr host_telemetry field; keep the daemon emitting MiB.
-- `uptime_s` is collected (`/proc/uptime`) and still travels in the payload,
-  but the SPA **does not render it**: the `#tel-uptime` pill and its
-  `formatUptime()` formatter were removed (see [log.md](../log.md),
-  2026-10-07). `formatUptime()` used to decompose the duration into
-  mês / sem / d / h / min showing the two largest units, because hours alone
-  made a host up 45 days read as "1080h" — neither readable nor placeable on a
-  calendar. Liveness is answered by the live badge (`tel-live` / `tel-updated`)
-  instead, which is also what stays visible when the meters are collapsed.
-  Removing the indicator is a frontend decision only: the daemon keeps
-  collecting and emitting `uptime_s`, so the API and the Nostr field stay
-  byte-stable. Bring the formatter back before reintroducing any display of it.
+- `uptime_s` is collected (`/proc/uptime`) and travels in the payload, and the
+  SPA renders it **in the live badge** (`tel-live` / `tel-updated`): the badge's
+  text is the host's uptime as its two largest units ("3 d 17 h"), because hours
+  alone made a host up 45 days read as "1080h" — neither readable nor placeable
+  on a calendar. `formatUptime()` decomposes into mês / sem / d / h / min and
+  never shows more than two of them.
+  Liveness is **not** a word in that slot. Staleness is the `is-stale` class on
+  the badge (the dot goes amber), set only by a poll result; the 1s ticker
+  refreshes the tooltip ("ligado há 3 d 17 h · leitura há 4s") and never the
+  text. It used to swap the text to "indisponivel" and back, and the ticker —
+  which tested `lastTelemetryAt`, still set from the last *good* poll —
+  resurrected the badge every second, so a single failed poll flickered between
+  the two states forever. Keep uptime and liveness on separate channels: two
+  meanings competing for one slot flicker.
+  (Ver [log.md](../log.md), Fase 18.)
 - All snap.disks get their **own row** in the Armazenamento block, not one
   averaged number: averaging hides exactly the volume that is filling up. But
   "one row per *mountpoint*" is not the same as "one row per disk": a bind
@@ -89,6 +93,52 @@ gráfico de série (`#hist-*`). Três decisões o mantêm utilizável:
    nomeia o fato de deployment ("o daemon em execução é anterior ao
    histórico…") em vez de virar um genérico "histórico indisponível" — a
    diferença entre o operador reinstalar e o operador caçar bug no front.
+
+### O eixo do tempo: por que os botões de janela pareciam mortos
+
+Os três botões (`1h` / `24h` / `7d`) carregavam a janela certa desde
+`d90f5b1`, e mesmo assim **trocar a janela não mudava nada na tela**. A causa
+não era o filtro: era o desenho não carregar tempo nenhum.
+
+O x era **posicional** — `i * step`, o índice do array escalado de 0 a 100 — e o
+timestamp de cada amostra era lido em `renderHistory` e **descartado** (só
+viajava por `downsample`, nunca virando coordenada). Três consequências, todas
+medidas contra um store real:
+
+- **24h e 7d devolvem 240 pontos cada.** Com x posicional as duas janelas eram
+  desenhadas pixel a pixel idênticas: a linha mudava de forma só se o dado
+  mudasse, e num host tranquilo o dado não muda. O botão marcava como
+  selecionado e a tela ficava igual.
+- **Uma janela parcial era esticada pela largura toda.** Com o daemon no ar há
+  2 dias, a janela de 7d devolvia 69 pontos cobrindo 28,3% do intervalo,
+  desenhados de ponta a ponta e rotulados "janela de 7d".
+- **Falhas sumiam.** Um buraco de 90 min no meio de uma janela de 24h ocupa
+  6,25% do tempo da janela e era desenhado com **um** slot (0,42% da largura):
+  uma falha de hora e meia virava um entalhe quase invisível.
+
+A correção é `historyX(fromUnix, toUnix, count)`: x sai do timestamp contra a
+janela que o daemon serviu, e essa janela passa a fazer parte da identidade da
+série (`historyState.fromUnix` / `toUnix`), gravada junto com `samples` e
+descartada junto com a resposta de outra janela. O `fill` ancora no primeiro e
+último x desenhados, não em 0 e 100.
+
+**Tempo no eixo é o que torna a janela legível**, não um enfeite: o eixo
+(`#hist-axis`, e `#avail-axis` sobre as faixas) é o que faz `1h` e `7d` de um
+host estável deixarem de ser a mesma linha reta. Três rótulos (início, meio,
+fim) em vez de um por ponto — um eixo denso o bastante para um tick por ponto
+gasta mais largura do que o gráfico tem num celular. `historyAxisLabel()` escolhe
+a precisão pelo-span: `HH:MM` até 6h, `DD/MM HH:MM` até 48h, `DD/MM` acima
+disso (a hora se repete sete vezes numa semana e vira ruído).
+
+Quando a série cobre bem menos que a janela pedida, a linha de status acrescenta
+"· últimos 47 h" — a borda esquerda da linha parando antes do eixo só é honesta
+se o texto concordar com ela.
+
+**A faixa de disponibilidade já era time-linear** (`availabilityStrip` mapeia
+`((ts - from) / span) * slots`), então ela não tinha o bug do gráfico — mas
+tinha o mesmo buraco de leitura: são `AVAILABILITY_SLOTS` células em qualquer
+janela, então num host que esteve de pé o tempo todo `1h` e `7d` são a mesma
+fileira de verde. O eixo compartilhado acima das faixas resolve isso.
 
 ### A tabela de métricas do gráfico (unidade por métrica)
 
