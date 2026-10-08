@@ -10,6 +10,11 @@ type Snapshot struct {
 	Disks     []DiskSnapshot  `json:"disks,omitempty"`
 	GPU       *GPUSnapshot    `json:"gpu,omitempty"`
 	Battery   *BatterySnapshot `json:"battery,omitempty"`
+	// Network is the per-interface byte counters and aggregate bytes-per-second
+	// rate. Bps is derived in the collector from the previous snapshot's
+	// counters, so the first sample after a daemon start reports only totals
+	// (RxBps/TxBps nil). See internal/sensors/network.go.
+	Network    *NetworkSnapshot `json:"network,omitempty"`
 	UptimeSec int64 `json:"uptime_s"`
 	// NumCPU is the logical core count at sample time. Load averages are
 	// only interpretable relative to it, so a dashboard needs both to turn

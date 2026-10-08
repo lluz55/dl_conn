@@ -17,6 +17,11 @@ type Collector struct {
 	// counters are cumulative, and only their delta against the wall clock is
 	// a utilization.
 	gpuUsage *GPUUsage
+	// netPrev carries the previous Network snapshot across samples so the
+	// collector can compute the bytes-per-second rate the same way gpuUsage
+	// derives a percentage from cumulative engine counters. Both are nil-safe
+	// on the very first sample.
+	netPrev *NetworkSnapshot
 
 	mu       sync.RWMutex
 	latest   *Snapshot
@@ -92,6 +97,35 @@ func (c *Collector) CollectOnce() Snapshot {
 	}
 	if batt, _ := ReadBattery(c.sysRoot); batt != nil && batt.Available {
 		snap.Battery = batt
+	}
+	if net, _ := ReadNetwork(c.procRoot); net != nil {
+		// Rate derivation needs two samples and the wall clock between them.
+		// A brand-new daemon (or a daemon that just lost its previous
+		// reading) gets only cumulative counters; one with a previous reading
+		// gets bytes-per-second as well.
+		if c.netPrev != nil && !c.netPrev.SampledAt.IsZero() && !snap.SampledAt.Equal(c.netPrev.SampledAt) {
+			elapsed := snap.SampledAt.Sub(c.netPrev.SampledAt).Seconds()
+			if elapsed > 0 {
+				if net.TotalRxBytes >= c.netPrev.TotalRxBytes {
+					delta := float64(net.TotalRxBytes - c.netPrev.TotalRxBytes)
+					rx := delta / elapsed
+					net.RxBps = &rx
+				}
+				if net.TotalTxBytes >= c.netPrev.TotalTxBytes {
+					delta := float64(net.TotalTxBytes - c.netPrev.TotalTxBytes)
+					tx := delta / elapsed
+					net.TxBps = &tx
+				}
+			}
+		}
+		// Carry the wall clock alongside the previous counters so the next
+		// sample can compute its delta. The struct's own SampledAt would be
+		// ideal, but reusing it on a value the caller owns would mutate the
+		// emitted snapshot.
+		prev := *net
+		prev.SampledAt = snap.SampledAt
+		c.netPrev = &prev
+		snap.Network = net
 	}
 	if up, _ := ReadUptime(c.procRoot); up != 0 {
 		snap.UptimeSec = up
