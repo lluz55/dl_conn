@@ -17,6 +17,13 @@ Users running dl_conn locally want to diagnose "why is my service slow" without 
 - Uptime: `/proc/uptime`.
 - GPU: **whatever card the kernel enumerated** — `/sys/class/drm/card*` plus per-driver counters (see "Qual GPU o host tem" below).
 - Battery: `/sys/class/power_supply/BAT*/capacity`.
+- Network: `/proc/net/dev`. Aggregate byte counters per interface, plus
+  RX/TX bytes-per-second derived from the previous sample (see
+  `internal/sensors/network.go`). Loopback, IP aliases (`eth0:1`) and veth
+  peers (`vethXYZ@if5`) are filtered from the aggregate — they alias a
+  parent device or count intra-host traffic that does not reflect the
+  real link. Per-interface totals are exposed for the "qual interface
+  está carregando" use case.
 
 ## How
 - `internal/sensors.Collector` with 10s ticker (configurable).

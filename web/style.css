@@ -2170,6 +2170,67 @@ body {
   white-space: nowrap;
 }
 
+/* ── Per-interface network ───────────────────────────────────────
+   Mirrors .storage-* layout so the two sub-blocks read as a pair.
+   Each row holds two stacked bars (RX on top, TX below) drawn from
+   one SVG with two <rect> tracks + two <rect> fills whose width is
+   set via setAttribute — the same CSP-safe pattern as the storage
+   bar. The aggregate row gets the threshold tone; per-if rows stay
+   neutral because they are relative to the busiest interface this
+   sample, not a hard ceiling. */
+.network-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.network-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 7rem) minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) 0;
+  min-width: 0;
+}
+
+.network-aggregate {
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: var(--gap-sm);
+  margin-bottom: var(--gap-2xs);
+}
+
+.network-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-rate {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-3);
+  white-space: nowrap;
+  text-align: end;
+  min-width: 0;
+}
+
+.network-bar { display: block; width: 100%; height: 14px; }
+.network-track { fill: var(--meter-track); }
+.network-fill { fill: currentColor; }
+
+.network-row.is-warn,
+.network-row.is-warn .network-fill { color: var(--color-warning); }
+.network-row.is-crit,
+.network-row.is-crit .network-fill { color: var(--color-error); }
+.network-row:not(.is-warn):not(.is-crit) { color: var(--color-primary); }
+
 /* ── Segmented control (window + metric pickers) ───────────────── */
 .seg-group {
   display: inline-flex;
@@ -2479,6 +2540,17 @@ body {
   .storage-pct { grid-area: pct; }
   .storage-bar { grid-area: bar; }
   .storage-size { grid-area: size; }
+
+  .network-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name rate"
+      "bar  bar";
+    row-gap: var(--gap-2xs);
+  }
+  .network-name { grid-area: name; }
+  .network-rate { grid-area: rate; }
+  .network-bar { grid-area: bar; }
 
   .chart-panel { padding: var(--gap-sm); }
   .chart-stats { gap: var(--gap-sm); }

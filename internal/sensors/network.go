@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // NetworkSnapshot reports per-interface RX/TX byte counters and the
@@ -32,6 +34,11 @@ type NetworkSnapshot struct {
 	RxBps        *float64        `json:"rx_bps,omitempty"`
 	TxBps        *float64        `json:"tx_bps,omitempty"`
 	Ifaces       []NetworkIface  `json:"ifaces,omitempty"`
+	// SampledAt is the wall clock at which the byte counters were read.
+	// It travels with the struct only so the collector can compute the
+	// next delta — it is never serialized, because the snapshot itself
+	// already carries its own SampledAt at the top level.
+	SampledAt time.Time `json:"-"`
 }
 
 // NetworkIface is one entry from /proc/net/dev. Name is the kernel interface
@@ -73,6 +80,14 @@ func ReadNetwork(procRoot string) (*NetworkSnapshot, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var snap *NetworkSnapshot
+	// ifaceNameRE matches the interface name column in /proc/net/dev:
+	// a non-greedy run of printable characters terminated by the field
+	// separator (a colon followed by whitespace and a digit). Using a
+	// regex keeps the parser correct in the face of aliases like
+	// "eth0:1" (whose name itself contains a colon) and veth peers like
+	// "veth1234@if5" (whose name contains an at-sign). The previous
+	// implementation split on the first colon, which mis-parsed both.
+	var ifaceNameRE = regexp.MustCompile(`^\s*(?P<name>[\w@:.-]+):\s+\d`)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -80,18 +95,18 @@ func ReadNetwork(procRoot string) (*NetworkSnapshot, error) {
 		}
 		// Skip the two header lines ("Inter-|   Receive ...", " face |bytes ...")
 		// — neither starts with a printable interface name.
-		if !strings.Contains(line, ":") {
+		m := ifaceNameRE.FindStringSubmatch(line)
+		if m == nil {
 			continue
 		}
-		colon := strings.Index(line, ":")
-		name := strings.TrimSpace(line[:colon])
-		if name == "" {
-			continue
-		}
+		name := m[ifaceNameRE.SubexpIndex("name")]
 		if shouldExcludeIface(name) {
 			continue
 		}
-		fields := strings.Fields(line[colon+1:])
+		// Slice the line at the separator colon so the field tokenizer
+		// sees the standard /proc/net/dev payload (receive bytes first).
+		colon := strings.Index(line, name+":")
+		fields := strings.Fields(line[colon+len(name)+1:])
 		// /proc/net/dev layout: receive bytes is field 0, transmit bytes is
 		// field 8 (after packets/errs/drops/fifo/frame/compressed).
 		if len(fields) < 9 {
@@ -117,17 +132,24 @@ func ReadNetwork(procRoot string) (*NetworkSnapshot, error) {
 	}
 	return snap, nil
 }
-
 // shouldExcludeIface filters interfaces whose counters either belong to
-// loopback traffic or alias a real device. Both add noise to the aggregate
-// rate without telling the user anything about the host's real link.
+// loopback traffic, alias a real device, or belong to a virtual peer that
+// only exists inside the host's own network namespace. All three add noise
+// to the aggregate rate without telling the user anything about the host's
+// real link.
 func shouldExcludeIface(name string) bool {
 	if name == "lo" || strings.HasPrefix(name, "lo:") {
 		return true
 	}
-	// Aliases (eth0:1) and veth peers (vethXYZ@if5) — both have a colon in
-	// the name and report the same physical traffic as the parent.
+	// IP aliases like "eth0:1" — they alias the parent's byte counters and
+	// counting them twice would inflate the aggregate.
 	if strings.Contains(name, ":") {
+		return true
+	}
+	// veth peers are written by the kernel as "veth<id>@if<idx>"; the
+	// counters belong to traffic inside the host's namespaces (bridges,
+	// containers, WireGuard) and are not a host link.
+	if strings.Contains(name, "@") {
 		return true
 	}
 	return false

@@ -35,6 +35,33 @@ type: log
   leitura "vejo o host, depois o túnel".
   - Registrado em [concepts/web-frontend-layout.md](concepts/web-frontend-layout.md).
 
+
+- **Novo sensor `network` + bloco "Rede" no painel.** O backend ganha
+  `internal/sensors/network.go` lendo `/proc/net/dev`, com filtros:
+  `lo` e aliases `lo:` caem (loopback não satura link), qualquer nome
+  com `:` cai (são aliases `eth0:1` ou peers veth `vethXYZ@if5` que
+  duplicam o contador do dispositivo físico). O snapshot expõe
+  `network.{total_rx_bytes,total_tx_bytes,rx_bps,tx_bps,ifaces[]}` —
+  `rx_bps/tx_bps` são `*float64` e ficam `nil` na primeira amostra;
+  quem deriva a taxa é o `Collector` via `netPrev`, o mesmo padrão do
+  `gpuUsage` para a leitura de DRM engine. O frontend ganha o sub-bloco
+  `#tel-network` entre o throttle-note e o storage, com aggregate row
+  (`RX {rx} · TX {tx}` em KB/MB/s) e linhas por interface (totais em MB
+  por iface). Tolerância ao formato achatado Nostr (`snap.net_rx_bps` /
+  `snap.net_tx_bps`) idêntica à que `cpuPercent` já faz para
+  `cpu_temp_c`/`cpu_load1`, ambos documentados em
+  [concepts/protocol.md](concepts/protocol.md). Limiar warn/crit do
+  aggregate usa 100 MB/s como teto conservador (≈ 800 Mbps, ceiling
+  real de um link gigabit) — um host 2.5G/10G rodando flat senta em
+  warn, o que é honesto: não sabemos o teto dele. Bloco some quando
+  `/proc/net/dev` não existe (macOS, container sem /proc montado) — a
+  convenção de "ausência de leitura é ausência, não zero" que já vale
+  para GPU e bateria. Cobertura nova: `network_test.go` (parse,
+  filtros, vazio/malformado, delta entre duas amostras). O helper de
+  formatação `formatRate` é distinto de `formatCapacity` (base 1000 vs
+  1024, sufixo `/s` vs nada) —network tools e NIC counters usam decimal,
+  storage usa binário, e a divergência reflete a fonte.
+  - Registrado em [concepts/host-telemetry.md](concepts/host-telemetry.md).
 ## 2026-10-07
 
 - **A coleta de GPU perguntava à NVIDIA num host que tinha uma Intel.** O

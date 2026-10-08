@@ -143,6 +143,10 @@ import {
     telStorage: $("tel-storage"),
     telStorageList: $("tel-storage-list"),
     telStorageCount: $("tel-storage-count"),
+    telNetwork: $("tel-network"),
+    telNetworkList: $("tel-network-list"),
+    telNetworkCount: $("tel-network-count"),
+    telNet: $("tel-net"),
     histWindowGroup: $("hist-window-group"),
     servicesAvailability: $("services-availability"),
     availList: $("avail-list"),
@@ -494,6 +498,183 @@ import {
     return s.replace(/\.0$/, "") + " " + units[i];
   }
 
+  /**
+   * Render a rate given in bytes-per-second using the most readable
+   * decimal unit (base 1000): B/s -> KB/s -> MB/s -> GB/s.
+   *
+   * Distinct from formatCapacity: storage uses 1024 + binary suffixes
+   * (MB/GB/TB) because disk sizes are powers of two; traffic uses 1000 +
+   * decimal suffixes (KB/MB/GB) because NIC capacity counters and every
+   * network monitor (ifconfig, vnStat, prometheus) report decimal units,
+   * and "1 KB/s = 1000 B/s" matches what the user reads elsewhere.
+   *
+   * Sub-KB values render as "0 B/s" rather than "560 B/s" so a quiet link
+   * does not flicker between two adjacent decimal rows on every 2s polling
+   * tick.
+   */
+  function formatRate(bps) {
+    if (bps == null || isNaN(bps) || bps < 0) return "—";
+    if (bps < 1000) return "0 B/s";
+    const units = ["KB/s", "MB/s", "GB/s"];
+    let v = bps / 1000;
+    let i = 0;
+    while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+    const s = (Math.round(v * 10) / 10).toString();
+    return s.replace(/\.0$/, "") + " " + units[i];
+  }
+
+  /**
+   * Aggregate bandwidth assumed for warn/crit thresholding on the network
+   * bars, in bytes-per-second. There is no per-link configuration surface
+   * in the snapshot (and adding one is a separate decision — most LANs
+   * are a mix of 1G/2.5G/10G and the user cannot reliably predict the
+   * ceiling from the dashboard alone), so this is a conservative default
+   * that catches "this link is on fire" without flagging a saturated
+   * gigabit as critical.
+   *
+   * 100 MB/s ~= 800 Mbps, the realistic sustained ceiling of a gigabit
+   * link. Anything above 80 MB/s (640 Mbps) is warn; above 95 MB/s
+   * (760 Mbps) is crit. A 2.5G/10G host running flat-out sits at warn —
+   * which is the truth: we do not know its ceiling.
+   */
+  const NET_AGGREGATE_BPS = 100 * 1000 * 1000; // 100 MB/s
+  const NET_WARN_PCT = 80;
+  const NET_CRIT_PCT = 95;
+
+  /**
+   * Same flat-payload tolerance as cpuPercent: the Nostr discovery
+   * response (when telemetry.exposeViaNostr=true) sends top-level
+   * net_rx_bps / net_tx_bps scalars alongside the structured network
+   * object, because flattening pre-NIP-44 clients only know how to
+   * parse the scalar form. Both shapes are first-class; the structured
+   * one is preferred because it carries the per-interface breakdown.
+   */
+  function netRxBps(snap) {
+    if (!snap) return null;
+    if (snap.network && snap.network.rx_bps != null) return snap.network.rx_bps;
+    if (snap.net_rx_bps != null) return snap.net_rx_bps;
+    return null;
+  }
+
+  function netTxBps(snap) {
+    if (!snap) return null;
+    if (snap.network && snap.network.tx_bps != null) return snap.network.tx_bps;
+    if (snap.net_tx_bps != null) return snap.net_tx_bps;
+    return null;
+  }
+
+  function networkHasReading(snap) {
+    if (!snap) return false;
+    if (snap.network) return true;
+    return snap.net_rx_bps != null || snap.net_tx_bps != null ||
+           snap.network_total_rx_bytes != null || snap.network_total_tx_bytes != null;
+  }
+
+  /**
+   * Render per-interface network traffic plus an aggregate first row.
+   *
+   * Aggregate row reads "RX 1.2 MB/s · TX 240 KB/s" with stacked RX/TX
+   * bars whose width is set via setAttribute (CSP forbids inline style).
+   * Per-interface rows mirror the aggregate layout but show only the
+   * per-if totals — the user can already see the live aggregate above, so
+   * duplicating the rate here would just flicker.
+   *
+   * Hidden when the snapshot has no network reading at all: a fresh
+   * daemon (no previous sample to derive a rate from) still reports totals
+   * and the aggregate row shows "Total: X / Y", but no /proc/net/dev at
+   * all (macOS, containers without /proc) means the whole block
+   * disappears — same convention as the storage block.
+   */
+  function renderNetwork(snap) {
+    const host = el.telNetworkList;
+    if (!el.telNetwork || !host) return;
+    if (!networkHasReading(snap)) {
+      el.telNetwork.classList.add("hidden");
+      host.replaceChildren();
+      return;
+    }
+    el.telNetwork.classList.remove("hidden");
+
+    const ifaces = (snap.network && snap.network.ifaces) || [];
+    const totalRx = (snap.network && snap.network.total_rx_bytes != null)
+      ? snap.network.total_rx_bytes
+      : snap.network_total_rx_bytes;
+    const totalTx = (snap.network && snap.network.total_tx_bytes != null)
+      ? snap.network.total_tx_bytes
+      : snap.network_total_tx_bytes;
+    const rx = netRxBps(snap);
+    const tx = netTxBps(snap);
+
+    if (el.telNetworkCount) {
+      const n = ifaces.length;
+      el.telNetworkCount.textContent = n === 1 ? "1 interface" : n + " interfaces";
+    }
+
+    const frag = document.createDocumentFragment();
+
+    // Aggregate: always first. Threshold tone follows the more loaded
+    // direction so a saturated uplink shows up the same way a saturated
+    // downlink does.
+    const agg = document.createElement("li");
+    agg.className = "network-row network-aggregate";
+    const aggLabel = rx != null || tx != null
+      ? "RX " + formatRate(rx) + " · TX " + formatRate(tx)
+      : "Total: " + (totalRx != null ? formatCapacity(totalRx / 1024 / 1024) : "—") +
+        " / " + (totalTx != null ? formatCapacity(totalTx / 1024 / 1024) : "—");
+    agg.innerHTML =
+      '<span class="network-name">Total</span>' +
+      '<span class="network-rate">' + aggLabel + '</span>' +
+      '<svg class="network-bar" viewBox="0 0 100 14" preserveAspectRatio="none" aria-hidden="true">' +
+        '<rect class="network-track" x="0" y="0" width="100" height="6"></rect>' +
+        '<rect class="network-fill" id="agg-rx" x="0" y="0" width="0" height="6"></rect>' +
+        '<rect class="network-track" x="0" y="8" width="100" height="6"></rect>' +
+        '<rect class="network-fill" id="agg-tx" x="0" y="8" width="0" height="6"></rect>' +
+      "</svg>";
+    agg.querySelector("#agg-rx").setAttribute("width",
+      rx != null ? Math.max(0, Math.min(100, (rx / NET_AGGREGATE_BPS) * 100)).toFixed(2) : "0");
+    agg.querySelector("#agg-tx").setAttribute("width",
+      tx != null ? Math.max(0, Math.min(100, (tx / NET_AGGREGATE_BPS) * 100)).toFixed(2) : "0");
+    const aggPct = Math.max(
+      rx != null ? (rx / NET_AGGREGATE_BPS) * 100 : 0,
+      tx != null ? (tx / NET_AGGREGATE_BPS) * 100 : 0);
+    if (aggPct >= NET_CRIT_PCT) agg.classList.add("is-crit");
+    else if (aggPct >= NET_WARN_PCT) agg.classList.add("is-warn");
+    frag.appendChild(agg);
+
+    // Per-interface rows: each link with its own RX/TX bars. Per-if rate
+    // is not in the current snapshot (only the aggregate has it), so the
+    // per-if bars use totals relative to the busiest interface this sample
+    // — a quiet interface renders as a thin line and a busy one fills.
+    let maxSeen = 1;
+    for (const iface of ifaces) {
+      const ifaceTotal = Math.max(iface.rx_bytes || 0, iface.tx_bytes || 0);
+      if (ifaceTotal > maxSeen) maxSeen = ifaceTotal;
+    }
+    for (const iface of ifaces) {
+      const row = document.createElement("li");
+      row.className = "network-row";
+      row.innerHTML =
+        '<span class="network-name"></span>' +
+        '<span class="network-rate"></span>' +
+        '<svg class="network-bar" viewBox="0 0 100 14" preserveAspectRatio="none" aria-hidden="true">' +
+          '<rect class="network-track" x="0" y="0" width="100" height="6"></rect>' +
+          '<rect class="network-fill" x="0" y="0" width="0" height="6"></rect>' +
+          '<rect class="network-track" x="0" y="8" width="100" height="6"></rect>' +
+          '<rect class="network-fill" x="0" y="8" width="0" height="6"></rect>' +
+        "</svg>";
+      row.querySelector(".network-name").textContent = iface.name;
+      row.querySelector(".network-rate").textContent =
+        "RX " + formatCapacity(iface.rx_bytes / 1024 / 1024) +
+        " · TX " + formatCapacity(iface.tx_bytes / 1024 / 1024);
+      const rxW = Math.max(0, Math.min(100, (iface.rx_bytes / maxSeen) * 100)).toFixed(2);
+      const txW = Math.max(0, Math.min(100, (iface.tx_bytes / maxSeen) * 100)).toFixed(2);
+      row.querySelectorAll(".network-fill")[0].setAttribute("width", rxW);
+      row.querySelectorAll(".network-fill")[1].setAttribute("width", txW);
+      frag.appendChild(row);
+    }
+    host.replaceChildren(frag);
+  }
+
 
   function renderTelemetry(snap) {
     if (!snap) return;
@@ -567,8 +748,35 @@ import {
       else el.telBatt.textContent = "—";
     }
     if (el.telUpdated) el.telUpdated.textContent = formatUptime(snap.uptime_s);
+    if (el.telNet) {
+      // SR-only one-liner next to #tel-cpu. Aggregate format only:
+      // "RX 240 KB/s · TX 12 KB/s" — per-if breakdown is a sighted-user
+      // affordance (the bar grid), and a screen reader just needs to
+      // hear "the link is busy".
+      const rx = netRxBps(snap);
+      const tx = netTxBps(snap);
+      if (rx != null || tx != null) {
+        el.telNet.textContent = "RX " + formatRate(rx) + " · TX " + formatRate(tx);
+      } else if (snap.network && (snap.network.total_rx_bytes != null ||
+                                   snap.network.total_tx_bytes != null)) {
+        // Fresh daemon — totals available, rate not yet. Avoid "—" so
+        // a screen reader knows the host is reporting.
+        el.telNet.textContent =
+          "Total: " +
+          (snap.network.total_rx_bytes != null
+            ? formatCapacity(snap.network.total_rx_bytes / 1024 / 1024)
+            : "—") +
+          " / " +
+          (snap.network.total_tx_bytes != null
+            ? formatCapacity(snap.network.total_tx_bytes / 1024 / 1024)
+            : "—");
+      } else {
+        el.telNet.textContent = "—";
+      }
+    }
     updateLiveBadgeTip();
     if (typeof renderMeters === "function") renderMeters(snap);
+    if (typeof renderNetwork === "function") renderNetwork(snap);
     if (typeof renderStorage === "function") renderStorage(snap);
   }
 

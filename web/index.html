@@ -460,6 +460,7 @@
           <p>Disco: <span id="tel-disk">—</span></p>
           <p>GPU: <span id="tel-gpu">—</span></p>
           <p>Bateria: <span id="tel-batt">—</span></p>
+          <p>Rede: <span id="tel-net">—</span></p>
         </div>
         <!-- Live meters: one per resource, each a bar drawn as an SVG rect
              whose width is set with setAttribute — never inline `style`, the
@@ -474,6 +475,20 @@
              warning about that every time would train the reader to ignore
              the warning. -->
         <p class="throttle-note hidden" id="tel-throttle" role="status" aria-live="polite"></p>
+
+        <!-- Per-interface network traffic. The aggregate bar (first row)
+             shows RX/TX in human-readable units; per-interface rows break
+             the same numbers down so a saturated link can be identified
+             without a tcpdump. Hidden when the snapshot has no `network`
+             field, which is what /proc/net/dev-less environments (macOS,
+             containers without /proc mounted) report. -->
+        <div class="sub-block" id="tel-network" hidden>
+          <div class="sub-head">
+            <h3>Rede</h3>
+            <span class="status-sub" id="tel-network-count"></span>
+          </div>
+          <ul class="network-list" id="tel-network-list"></ul>
+        </div>
 
         <!-- Per-mount storage. `disks` is an array in the snapshot, so each
              volume gets its own row: averaging them into a single number

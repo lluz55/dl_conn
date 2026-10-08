@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,9 +136,15 @@ func TestNetworkRate_DeltaAcrossSamples(t *testing.T) {
 	), 0o644); err != nil {
 		t.Fatalf("rewrite: %v", err)
 	}
-	// Force a second-sample timestamp one second after the first so the rate
-	// is unambiguous and not "almost zero because of clock skew".
-	c.latest.SampledAt = c.latest.SampledAt.Add(-time.Second)
+	// Backdate the previous network sample by two seconds so the elapsed
+	// wall clock is unambiguous (1s between sample 1 and the rewrite, plus
+	// 1s backdating here, gives the test the 2s window it asserts on). The
+	// naive alternative — waiting — would make this a 2-second test for no
+	// benefit; wall-clock independence is what makes the assertion stable.
+	if c.netPrev == nil {
+		t.Fatal("netPrev should be populated after the first sample")
+	}
+	c.netPrev.SampledAt = c.netPrev.SampledAt.Add(-2 * time.Second)
 	second := c.CollectOnce()
 	if second.Network == nil {
 		t.Fatal("second snapshot must carry a network reading")
@@ -145,12 +152,16 @@ func TestNetworkRate_DeltaAcrossSamples(t *testing.T) {
 	if second.Network.RxBps == nil || second.Network.TxBps == nil {
 		t.Fatalf("second sample: rates must be set, got rx=%v tx=%v", second.Network.RxBps, second.Network.TxBps)
 	}
-	// 4000 RX bytes and 6000 TX bytes over a 2-second wall clock = 2000/3000 Bps.
-	if got := *second.Network.RxBps; got != 2000 {
-		t.Errorf("rx_bps: got %v, want 2000", got)
+	// 4000 RX bytes and 6000 TX bytes over a ~2-second wall clock
+	// = ~2000/3000 Bps. The ~0.5ms drift between backdating netPrev and
+	// the second CollectOnce lands the rate slightly under the integer,
+	// so the assertion is tolerance-based rather than exact.
+	const tol = 5.0 // bytes-per-second; covers microsecond-level drift
+	if got := *second.Network.RxBps; math.Abs(got-2000) > tol {
+		t.Errorf("rx_bps: got %v, want ~2000 (±%v)", got, tol)
 	}
-	if got := *second.Network.TxBps; got != 3000 {
-		t.Errorf("tx_bps: got %v, want 3000", got)
+	if got := *second.Network.TxBps; math.Abs(got-3000) > tol {
+		t.Errorf("tx_bps: got %v, want ~3000 (±%v)", got, tol)
 	}
 }
 

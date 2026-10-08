@@ -103,6 +103,7 @@ func (c *Collector) CollectOnce() Snapshot {
 		// A brand-new daemon (or a daemon that just lost its previous
 		// reading) gets only cumulative counters; one with a previous reading
 		// gets bytes-per-second as well.
+		net.SampledAt = snap.SampledAt
 		if c.netPrev != nil && !c.netPrev.SampledAt.IsZero() && !snap.SampledAt.Equal(c.netPrev.SampledAt) {
 			elapsed := snap.SampledAt.Sub(c.netPrev.SampledAt).Seconds()
 			if elapsed > 0 {
@@ -119,11 +120,9 @@ func (c *Collector) CollectOnce() Snapshot {
 			}
 		}
 		// Carry the wall clock alongside the previous counters so the next
-		// sample can compute its delta. The struct's own SampledAt would be
-		// ideal, but reusing it on a value the caller owns would mutate the
-		// emitted snapshot.
+		// sample can compute its delta. SampledAt lives on the struct itself
+		// (json:"-") so it does not pollute the emitted snapshot.
 		prev := *net
-		prev.SampledAt = snap.SampledAt
 		c.netPrev = &prev
 		snap.Network = net
 	}
