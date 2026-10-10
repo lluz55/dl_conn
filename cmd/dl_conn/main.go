@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"mime"
@@ -498,6 +499,27 @@ func run(cmd *cobra.Command, _ []string) error {
 		// ctx is done and would freeze the rest of startup if called inline.
 		go telHandler.RunCleanup(ctx)
 	}
+
+	// Tunnel URL: returns the current trycloudflare.com URL advertised via
+	// Nostr. Plain HTTP, no session — the URL is already public (Nostr
+	// discovery publishes it to every authorized npub), so wrapping this in
+	// session auth would only block the on-host scripts that need it.
+	//
+	// Use case: a systemd.path watches dl_conn state and triggers a script
+	// that reads this endpoint, then writes PI_WEB_ALLOWED_HOSTS for any
+	// service whose backend fences on Host (e.g. @agegr/pi-web). The
+	// handler is read-only; it never blocks the tunnel or Nostr loop.
+	mux.HandleFunc("/api/host/tunnel-url", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"url": handler.TunnelURL(),
+		})
+	})
 
 	// Health check
 	mux.HandleFunc("/_healthz", func(w http.ResponseWriter, r *http.Request) {
