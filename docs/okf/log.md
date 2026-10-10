@@ -4,6 +4,23 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-10
+
+- **Tags YAML explícitas no `ServiceConfig` evitam perda de campos camelCase em drop-ins:**
+  arquivos em `services.d/` carregados diretamente via `loadDropInFile` (`yaml.v3`)
+  perdiam silenciosamente campos em camelCase como `stripPrefix: true` e `originHost: "..."`
+  porque o struct `ServiceConfig` possuía apenas tags `mapstructure:"..."`.
+  - **Sintoma:** loop infinito de redirecionamento (`ERR_TOO_MANY_REDIRECTS`) em serviços
+    como o `pi-web-simple` (Next.js). Sem `stripPrefix`, `/pi-web-simple/` chegava íntegro
+    ao Next.js, que disparava `308 Permanent Redirect` para `/pi-web-simple`; o router do
+    `dl_conn`, ao receber o caminho sem barra, respondia com `302 Found` para `/pi-web-simple/`.
+  - **Correção (`internal/config/config.go`):** adicionadas tags `yaml:"..."` correspondentes a todos
+    os campos de `ServiceConfig`, garantindo que o unmarshaling direto por `gopkg.in/yaml.v3`
+    preserve propriedades como `stripPrefix`, `originHost`, `websocket`, etc., independentemente de
+    terem sido decodificadas pelo Viper ou direto por drop-ins.
+  - **Testes:** teste de unidade `TestLoadDropInFile_CamelCaseFields` em
+    `internal/config/dropins_test.go` cobrindo o unmarshaling de drop-ins com sintaxe camelCase.
+
 ## 2026-10-09
 
 - **Biometria no Android (e em qualquer mobile) finalmente usável após

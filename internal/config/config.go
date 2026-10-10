@@ -35,22 +35,22 @@ type TunnelConfig struct {
 
 // ServiceConfig describes a single proxied service.
 type ServiceConfig struct {
-	ID   string `mapstructure:"id"`
-	Name string `mapstructure:"name"`
-	Icon string `mapstructure:"icon"`
+	ID   string `mapstructure:"id" yaml:"id"`
+	Name string `mapstructure:"name" yaml:"name"`
+	Icon string `mapstructure:"icon" yaml:"icon"`
 	// Description is optional, free-form text shown under the service's name
 	// on the dashboard. Purely cosmetic — never used for routing.
-	Description string `mapstructure:"description"`
-	Prefix      string `mapstructure:"prefix"`
-	Target      string `mapstructure:"target"`
-	StripPrefix bool   `mapstructure:"stripPrefix"`
-	Websocket   bool   `mapstructure:"websocket"`
+	Description string `mapstructure:"description" yaml:"description"`
+	Prefix      string `mapstructure:"prefix" yaml:"prefix"`
+	Target      string `mapstructure:"target" yaml:"target"`
+	StripPrefix bool   `mapstructure:"stripPrefix" yaml:"stripPrefix"`
+	Websocket   bool   `mapstructure:"websocket" yaml:"websocket"`
 	// Hidden excludes the service from Nostr discovery and health-status
 	// reporting while still proxying it. For a backend whose frontend needs
 	// extra root-level routes (e.g. Frigate's own "/api"/"/ws", unaware of
 	// its "/frigate" mount prefix), those routes point at the same target
 	// but aren't a distinct service the user should see or click into.
-	Hidden bool `mapstructure:"hidden"`
+	Hidden bool `mapstructure:"hidden" yaml:"hidden"`
 	// RootPaths lists sub-resource directories this backend serves from its
 	// own root but whose frontend asks for at the wrong place once mounted
 	// under Prefix. Frigate's i18next config is the known case: its
@@ -60,7 +60,7 @@ type ServiceConfig struct {
 	// Declaring "/locales/" lets the router recognize such a request
 	// wherever it lands and rewrite it back to the backend's root form.
 	// Each entry must start and end with "/".
-	RootPaths []string `mapstructure:"rootPaths"`
+	RootPaths []string `mapstructure:"rootPaths" yaml:"rootPaths"`
 	// ForwardedFor controls whether the proxy sends X-Forwarded-For to this
 	// backend. Unset means yes, which is what a reverse proxy should do:
 	// the header carries the visitor's real IP down the chain (cloudflared
@@ -71,7 +71,7 @@ type ServiceConfig struct {
 	// "trusted_proxies". Suppressing the header is the workaround when the
 	// backend's own config is out of reach; the backend then sees every
 	// request as coming from dl_conn itself.
-	ForwardedFor *bool `mapstructure:"forwardedFor"`
+	ForwardedFor *bool `mapstructure:"forwardedFor" yaml:"forwardedFor"`
 	// OriginHost makes the proxy present this request to the backend as if it
 	// had arrived directly at the backend's own address: the Host header is
 	// replaced with this authority, and the browser's Origin and
@@ -96,13 +96,13 @@ type ServiceConfig struct {
 	// Use "host:port" (or bare "host"); the value must match what the backend
 	// considers its own authority. Empty means pass the browser's Host through
 	// unchanged, which is the correct default for every ordinary backend.
-	OriginHost string `mapstructure:"originHost"`
+	OriginHost string `mapstructure:"originHost" yaml:"originHost"`
 	// LaunchTokenFile enables an authenticated, server-side browser-session
 	// bootstrap for services such as dsh. The file contains the local launch
 	// URL printed by the service (including its token). dl_conn reads and
 	// redeems it only after its own Zero-Trust session has been validated, so
 	// the token never crosses the public tunnel.
-	LaunchTokenFile string `mapstructure:"launchTokenFile"`
+	LaunchTokenFile string `mapstructure:"launchTokenFile" yaml:"launchTokenFile"`
 	// ForwardAuthorization passes the caller's Authorization header through to
 	// this backend instead of stripping it.
 	//
@@ -114,7 +114,7 @@ type ServiceConfig struct {
 	// caller-supplied credential — one behind its own HTTP Basic auth, say —
 	// has any business seeing it, and the operator opting in is stating that
 	// the backend is trusted with it.
-	ForwardAuthorization bool `mapstructure:"forwardAuthorization"`
+	ForwardAuthorization bool `mapstructure:"forwardAuthorization" yaml:"forwardAuthorization"`
 }
 
 // SendsForwardedFor reports whether X-Forwarded-For should be passed to this

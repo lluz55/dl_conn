@@ -192,3 +192,48 @@ target: "http://127.0.0.1:4000"
 		t.Errorf("override drop-in not loaded: %+v", cfg.Services[1])
 	}
 }
+
+func TestLoadDropInFile_CamelCaseFields(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "camel.yaml")
+	content := `id: "camel-svc"
+name: "Camel Service"
+prefix: "/camel"
+target: "http://127.0.0.1:9999"
+stripPrefix: true
+websocket: true
+originHost: "127.0.0.1:9999"
+launchTokenFile: "/path/to/token"
+forwardAuthorization: true
+rootPaths:
+  - "/locales/"
+`
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	svcs, err := loadDropInFile(filePath)
+	if err != nil {
+		t.Fatalf("loadDropInFile failed: %v", err)
+	}
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(svcs))
+	}
+	s := svcs[0]
+	if !s.StripPrefix {
+		t.Errorf("expected StripPrefix=true, got false")
+	}
+	if s.OriginHost != "127.0.0.1:9999" {
+		t.Errorf("expected OriginHost=127.0.0.1:9999, got %q", s.OriginHost)
+	}
+	if s.LaunchTokenFile != "/path/to/token" {
+		t.Errorf("expected LaunchTokenFile=/path/to/token, got %q", s.LaunchTokenFile)
+	}
+	if !s.ForwardAuthorization {
+		t.Errorf("expected ForwardAuthorization=true, got false")
+	}
+	if len(s.RootPaths) != 1 || s.RootPaths[0] != "/locales/" {
+		t.Errorf("expected RootPaths=[/locales/], got %v", s.RootPaths)
+	}
+}
+
