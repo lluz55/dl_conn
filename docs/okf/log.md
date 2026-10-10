@@ -6,6 +6,26 @@ type: log
 
 ## 2026-10-10
 
+- **Diagnóstico e mitigação de indisponibilidade do backend `dsh` (0.2.0-rc.2):**
+  - **Sintoma no `dl_conn`:** requisições direcionadas ao prefixo `/dsh/`
+    falhavam com HTTP 503 (`upstream authentication unavailable`) na navegação
+    inicial e HTTP 502 Bad Gateway (`dial tcp 127.0.0.1:3080: connect: connection refused`)
+    para recursos diretos e chamadas de API.
+  - **Causa raiz:** o serviço upstream `dsh.service` no host entrou em crash-loop
+    imediato após o upgrade para a versão `0.2.0-rc.2`. Nessa release, o upstream
+    passou a usar `node-addon-require-builtin`, cuja probe C++ em memória varre o
+    binário do Node.js procurando assinaturas de getters da V8. No ambiente NixOS,
+    o `nodejs-22.23.2` é construído com flags de hardening e compilação do nixpkgs,
+    alterando o layout de código dos accessors; a probe falhava com
+    `Unsupported/no-getter (x64 sysv getter is not a recognized this->field accessor)`.
+    Como o daemon abortava antes de abrir o listener HTTP e antes de imprimir a
+    URL de lançamento, o arquivo `/run/dsh/web-url` nunca era gerado, interrompendo
+    o `bootstrapLaunchSession` no `dl_conn` e deixando a porta 3080 fechada.
+  - **Mitigação:** no pacote NixOS (`~/.nixos-config/pkgs/dsh/package.nix`),
+    `node-addon-require-builtin/lib/index.js` foi patcheado para interceptar a falha
+    da probe C++ e delegar a chamada ao `require()` nativo do Node.js, viabilizado
+    pelo `--expose-internals` já garantido no wrapper de execução do `dsh`.
+
 - **Compatibilidade total com convenções de escrita em drop-ins (camelCase, snake_case e minúsculas):**
   arquivos em `services.d/` carregados diretamente via `loadDropInFile` (`yaml.v3`)
   agora toleram qualquer convenção de nomenclatura de chaves (`stripPrefix`, `stripprefix`, `strip_prefix`, `originHost`, `originhost`, `origin_host`, etc.) através de um `UnmarshalYAML` customizado em `ServiceConfig`.
