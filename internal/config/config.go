@@ -123,6 +123,53 @@ func (s *ServiceConfig) SendsForwardedFor() bool {
 	return s.ForwardedFor == nil || *s.ForwardedFor
 }
 
+// UnmarshalYAML implements custom unmarshaling for ServiceConfig to tolerate
+// camelCase, snake_case, and all-lowercase variants for YAML keys in drop-ins.
+func (s *ServiceConfig) UnmarshalYAML(value *yaml.Node) error {
+	type plain ServiceConfig
+	if err := value.Decode((*plain)(s)); err != nil {
+		return err
+	}
+
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i < len(value.Content); i += 2 {
+			key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value.Content[i].Value, "_", ""), "-", ""))
+			val := value.Content[i+1]
+			switch key {
+			case "stripprefix":
+				_ = val.Decode(&s.StripPrefix)
+			case "originhost":
+				_ = val.Decode(&s.OriginHost)
+			case "launchtokenfile":
+				_ = val.Decode(&s.LaunchTokenFile)
+			case "forwardauthorization":
+				_ = val.Decode(&s.ForwardAuthorization)
+			case "rootpaths":
+				_ = val.Decode(&s.RootPaths)
+			case "forwardedfor":
+				_ = val.Decode(&s.ForwardedFor)
+			case "websocket":
+				_ = val.Decode(&s.Websocket)
+			case "hidden":
+				_ = val.Decode(&s.Hidden)
+			case "id":
+				_ = val.Decode(&s.ID)
+			case "name":
+				_ = val.Decode(&s.Name)
+			case "icon":
+				_ = val.Decode(&s.Icon)
+			case "description":
+				_ = val.Decode(&s.Description)
+			case "prefix":
+				_ = val.Decode(&s.Prefix)
+			case "target":
+				_ = val.Decode(&s.Target)
+			}
+		}
+	}
+	return nil
+}
+
 // DynamicPortsConfig controls the authenticated /local/<port>/ proxy.
 // Ports below 1024, the daemon's own listeners, and SSH are always denied;
 // DeniedPorts lets operators add host-specific sensitive ports.

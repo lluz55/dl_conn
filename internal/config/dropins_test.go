@@ -237,3 +237,79 @@ rootPaths:
 	}
 }
 
+func TestLoadDropInFile_CaseAndNamingConventions(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "lowercase",
+			content: `id: "pi-web-simple"
+name: "Pi Web (simple)"
+prefix: "/pi-web-simple"
+target: "http://127.0.0.1:30141"
+stripprefix: true
+websocket: true
+originhost: "127.0.0.1:30141"
+forwardedfor: false
+rootpaths:
+  - "/locales/"
+launchtokenfile: "/run/token"
+forwardauthorization: true
+`,
+		},
+		{
+			name: "snake_case",
+			content: `id: "pi-web-simple"
+name: "Pi Web (simple)"
+prefix: "/pi-web-simple"
+target: "http://127.0.0.1:30141"
+strip_prefix: true
+websocket: true
+origin_host: "127.0.0.1:30141"
+forwarded_for: false
+root_paths:
+  - "/locales/"
+launch_token_file: "/run/token"
+forward_authorization: true
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			filePath := filepath.Join(dir, "svc.yaml")
+			if err := os.WriteFile(filePath, []byte(tt.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			svcs, err := loadDropInFile(filePath)
+			if err != nil {
+				t.Fatalf("loadDropInFile failed: %v", err)
+			}
+			if len(svcs) != 1 {
+				t.Fatalf("expected 1 service, got %d", len(svcs))
+			}
+			s := svcs[0]
+			if !s.StripPrefix {
+				t.Errorf("expected StripPrefix=true, got false")
+			}
+			if s.OriginHost != "127.0.0.1:30141" {
+				t.Errorf("expected OriginHost=127.0.0.1:30141, got %q", s.OriginHost)
+			}
+			if s.ForwardedFor == nil || *s.ForwardedFor != false {
+				t.Errorf("expected ForwardedFor=false, got %v", s.ForwardedFor)
+			}
+			if len(s.RootPaths) != 1 || s.RootPaths[0] != "/locales/" {
+				t.Errorf("expected RootPaths=[/locales/], got %v", s.RootPaths)
+			}
+			if s.LaunchTokenFile != "/run/token" {
+				t.Errorf("expected LaunchTokenFile=/run/token, got %q", s.LaunchTokenFile)
+			}
+			if !s.ForwardAuthorization {
+				t.Errorf("expected ForwardAuthorization=true, got false")
+			}
+		})
+	}
+}
+

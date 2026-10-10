@@ -6,20 +6,18 @@ type: log
 
 ## 2026-10-10
 
-- **Tags YAML explícitas no `ServiceConfig` evitam perda de campos camelCase em drop-ins:**
+- **Compatibilidade total com convenções de escrita em drop-ins (camelCase, snake_case e minúsculas):**
   arquivos em `services.d/` carregados diretamente via `loadDropInFile` (`yaml.v3`)
-  perdiam silenciosamente campos em camelCase como `stripPrefix: true` e `originHost: "..."`
-  porque o struct `ServiceConfig` possuía apenas tags `mapstructure:"..."`.
-  - **Sintoma:** loop infinito de redirecionamento (`ERR_TOO_MANY_REDIRECTS`) em serviços
-    como o `pi-web-simple` (Next.js). Sem `stripPrefix`, `/pi-web-simple/` chegava íntegro
-    ao Next.js, que disparava `308 Permanent Redirect` para `/pi-web-simple`; o router do
-    `dl_conn`, ao receber o caminho sem barra, respondia com `302 Found` para `/pi-web-simple/`.
-  - **Correção (`internal/config/config.go`):** adicionadas tags `yaml:"..."` correspondentes a todos
-    os campos de `ServiceConfig`, garantindo que o unmarshaling direto por `gopkg.in/yaml.v3`
-    preserve propriedades como `stripPrefix`, `originHost`, `websocket`, etc., independentemente de
-    terem sido decodificadas pelo Viper ou direto por drop-ins.
-  - **Testes:** teste de unidade `TestLoadDropInFile_CamelCaseFields` em
-    `internal/config/dropins_test.go` cobrindo o unmarshaling de drop-ins com sintaxe camelCase.
+  agora toleram qualquer convenção de nomenclatura de chaves (`stripPrefix`, `stripprefix`, `strip_prefix`, `originHost`, `originhost`, `origin_host`, etc.) através de um `UnmarshalYAML` customizado em `ServiceConfig`.
+  - **Sintoma:** após a adição de tags estritas `yaml:"stripPrefix"` em `cd94a4a`, drop-ins
+    existentes escritos com chaves minúsculas (ex: `stripprefix: true`, `originhost: "..."` no `pi-web-simple.yaml`)
+    deixaram de ser reconhecidos pelo parser do `yaml.v3`, fazendo com que `stripPrefix` voltasse a `false`
+    e o serviço ficasse inacessível ou em redirect loop.
+  - **Correção (`internal/config/config.go`):** implementado `UnmarshalYAML` em `ServiceConfig`
+    que normaliza as chaves do mapping YAML (removendo hifens, underscores e aplicando lowercase)
+    para atribuir com segurança campos como `stripPrefix`, `originHost`, `rootPaths`, `forwardedFor`, etc.
+  - **Testes:** teste de unidade `TestLoadDropInFile_CaseAndNamingConventions` cobrindo drop-ins
+    em minúsculas e snake_case em `internal/config/dropins_test.go`.
 
 ## 2026-10-09
 
