@@ -4,16 +4,22 @@ import * as nostrTools from '../vendor/nostr-tools-2.9.2.mjs';
 import {
   encryptVault,
   decryptVault,
+  encryptVaultPrf,
+  decryptVaultPrf,
   saveVaultToStorage,
   loadVaultFromStorage,
+  saveBiometricVaultToStorage,
+  loadBiometricVaultFromStorage,
   removeVaultFromStorage,
   hasVault,
 } from './crypto_vault.js';
 import {
   isBiometricAvailable,
+  isPrfAvailable,
   registerCredential,
   authenticateBiometric,
   hasCredential,
+  hasPrfCredential,
   removeCredential,
 } from './webauthn_manager.js';
 
@@ -89,7 +95,12 @@ export class SessionManager {
     return envelope ? envelope.publicHint : null;
   }
 
-  /** Biometric capability */
+  /**
+   * Whether biometric unlock is currently usable: there's a registered
+   * credential AND the platform can do user verification right now. The
+   * latter guards against offering a button that the authenticator would
+   * later reject (e.g. no PIN set on Android, no Touch ID enrolled).
+   */
   async canUseBiometric() {
     if (!hasCredential()) return false;
     return isBiometricAvailable();
@@ -104,6 +115,20 @@ export class SessionManager {
   async canEnableBiometric() {
     if (hasCredential()) return false;
     return isBiometricAvailable();
+  }
+
+  /**
+   * Whether the platform can run a PRF-evaluating authenticator. PRF is
+   * what makes biometric unlock actually work on mobile: without it, the
+   * vault key has to live in `sessionStorage`/memory and gets wiped on
+   * every page reload, which is the friction the user is reporting. We
+   * expose this so the UI can phrase the offer ("basta tocar no sensor")
+   * accurately, and so the legacy `_bioPin` fallback is used only on
+   * devices that genuinely can't do PRF.
+   */
+  async canUsePrfBiometric() {
+    if (!await isBiometricAvailable()) return false;
+    return isPrfAvailable();
   }
 
   /* ── Vault creation ────────────────────────────────────────── */
@@ -219,36 +244,124 @@ export class SessionManager {
 
   /* ── Unlock with biometrics ────────────────────────────────── */
 
+  /**
+   * Unlock using the platform authenticator. Two paths:
+   *
+   *   1. PRF mode (enrolled on a modern Chromium / Safari with WebAuthn
+   *      Level 3): the vault is encrypted with a key derived from the
+   *      PRF evaluation, so a single biometric prompt is enough — no
+   *      PIN is held in memory, which is the only way the feature is
+   *      usable on mobile where every page reload wipes the JS heap.
+   *
+   *   2. Legacy PIN-bridge mode: WebAuthn verifies the user, then the
+   *      `_bioPin` captured at enrollment replays through `unlockWithPin`.
+   *      This is the only path available on devices that don't advertise
+   *      PRF; it still works inside a single page session, but the user
+   *      will be asked for the PIN again on reload.
+   */
   async unlockWithBiometric() {
+    const envelope = loadVaultFromStorage();
+    if (!envelope) throw new Error("No vault to unlock");
+
+    // PRF sidecar: biometric prompt → PRF eval → decrypt. The PIN vault is
+    // deliberately kept as a recovery path if credentials are lost/reset.
+    const biometricEnvelope = loadBiometricVaultFromStorage();
+    if (biometricEnvelope && hasPrfCredential()) {
+      const result = await authenticateBiometric();
+      if (!result.verified) throw new Error(result.error || "Biometric auth failed");
+      if (!result.prfOutput) {
+        throw new Error("Autenticador sem PRF — use o PIN");
+      }
+      return this._openWithPrf(result.prfOutput);
+    }
+
+    // Legacy PIN-bridge mode.
     const result = await authenticateBiometric();
     if (!result.verified) throw new Error(result.error || "Biometric auth failed");
-
-    // Biometric success → replay the PIN captured during enableBiometric().
-    // The PRF extension isn't widely supported, so this bridges the gap. The
-    // PIN lives in memory only (see _bioPin): persisting it would hand any
-    // script on this origin the key that decrypts the vault, which defeats the
-    // point of encrypting the vault at all. The cost is that biometric unlock
-    // only works within a page session; after a reload the user enters the PIN
-    // once more, which re-arms the bridge.
     if (this._bioPin) {
       return this.unlockWithPin(this._bioPin);
     }
     throw new Error("Desbloqueio biométrico requer o PIN uma vez após recarregar a página");
   }
 
+  /** Open the in-memory session with an already decrypted payload. */
+  _openWithPayload(payload) {
+    this._sk = payload.sk;
+    this._npub = this._normalizeNpub(payload.npub);
+    this._relays = payload.relays || [];
+    this._locked = false;
+    this._pendingBackend = true;
+    this._resetBruteForce();
+    this._resetTimer();
+    this._emit("unlocked");
+    this._emit("pending");
+    return true;
+  }
+
+  /** PRF path: decrypt the biometric sidecar and open the session. */
+  async _openWithPrf(prfOutput) {
+    const envelope = loadBiometricVaultFromStorage();
+    if (!envelope) throw new Error("Biometric vault not found");
+    const payload = await decryptVaultPrf(envelope, prfOutput);
+    return this._openWithPayload(payload);
+  }
+
   /**
-   * Store a biometric-bridged PIN so biometrics can unlock the vault.
-   * Called during vault setup when user enables biometric.
+   * Turn on biometric unlock. Tries PRF first so the resulting enrollment
+   * works after a page reload (the whole point of the fix); if the
+   * authenticator doesn't speak PRF, falls back to the legacy PIN-bridge
+   * that requires a fresh PIN after every reload.
+   *
+   * The caller is expected to have an unlocked session — either because
+   * the user just typed the PIN during vault creation, or because the
+   * "enable biometric" offer is shown right after a successful unlock.
+   * The plaintext identity is already in memory, so re-encrypting the
+   * vault under a fresh PRF key never has to round-trip through the
+   * existing envelope.
+   *
+   * @param {string} [pin] — required for the legacy fallback path; ignored
+   *   (and may be omitted) when PRF is available.
    */
   async enableBiometric(pin) {
     const available = await isBiometricAvailable();
     if (!available) throw new Error("Platform authenticator not available");
 
-    const identity = this._npub || this._getVaultNpub();
-    if (!identity) throw new Error("No identity to bind biometric to");
+    // We need a plaintext identity to bind the credential to, and — for
+    // the PRF path — to encrypt inside the new envelope. Both are already
+    // in memory if the session is unlocked, which is the only state in
+    // which the UI surfaces this call.
+    if (!this._npub || !this._sk) {
+      throw new Error("Desbloqueie a sessão antes de ativar a biometria");
+    }
 
-    await registerCredential(identity);
-    this._bioPin = pin;
+    if (await isPrfAvailable()) {
+      // Fresh PRF salt each enrollment; an unsuccessful attempt doesn't
+      // replace a previously working credential in storage.
+      const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+      const { prfOutput } = await registerCredential(this._npub, prfSalt);
+      if (prfOutput) {
+        const payload = {
+          npub: this._npub,
+          sk: this._sk,
+          relays: this._relays || [],
+        };
+        const newEnvelope = await encryptVaultPrf(payload, prfOutput, prfSalt);
+        // Keep the PIN vault as recovery. The biometric sidecar carries the
+        // same plaintext under a hardware-backed PRF-derived key.
+        saveBiometricVaultToStorage(newEnvelope);
+        this._bioPin = null;
+        this._emit("biometric-enabled");
+        return;
+      }
+      // Some authenticators advertise client PRF support but can't evaluate
+      // during credential creation. Fall through to the verified legacy
+      // bridge rather than stranding the user with no usable credential.
+    }
+
+    // Legacy path — keep the PIN in memory so the next biometric
+    // assertion in this same page session can replay it.
+    await registerCredential(this._npub);
+    this._bioPin = pin || null;
     this._emit("biometric-enabled");
   }
 

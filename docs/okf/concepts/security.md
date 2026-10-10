@@ -17,6 +17,44 @@ comprometeu tudo.
 A chave do daemon deriva de segredo injetado (SOPS/`nsecFile`), nunca em texto
 plano no disco. NIP-46 é recomendado também em desktop/servidor.
 
+## Cofre do SPA: PIN e biometria (PRF)
+
+O cofre local em `web/js/crypto_vault.js` cifra a chave privada com
+AES-256-GCM. A biometria adiciona um sidecar ao cofre por PIN:
+
+- **Vault PIN (primário e recuperação):** a chave AES é derivada do PIN
+  digitado via PBKDF2-SHA256 (300k iterações). O envelope tem `salt` +
+  `iv` + `ciphertext` + `authTag`. Ele não é substituído ao ativar a
+  biometria, portanto continua sendo o caminho de recuperação se a
+  credencial WebAuthn for apagada ou redefinida.
+- **Sidecar PRF (preferido em mobile):** `enableBiometric` registra uma
+  credencial WebAuthn com a extensão **PRF** e deriva a chave AES do
+  sidecar via HKDF-SHA256 a partir do *output* PRF
+  (`info = "dl_conn/vault-key/v1"`, `salt = vaultSalt` aleatório).
+  O envelope ganha `mode: "prf"`, `prfSalt` (32 B persistidos) e
+  `vaultSalt` (16 B). A chave AES é `extractable: false`: o *output*
+  PRF entra em `crypto.subtle` como IKM do HKDF e nunca vira bytes
+  exportáveis.
+
+  O PRF output é **determinístico** para a mesma (credencial, prfSalt);
+  a única entidade capaz de produzi-lo é o autenticador de plataforma.
+  Por isso o sidecar sobrevive a um reload de aba sem pedir o PIN. Em
+  navegadores/autenticadores sem PRF, `enableBiometric` cai para o
+  bridge `_bioPin` legado e o usuário precisa redigitar o PIN após um
+  reload (ver `web/js/session_manager.js#unlockWithBiometric`).
+
+  O salt PRF **não** é segredo: é um índice que diz ao autenticador
+  *qual* derivação produzir. O segredo é o output, que vive no
+  hardware. Persistir o `prfSalt` no `localStorage` ao lado do
+  envelope é equivalente, em modelo de ameaça, a anotar o nome de um
+  arquivo que o cofre de chaves do sistema guarda.
+
+`webauthn_manager.js#registerCredential`/`#authenticateBiometric`
+omitir o campo `rp.id` quando o `location.hostname` é um IP (WebAuthn
+rejeita IPs nessa posição); o navegador usa então o domínio efetivo
+da origem, o que funciona para os subdomínios `trycloudflare.com` e
+para `localhost`, e é a configuração aceita pelo Chrome do Android.
+
 ## Cifra e integridade
 
 - Todo payload de sinalização: NIP-44 v2 (ChaCha20 + Poly1305), auto-cifra.
@@ -63,7 +101,10 @@ Regras que decorrem disso:
 
 ## Onde isso vive no código
 
-- Web: `web/js/crypto_vault.js` (cofre AES-256-GCM, em memória),
+- Web: `web/js/crypto_vault.js` (cofre AES-256-GCM, modo PIN e modo PRF),
+  `web/js/webauthn_manager.js` (WebAuthn com extensão PRF),
+  `web/js/session_manager.js` (decisão PIN vs. PRF em `enableBiometric` /
+  `unlockWithBiometric`),
   `web/js/nostr_auth.js` / `web/js/nostr_client.js` (login NIP-07/46),
   `web/index.html` (CSP `script-src 'self'`; bibliotecas vendored em
   `web/vendor/`).

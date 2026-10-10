@@ -52,7 +52,7 @@ mesmo repositório.
 | P17 | Performance | Binário Go e bundle web                              | [p17-perf-binary-web.md](p17-perf-binary-web.md)     | ⏳ pendente      | 0/9 |
 | P18 | Performance | Hot path do proxy e polling                           | [p18-perf-hotpath.md](p18-perf-hotpath.md)           | ⏳ pendente      | 0/10 |
 | U19 | Usabilidade | Feedback de descoberta e renovação                    | [u19-usability-discovery.md](u19-usability-discovery.md) | ⏳ pendente  | 0/9 |
-| U20 | Usabilidade | Mobile flow e biometria PRF                           | [u20-usability-mobile-prf.md](u20-usability-mobile-prf.md) | ⏳ pendente | 0/10 |
+| U20 | Usabilidade | Mobile flow e biometria PRF                           | [u20-usability-mobile-prf.md](u20-usability-mobile-prf.md) | 🚧 em progresso | 1/10 |
 
 Bloqueios cruzados: **P20 depende de P17** (o split de `app.js` em módulos ES é
 pré-requisito da reorganização dos cards em `index.html`) e **P18 depende de

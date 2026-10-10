@@ -4,6 +4,51 @@ type: log
 
 # Log de curadoria do conhecimento
 
+## 2026-10-09
+
+- **Biometria no Android (e em qualquer mobile) finalmente usável após
+  reload:** o desbloqueio biométrico dependia do `_bioPin` em
+  memória (`web/js/session_manager.js:233-236` antes desta mudança);
+  cada reload de aba (constante em mobile) zerava o `_bioPin`, e o
+  usuário via o prompt biométrico seguido imediatamente do erro
+  "Desbloqueio biométrico requer o PIN uma vez após recarregar a
+  página". O botão de biometria existia mas era efetivamente inútil
+  fora do desktop.
+  - **Causa raiz:** o WebAuthn manager não usava a extensão **PRF** —
+    o `registerCredential` só fazia `navigator.credentials.create`
+    puro, sem pedir o output PRF, então a única chave que
+    sabia decifrar o cofre era o PIN digitado uma vez e mantido em
+    memória.
+  - **Correção (`web/js/webauthn_manager.js`, `web/js/crypto_vault.js`,
+    `web/js/session_manager.js`, `web/app.js`, `web/index.html`):**
+    novo sidecar biométrico `mode: "prf"` (`encryptVaultPrf` /
+    `decryptVaultPrf`) cuja chave AES é derivada via HKDF-SHA256 do
+    *output* PRF. `enableBiometric` registra a credencial com
+    `extensions.prf.eval.first`; o unlock usa `evalByCredential` e
+    segue "biometria → PRF → decifra", sem PIN.
+  - **Compatibilidade e recuperação:** o vault PIN permanece intacto
+    depois do enrollment PRF e continua sendo o fallback se a credencial
+    for apagada. Em dispositivos sem PRF, `enableBiometric` usa o
+    `_bioPin` legado e a UI mantém o campo PIN.
+  - **Bônus (`webauthn_manager.js#getRpId`):** `rp.id` agora é
+    omitido quando o `location.hostname` é um IP — WebAuthn rejeita
+    IPs nessa posição com `SecurityError` no Android, então o
+    fallback para o domínio efetivo da origem (que vale para
+    `trycloudflare.com` e para `localhost`) corrige a falha de
+    registro em acessos por IP local.
+  - **Testes:** novo `web/tests/webauthn_prf_tests.js` com 37
+    asserções (detecção de capacidade, enrollment, fallback legacy,
+    guard de sessão, recuperação por PIN, wipe, round-trip criptográfico
+    e re-enrollment) com mock de `PublicKeyCredential`,
+    `navigator.credentials` e `getClientCapabilities`. Cobertura
+    existente preservada — 37 testes de `session_tests.js` e 19 de
+    `crypto_tests.js` verdes sem alteração.
+  - **UI (`web/index.html#biometric-enroll`, `app.js#refreshBiometricEnrollUI`):**
+    quando `canUsePrfBiometric()` é true, o campo PIN é escondido e
+    a copy vira "Toque no sensor biométrico para desbloquear — o PIN
+    não é mais necessário". A mesma copy é refletida no `tooltip` do
+    botão "Ativar biometria".
+
 ## 2026-10-08
 
 - **Os ícones de serviço: o Agent of Empires (`icon: 👑`) era o único ponto

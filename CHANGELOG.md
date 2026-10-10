@@ -11,6 +11,27 @@ arquivo não é lido por nenhum código.
 
 ### Corrigido
 
+- **Desbloqueio biométrico era inútil em mobile:** o `SessionManager`
+  mantinha o PIN do cofre em `_bioPin` (variável de instância) e o usava
+  como ponte entre o `navigator.credentials.get` e o `unlockWithPin`.
+  Cada reload de aba (constante em Android) zerava essa variável, e o
+  usuário via o prompt biométrico seguido do erro "Desbloqueio
+  biométrico requer o PIN uma vez após recarregar a página" — o
+  recurso só funcionava dentro de uma única sessão de página, e em
+  desktop. A correção adiciona um sidecar biométrico `mode: "prf"` em
+  `crypto_vault.js`: na ativação da biometria, o `webauthn_manager.js`
+  registra a credencial WebAuthn com a **extensão PRF**, captura o
+  *output* e cifra uma cópia do cofre com chave derivada via
+  HKDF-SHA256; o cofre por PIN permanece preservado para recuperação.
+  No desbloqueio, basta o prompt biométrico e o mesmo *output* PRF é
+  reproduzido pelo autenticador para decifrar. Dispositivos sem PRF
+  seguem no modo PIN legado com bridge `_bioPin`, e a UI agora esconde
+  o campo de PIN quando o PRF está disponível, com copy
+  "Toque no sensor biométrico para desbloquear — o PIN não é mais
+  necessário". Bônus: `webauthn_manager.js` agora omite `rp.id`
+  quando o `location.hostname` é um IP, evitando o `SecurityError` que
+  o Chrome do Android devolvia ao tentar registrar a credencial
+  nesses casos.
 - O painel de saúde do host afirmava **"Este host não reporta GPU — a coleta usa
   nvidia-smi"** em máquinas que têm uma GPU e não é NVIDIA. `ReadGPU()` rodava
   `nvidia-smi` e devolvia snapshot vazio onde o binário não existe — no host de

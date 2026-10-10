@@ -72,6 +72,7 @@ import {
     btnSaveVault: $("btn-save-vault"),
     btnSkipVault: $("btn-skip-vault"),
     enableBiometric: $("enable-biometric"),
+    biometricEnrollText: $("biometric-enroll-text"),
     hostNpubSection: $("host-npub-section"),
     hostNpubInput: $("host-npub-input"),
     saveHostNpub: $("save-host-npub"),
@@ -2710,14 +2711,36 @@ import {
     }
     state.session.canEnableBiometric().then((ok) => {
       el.biometricEnroll.classList.toggle("hidden", !ok);
+      if (!ok) return;
+      // When the platform supports PRF, the user does not need a vault
+      // PIN to enable biometric — the key is derived from the biometric
+      // itself. Hide the PIN field and update the helper text so the
+      // offer doesn't look like it's still asking for a password.
+      state.session.canUsePrfBiometric().then((prf) => {
+        el.biometricPin.classList.toggle("hidden", prf);
+        if (el.biometricEnrollText) {
+          el.biometricEnrollText.textContent = prf
+            ? "Toque no sensor biométrico para desbloquear — o PIN não é mais necessário."
+            : "Desbloqueio biométrico disponível e ainda não ativado.";
+        }
+      });
     });
   }
 
   async function onEnableBiometricLater() {
-    const pin = el.biometricPin.value.trim();
-    if (!pin) { el.autoLockStatus.textContent = "Digite o PIN para ativar a biometria"; return; }
     try {
-      await state.session.enableBiometric(pin);
+      // `enableBiometric` only requires a PIN on the legacy fallback path
+      // (no PRF). On the PRF path it derives the key from the biometric
+      // and ignores the PIN entirely, so don't gate the button on having
+      // typed one.
+      const prf = await state.session.canUsePrfBiometric();
+      if (!prf) {
+        const pin = el.biometricPin.value.trim();
+        if (!pin) { el.autoLockStatus.textContent = "Digite o PIN para ativar a biometria"; return; }
+        await state.session.enableBiometric(pin);
+      } else {
+        await state.session.enableBiometric();
+      }
       el.biometricPin.value = "";
       el.biometricEnroll.classList.add("hidden");
       el.autoLockStatus.textContent = "Biometria ativada!";
