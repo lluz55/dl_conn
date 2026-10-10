@@ -144,8 +144,8 @@ func (rt *Router) buildProxy(i int) {
 		}
 		if stripPrefix {
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
-			if req.URL.Path == "" {
-				req.URL.Path = "/"
+			if req.URL.Path == "" || !strings.HasPrefix(req.URL.Path, "/") {
+				req.URL.Path = "/" + strings.TrimPrefix(req.URL.Path, "/")
 			}
 		}
 		req.URL.Path = liftRootPath(req.URL.Path, rootPaths)
@@ -304,7 +304,7 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Remember what the browser is looking at before answering, so both the
 	// redirect below and the page it lands on carry the cookie.
-	if isDocumentNavigation(r) && !svc.Hidden && strings.HasPrefix(r.URL.Path, svc.Prefix) {
+	if isDocumentNavigation(r) && !svc.Hidden && matchPathPrefix(r.URL.Path, svc.Prefix) {
 		rt.setServiceCookie(w, svc.ID)
 	}
 
@@ -663,11 +663,27 @@ func relocateRedirect(resp *http.Response, prefix string) {
 	resp.Header.Set("Location", prefix+loc)
 }
 
-// matchPrefix finds the first service whose Prefix the path starts with,
-// among the services whose Hidden flag matches the one asked for.
+// matchPathPrefix reports whether path matches prefix on a segment boundary:
+// either path == prefix, or path starts with prefix + "/". If prefix itself
+// ends with "/", strings.HasPrefix is sufficient.
+func matchPathPrefix(path, prefix string) bool {
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if len(path) == len(prefix) {
+		return true
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return true
+	}
+	return path[len(prefix)] == '/'
+}
+
+// matchPrefix finds the first service whose Prefix matches path on a
+// segment boundary, among the services whose Hidden flag matches hidden.
 func (rt *Router) matchPrefix(path string, hidden bool) *config.ServiceConfig {
 	for i := range rt.services {
-		if rt.services[i].Hidden == hidden && strings.HasPrefix(path, rt.services[i].Prefix) {
+		if rt.services[i].Hidden == hidden && matchPathPrefix(path, rt.services[i].Prefix) {
 			return &rt.services[i]
 		}
 	}

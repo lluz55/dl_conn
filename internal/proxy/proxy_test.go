@@ -1266,3 +1266,82 @@ func TestRouter_UpdateServices_LiveSwap(t *testing.T) {
 	}
 }
 
+func TestMatchPathPrefix(t *testing.T) {
+	tests := []struct {
+		path   string
+		prefix string
+		want   bool
+	}{
+		{"/pi-web", "/pi-web", true},
+		{"/pi-web/", "/pi-web", true},
+		{"/pi-web/api", "/pi-web", true},
+		{"/pi-web-simple", "/pi-web", false},
+		{"/pi-web-simple/", "/pi-web", false},
+		{"/pi-web-simple/api", "/pi-web", false},
+		{"/pi-web-simple", "/pi-web-simple", true},
+		{"/pi-web-simple/", "/pi-web-simple", true},
+		{"/pi-web-simple/status", "/pi-web-simple", true},
+		{"/api", "/api", true},
+		{"/api/", "/api", true},
+		{"/api/v1", "/api", true},
+		{"/api-docs", "/api", false},
+		{"/api_v1", "/api", false},
+		{"/api/", "/api/", true},
+		{"/api/v1", "/api/", true},
+		{"/ap", "/api", false},
+	}
+
+	for _, tt := range tests {
+		got := matchPathPrefix(tt.path, tt.prefix)
+		if got != tt.want {
+			t.Errorf("matchPathPrefix(%q, %q) = %v, want %v", tt.path, tt.prefix, got, tt.want)
+		}
+	}
+}
+
+func TestRouter_OverlappingPrefixDisambiguation(t *testing.T) {
+	sm := auth.NewSessionManager(4 * time.Hour)
+	sessionID := sm.CreateSession(httptest.NewRequest("GET", "/", nil))
+
+	b1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("pi-web:" + r.URL.Path))
+	}))
+	defer b1.Close()
+
+	b2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("pi-web-simple:" + r.URL.Path))
+	}))
+	defer b2.Close()
+
+	services := []config.ServiceConfig{
+		{ID: "pi-web", Prefix: "/pi-web", Target: b1.URL, StripPrefix: true},
+		{ID: "pi-web-simple", Prefix: "/pi-web-simple", Target: b2.URL, StripPrefix: true},
+	}
+	rt := NewRouter(services, sm)
+
+	// 1. Request to /pi-web-simple/ should hit pi-web-simple, NOT pi-web
+	req := httptest.NewRequest("GET", "/pi-web-simple/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w := httptest.NewRecorder()
+	rt.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "pi-web-simple:/dashboard" {
+		t.Fatalf("expected pi-web-simple:/dashboard, got %q", w.Body.String())
+	}
+
+	// 2. Request to /pi-web/ should hit pi-web
+	req2 := httptest.NewRequest("GET", "/pi-web/dashboard", nil)
+	req2.AddCookie(&http.Cookie{Name: "dl_conn_session", Value: sessionID})
+	w2 := httptest.NewRecorder()
+	rt.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w2.Code)
+	}
+	if w2.Body.String() != "pi-web:/dashboard" {
+		t.Fatalf("expected pi-web:/dashboard, got %q", w2.Body.String())
+	}
+}
+
+
