@@ -154,7 +154,18 @@ in
         StateDirectory = "dl-conn";
         WorkingDirectory = "/var/lib/dl-conn";
         ReadWritePaths = [ "/var/lib/dl-conn" ];
-        ReadOnlyPaths = lib.optional (cfg.servicesDir != null) (toString cfg.servicesDir);
+        # BindReadOnlyPaths (não ReadOnlyPaths) para que servicesDir funcione
+        # quando o caminho vive sob /home/<user>/... — sob ProtectHome=true,
+        # ReadOnlyPaths não atravessa o tmpfs que systemd monta sobre /home,
+        # então o daemon nunca enxerga o diretório. BindReadOnlyPaths faz um
+        # bind-mount explícito e bypassa essa camada — necessário para o
+        # fluxo root-free onde o usuário escreve drop-ins em
+        # ~/.config/dl-conn/services.d/ e o daemon recarrega via watcher
+        # (3s, sem reload de unit, sem rotação do túnel). Para paths que já
+        # estão sob /var/lib/dl-conn (default), o comportamento é idêntico
+        # ao ReadOnlyPaths — bind-mount é estritamente mais permissivo, não
+        # regredimos nada.
+        BindReadOnlyPaths = lib.optional (cfg.servicesDir != null) (toString cfg.servicesDir);
       };
     };
   };
